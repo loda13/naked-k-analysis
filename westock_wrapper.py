@@ -184,6 +184,8 @@ def fetch_tencent_kline(ticker, period='day', limit=500):
     import requests
 
     ws_ticker = convert_ticker(ticker)
+    if not ws_ticker.startswith(('hk', 'sh', 'sz', 'bj')):
+        return pd.DataFrame()
     urls = [
         'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get',
         'https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get',
@@ -256,7 +258,8 @@ def download(ticker, period='1y', start=None, end=None, interval='1d', progress=
         ws_period = 'day'
     
     df = fetch_kline(ticker, ws_period, limit)
-    if getattr(df, 'empty', True):
+    ws_ticker = convert_ticker(ticker)
+    if getattr(df, 'empty', True) and ws_ticker.startswith(('hk', 'sh', 'sz', 'bj')):
         df = fetch_tencent_kline(ticker, ws_period, limit)
     if getattr(df, 'empty', True):
         df = fetch_yahoo_chart(ticker, period=period, start=start, end=end, interval=interval)

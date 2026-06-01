@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .models import (
     EarningsEvent,
@@ -24,6 +25,24 @@ def _read_json(path: Path) -> Dict[str, Any]:
 
 def _normalize_ticker(ticker: str) -> str:
     return ticker.upper()
+
+
+def _parse_date(value: str):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _warn_if_stale(warnings: List[str], label: str, as_of: str, today: date, max_age_days: int = 7) -> None:
+    parsed = _parse_date(as_of)
+    if parsed is None:
+        return
+    age = (today - parsed).days
+    if age > max_age_days:
+        warnings.append(f"{label}缓存已过期: {as_of}，距今{age}天")
 
 
 def _load_research(cache_dir: Path) -> ResearchSnapshot:
@@ -86,8 +105,9 @@ def _load_earnings(cache_dir: Path) -> EarningsSnapshot:
     return EarningsSnapshot(as_of=raw.get("as_of", ""), events=events)
 
 
-def load_wss_context(cache_dir: str = "data/cache/wss") -> WssContext:
+def load_wss_context(cache_dir: str = "data/cache/wss", today: Optional[date] = None) -> WssContext:
     base = Path(cache_dir)
+    current_date = today or date.today()
     warnings: List[str] = []
     if not base.exists():
         warnings.append(f"WSS缓存不存在: {cache_dir}")
@@ -100,5 +120,9 @@ def load_wss_context(cache_dir: str = "data/cache/wss") -> WssContext:
         warnings.append("缺少WSS研究缓存，长期判断降置信度")
     if not market.market_state:
         warnings.append("缺少WSS市场风险缓存")
+
+    _warn_if_stale(warnings, "WSS研究", research.as_of, current_date)
+    _warn_if_stale(warnings, "WSS市场风险", market.as_of, current_date)
+    _warn_if_stale(warnings, "WSS财报", earnings.as_of, current_date)
 
     return WssContext(research=research, market=market, earnings=earnings, warnings=warnings)

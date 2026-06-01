@@ -48,6 +48,21 @@ class WestockWrapperTests(unittest.TestCase):
         self.assertIs(result, yahoo_df)
         fallback.assert_not_called()
 
+    def test_download_skips_tencent_kline_for_us_ticker(self):
+        empty_df = pd.DataFrame()
+        yahoo_df = pd.DataFrame(
+            {"Open": [1.0], "High": [2.0], "Low": [0.5], "Close": [1.5], "Volume": [100.0]},
+            index=pd.to_datetime(["2026-06-01"]),
+        )
+
+        with patch.object(westock_wrapper, "fetch_kline", return_value=empty_df), patch.object(
+            westock_wrapper, "fetch_tencent_kline"
+        ) as tencent, patch.object(westock_wrapper, "fetch_yahoo_chart", return_value=yahoo_df):
+            result = westock_wrapper.download("NVDA", period="1y", interval="1d")
+
+        self.assertIs(result, yahoo_df)
+        tencent.assert_not_called()
+
     def test_fetch_tencent_kline_parses_hk_daily_rows(self):
         payload = {
             "code": 0,

@@ -1,4 +1,8 @@
 import unittest
+import tempfile
+import json
+from datetime import date
+from pathlib import Path
 
 from stock_analysis.cache import load_wss_context
 
@@ -17,3 +21,24 @@ class CacheTests(unittest.TestCase):
 
         self.assertIn("data/cache/", text)
         self.assertIn(".wss-session/", text)
+
+    def test_stale_cache_files_add_warnings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            (cache_dir / "research.json").write_text(
+                json.dumps({"as_of": "2026-05-01", "tickers": {}, "avoid": []}),
+                encoding="utf-8",
+            )
+            (cache_dir / "market_risk.json").write_text(
+                json.dumps({"as_of": "2026-05-01", "market_state": "趋势仍强", "rules": []}),
+                encoding="utf-8",
+            )
+            (cache_dir / "earnings.json").write_text(
+                json.dumps({"as_of": "2026-05-01", "events": {}}),
+                encoding="utf-8",
+            )
+
+            ctx = load_wss_context(str(cache_dir), today=date(2026, 6, 1))
+
+        self.assertIn("WSS研究缓存已过期", " ".join(ctx.warnings))
+        self.assertIn("WSS市场风险缓存已过期", " ".join(ctx.warnings))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Dict, List, Optional
 
 from .models import Advice, NakedKSnapshot, ResearchEntry, TechnicalSnapshot, WssContext
@@ -64,23 +65,49 @@ def _zones(values: List[float]) -> List[str]:
     return [f"{value:g}" for value in values]
 
 
+def _parse_date(value: str) -> Optional[date]:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _is_high_risk_earnings(ctx: WssContext, key: str, today: date) -> bool:
+    event = ctx.earnings.events.get(key)
+    if event is None:
+        return False
+    event_date = _parse_date(event.date)
+    if event_date is None:
+        return False
+    days = (event_date - today).days
+    implied_move = event.implied_move or 0
+    return 0 <= days <= 7 and implied_move >= 5
+
+
 def build_advice(
     ticker: str,
     ctx: WssContext,
     technical: Optional[TechnicalSnapshot] = None,
     naked: Optional[NakedKSnapshot] = None,
+    today: Optional[date] = None,
 ) -> Advice:
+    current_date = today or date.today()
     key = _ticker_key(ticker)
     entry = ctx.research.tickers.get(key)
     quality = _research_quality(entry, ctx.research.avoid, key)
     market = _market_state(ctx, entry)
     tech_dir = _technical_direction(technical)
+    high_risk_earnings = _is_high_risk_earnings(ctx, key, current_date)
 
     warnings = list(ctx.warnings)
     if technical:
         warnings.extend(technical.warnings)
     if naked:
         warnings.extend(naked.warnings)
+    if high_risk_earnings:
+        warnings.append("财报临近且IV隐含波动较高，阻止短线新开仓")
 
     evidence: Dict[str, List[str]] = {name: [] for name in EVIDENCE_ORDER}
     if ctx.market.market_state:
@@ -148,11 +175,18 @@ def build_advice(
         confidence = "中"
         position = "空仓等待"
 
+    if high_risk_earnings and overall == "买入":
+        overall = "观望"
+        confidence = "中"
+        position = "空仓等待"
+
     invalidation = _format_price(naked.invalidation if naked else None)
     supports = naked.supports if naked else (technical.supports if technical else [])
     resistances = naked.resistances if naked else (technical.resistances if technical else [])
 
-    if overall == "买入":
+    if high_risk_earnings and overall == "观望":
+        short_action = "等财报后再看"
+    elif overall == "买入":
         short_action = "短线买入" if naked and naked.invalidation else "突破确认后买"
     elif overall in {"减仓", "卖出", "回避"}:
         short_action = "短线减仓"
