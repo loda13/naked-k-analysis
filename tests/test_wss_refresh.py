@@ -10,9 +10,9 @@ RESEARCH_HTML = """
 <html><body>
 <h1>半导体研究 2026-06-01</h1>
 <table>
-<tr><th>排名</th><th>Ticker</th><th>分数</th><th>证据</th><th>评级</th><th>行业</th><th>业务纯度</th><th>催化</th><th>风险</th></tr>
-<tr><td>6</td><td>AVGO</td><td>79</td><td>A</td><td>核心买入名单</td><td>半导体</td><td>中</td><td>AI ASIC / 网络交换芯片</td><td>估值高</td></tr>
-<tr><td>14</td><td>NVDA</td><td>74</td><td>B+</td><td>观察名单</td><td>半导体</td><td>高</td><td>AI数据中心收入 / 软件生态</td><td>出口限制 / 估值高</td></tr>
+<tr><th>排名</th><th>Ticker</th><th>分数</th><th>证据</th><th>评级</th><th>行业</th><th>业务纯度</th><th>护城河</th><th>商业验证</th><th>财务质量</th><th>行业地位</th><th>估值胜率</th><th>风险扣分</th><th>催化</th><th>风险</th></tr>
+<tr><td>6</td><td>AVGO</td><td>79</td><td>A</td><td>核心买入名单</td><td>半导体</td><td>中</td><td>ASIC定制粘性</td><td>超大客户订单</td><td>现金流强</td><td>AI ASIC核心供应商</td><td>合理偏贵</td><td>客户集中</td><td>AI ASIC / 网络交换芯片</td><td>估值高</td></tr>
+<tr><td>14</td><td>NVDA</td><td>74</td><td>B+</td><td>观察名单</td><td>半导体</td><td>高</td><td>CUDA生态</td><td>云厂商订单</td><td>毛利率强</td><td>AI加速卡龙头</td><td>赔率一般</td><td>出口限制</td><td>AI数据中心收入 / 软件生态</td><td>出口限制 / 估值高</td></tr>
 </table>
 </body></html>
 """
@@ -65,6 +65,12 @@ class WssRefreshTests(unittest.TestCase):
 
             self.assertEqual(research["tickers"]["NVDA"]["score"], 74)
             self.assertEqual(research["tickers"]["AVGO"]["rank"], 6)
+            self.assertEqual(research["tickers"]["NVDA"]["moat"], "CUDA生态")
+            self.assertEqual(research["tickers"]["NVDA"]["commercial_validation"], "云厂商订单")
+            self.assertEqual(research["tickers"]["NVDA"]["financial_quality"], "毛利率强")
+            self.assertEqual(research["tickers"]["NVDA"]["industry_position"], "AI加速卡龙头")
+            self.assertEqual(research["tickers"]["NVDA"]["valuation_odds"], "赔率一般")
+            self.assertEqual(research["tickers"]["NVDA"]["risk_deduction"], "出口限制")
             self.assertEqual(research["tickers"]["NVDA"]["catalysts"], ["AI数据中心收入", "软件生态"])
             self.assertEqual(market["market_state"], "警戒观察")
             self.assertEqual(market["sector_overheats"], ["SOX", "HBM", "AI 存储"])

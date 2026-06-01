@@ -48,6 +48,20 @@ class AdvisorTests(unittest.TestCase):
         self.assertEqual(advice.overall_action, "观望")
         self.assertEqual(advice.confidence, "中")
 
+    def test_research_quality_details_are_in_evidence(self):
+        ctx = load_wss_context("tests/fixtures/wss")
+
+        advice = build_advice(
+            "NVDA",
+            ctx,
+            technical=TechnicalSnapshot(direction="neutral", score=0.0, warnings=[]),
+        )
+
+        research_text = " ".join(advice.evidence["research"])
+        self.assertIn("护城河: CUDA生态和开发者锁定", research_text)
+        self.assertIn("商业验证: 云厂商AI资本开支持续验证", research_text)
+        self.assertIn("风险扣分: 出口限制和供应链集中", research_text)
+
     def test_high_iv_near_earnings_blocks_fresh_buy(self):
         ctx = load_wss_context("tests/fixtures/wss")
 

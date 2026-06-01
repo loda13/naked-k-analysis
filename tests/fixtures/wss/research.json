@@ -9,6 +9,12 @@
       "sector": "半导体",
       "rank": 14,
       "business_purity": "高",
+      "moat": "CUDA生态和开发者锁定",
+      "commercial_validation": "云厂商AI资本开支持续验证",
+      "financial_quality": "毛利率和现金流强",
+      "industry_position": "AI加速卡龙头",
+      "valuation_odds": "估值偏高，胜率依赖增长兑现",
+      "risk_deduction": "出口限制和供应链集中",
       "risks": ["估值高", "出口限制"],
       "catalysts": ["AI数据中心收入", "软件生态"]
     },

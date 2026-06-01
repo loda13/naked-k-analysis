@@ -13,6 +13,12 @@ class ResearchEntry:
     sector: str = ""
     rank: Optional[int] = None
     business_purity: str = ""
+    moat: str = ""
+    commercial_validation: str = ""
+    financial_quality: str = ""
+    industry_position: str = ""
+    valuation_odds: str = ""
+    risk_deduction: str = ""
     risks: List[str] = field(default_factory=list)
     catalysts: List[str] = field(default_factory=list)
     avoid: bool = False

@@ -12,6 +12,8 @@ class CacheTests(unittest.TestCase):
         ctx = load_wss_context("tests/fixtures/wss")
 
         self.assertEqual(ctx.research.tickers["NVDA"].score, 74)
+        self.assertEqual(ctx.research.tickers["NVDA"].moat, "CUDA生态和开发者锁定")
+        self.assertEqual(ctx.research.tickers["NVDA"].industry_position, "AI加速卡龙头")
         self.assertEqual(ctx.market.market_state, "警戒观察")
         self.assertEqual(ctx.earnings.events["NVDA"].timing, "盘后")
 

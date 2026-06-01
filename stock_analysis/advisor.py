@@ -123,6 +123,18 @@ def build_advice(
             evidence["research"].append("催化: " + " / ".join(entry.catalysts[:3]))
         if entry.risks:
             evidence["research"].append("风险: " + " / ".join(entry.risks[:3]))
+        quality_details = [
+            ("业务纯度", entry.business_purity),
+            ("护城河", entry.moat),
+            ("商业验证", entry.commercial_validation),
+            ("财务质量", entry.financial_quality),
+            ("行业地位", entry.industry_position),
+            ("估值胜率", entry.valuation_odds),
+            ("风险扣分", entry.risk_deduction),
+        ]
+        for label, value in quality_details:
+            if value:
+                evidence["research"].append(f"{label}: {value}")
     else:
         evidence["research"].append("无WSS研究缓存，长期判断降置信度")
 
