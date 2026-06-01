@@ -4,7 +4,7 @@
 
 MA_SCRIPT="/root/.openclaw/workspace/scripts/ma_analysis.py"
 NK_SCRIPT="/root/.openclaw/workspace/scripts/naked_k_analysis.py"
-TICKERS="0700.HK 1810.HK NVDA TSLA QQQ 9992.HK PDD"
+TICKERS="0700.HK 1810.HK NVDA TSLA QQQ"
 TF="4h,daily,weekly"
 PYTHON="/usr/bin/python3"
 

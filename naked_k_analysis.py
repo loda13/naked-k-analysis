@@ -7,19 +7,27 @@
 2. 支撑/阻力位 (前高前低、多次测试)
 3. 价格结构 (趋势判断: HH/HL = 上升, LH/LL = 下降)
 4. 关键位反应
+
+用法:
+  python3 naked_k_analysis.py <ticker> [-p d|w] [-d days]
+  -p: 周期 (d=日线, w=周线, 默认d)
+  -d: 数据天数 (默认365)
 """
 
 import sys
+import argparse
 import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
 
-def fetch_data(ticker, period="1y", interval="1d"):
+def fetch_data(ticker, days=365, interval="1d"):
     """获取K线数据"""
     t = yf.Ticker(ticker)
-    df = t.history(period=period, interval=interval)
+    end = datetime.now()
+    start = end - timedelta(days=days)
+    df = t.history(start=start, end=end, interval=interval)
     if df.empty:
         return None
     # Flatten MultiIndex columns if present
@@ -117,6 +125,85 @@ def find_swing_points(df, window=5):
     return highs, lows
 
 
+def identify_multi_k_patterns(df, highs, lows):
+    """多K线形态识别: 旗形、三角形、椰形、BoS(Break of Structure)
+    简单版: 基于最近 swing high/low 的高低点收敛/突破判断
+    返回 列表 [(name, desc)]
+    """
+    patterns = []
+    if len(highs) < 2 or len(lows) < 2:
+        return patterns
+
+    # 取最近的 swing 点
+    recent_highs = highs[-4:] if len(highs) >= 4 else highs
+    recent_lows = lows[-4:] if len(lows) >= 4 else lows
+
+    # === BoS (Break of Structure) ===
+    # 当前价突破最近的 swing high (多头 BoS) 或跌破 swing low (空头 BoS)
+    last_price = df['Close'].iloc[-1]
+    if recent_highs:
+        last_sh = recent_highs[-1][1]
+        if last_price > last_sh * 1.005:
+            patterns.append(('🚀 BoS (多头突破)', f'突破前高 {last_sh:.2f}，结构转多'))
+    if recent_lows:
+        last_sl = recent_lows[-1][1]
+        if last_price < last_sl * 0.995:
+            patterns.append(('📉 BoS (空头跌破)', f'跌破前低 {last_sl:.2f}，结构转空'))
+
+    # === 三角形 (Triangle, 收敛) ===
+    # 高点递降 + 低点递升
+    if len(recent_highs) >= 2 and len(recent_lows) >= 2:
+        hs = [h[1] for h in recent_highs]
+        ls = [l[1] for l in recent_lows]
+        hs_desc = all(hs[i] <= hs[i-1] for i in range(1, len(hs)))
+        ls_asc = all(ls[i] >= ls[i-1] for i in range(1, len(ls)))
+        if hs_desc and ls_asc:
+            patterns.append(('▽ 三角形 (收敛)', f'高点递降+低点递升，等待方向选择'))
+        # 上升三角: 平顶 + 低点递升
+        elif ls_asc and abs(hs[-1] - hs[0]) / hs[0] < 0.02:
+            patterns.append(('△ 上升三角', f'平顶~{hs[-1]:.2f}，低点抄高，偏多'))
+        # 下降三角: 平底 + 高点递降
+        elif hs_desc and abs(ls[-1] - ls[0]) / ls[0] < 0.02:
+            patterns.append(('▽ 下降三角', f'平底~{ls[-1]:.2f}，高点走低，偏空'))
+
+    # === 旗形 (Flag) ===
+    # 快速拉升/下跌后，短期综理渠道（高点和低点在平行偏离）
+    if len(df) >= 20:
+        last_20 = df.tail(20)
+        # 前十根涨幅
+        mid = len(last_20) // 2
+        prior_change = (last_20['Close'].iloc[mid-1] - last_20['Close'].iloc[0]) / last_20['Close'].iloc[0] * 100
+        # 后十根波动范围
+        later = last_20.iloc[mid:]
+        later_range = (later['High'].max() - later['Low'].min()) / later['Close'].mean() * 100
+        if prior_change > 8 and later_range < 5:
+            patterns.append(('🚩 看涨旗形', f'先涨5后横理，待突破继续上行'))
+        elif prior_change < -8 and later_range < 5:
+            patterns.append(('🚩 看跌旗形', f'先跌后横理，待破位继续下行'))
+
+    # === 椰形 (Wedge) ===
+    # 上升椰形: 高低点均递升，但高点升速慢于低点 (看空)
+    # 下降椰形: 高低点均递降，但低点降速慢于高点 (看多)
+    if len(recent_highs) >= 2 and len(recent_lows) >= 2:
+        hs = [h[1] for h in recent_highs]
+        ls = [l[1] for l in recent_lows]
+        if all(hs[i] > hs[i-1] for i in range(1, len(hs))) and all(ls[i] > ls[i-1] for i in range(1, len(ls))):
+            if hs[0] > 0 and ls[0] > 0:
+                high_slope = (hs[-1] - hs[0]) / hs[0]
+                low_slope = (ls[-1] - ls[0]) / ls[0]
+                if low_slope > high_slope * 1.3:
+                    patterns.append(('🔼 上升椰形', f'高低点收敛，偏空'))
+        elif all(hs[i] < hs[i-1] for i in range(1, len(hs))) and all(ls[i] < ls[i-1] for i in range(1, len(ls))):
+            if hs[0] > 0 and ls[0] > 0:
+                high_slope = (hs[0] - hs[-1]) / hs[0]
+                low_slope = (ls[0] - ls[-1]) / ls[0]
+                if high_slope > low_slope * 1.3:
+                    patterns.append(('🔽 下降椰形', f'高低点收敛，偏多'))
+
+    return patterns
+
+
+
 def analyze_structure(highs, lows):
     """分析价格结构: HH/HL=上升趋势, LH/LL=下降趋势"""
     if len(highs) < 2 or len(lows) < 2:
@@ -162,7 +249,24 @@ def analyze_structure(highs, lows):
 
 
 def find_support_resistance(df, highs, lows, price, n_levels=3):
-    """找支撑阻力位"""
+    """找支撑阻力位
+    低价股的颜粒度动态调整: 合并容忍度根据 ATR/价格 动态计算
+    """
+    # 动态容忍度: 将与价格和波动率挂钩
+    # 默认 1.5%；若股价低，或波动较大，用 ATR/价格 作为颜粒度
+    try:
+        tr = pd.concat([
+            (df['High'] - df['Low']).abs(),
+            (df['High'] - df['Close'].shift()).abs(),
+            (df['Low'] - df['Close'].shift()).abs(),
+        ], axis=1).max(axis=1)
+        atr = tr.rolling(14).mean().iloc[-1]
+        atr_pct = (atr / price) if price else 0
+    except Exception:
+        atr_pct = 0.015
+    # 动态容忍: 介于 0.8% 与 3% 之间，大致等于 0.5 * ATR%
+    tolerance = max(0.008, min(0.03, 0.5 * atr_pct if atr_pct else 0.015))
+
     # 收集所有关键价位
     all_levels = []
     for d, p in highs:
@@ -170,7 +274,7 @@ def find_support_resistance(df, highs, lows, price, n_levels=3):
     for d, p in lows:
         all_levels.append(('支撑(前低)', p, d))
 
-    # 聚合相近的价位 (±1.5%)
+    # 聚合相近的价位 (±tolerance)
     merged = []
     used = set()
     sorted_levels = sorted(all_levels, key=lambda x: x[1])
@@ -181,7 +285,7 @@ def find_support_resistance(df, highs, lows, price, n_levels=3):
         for j in range(i + 1, len(sorted_levels)):
             if j in used:
                 continue
-            if abs(sorted_levels[j][1] - p) / p < 0.015:
+            if abs(sorted_levels[j][1] - p) / p < tolerance:
                 cluster.append(sorted_levels[j])
                 used.add(j)
         avg_price = np.mean([x[1] for x in cluster])
@@ -260,7 +364,7 @@ def recent_momentum(df, n=5):
     }
 
 
-def generate_signal(trend, patterns, supports, resistances, momentum, price):
+def generate_signal(trend, patterns, supports, resistances, momentum, price, multi_patterns=None):
     """综合裸K信号"""
     score = 0
     reasons = []
@@ -314,6 +418,24 @@ def generate_signal(trend, patterns, supports, resistances, momentum, price):
             score -= 0.5
             reasons.append(f'接近阻力({res_dist:.1f}%)')
 
+    # 多K线形态 (BoS/旗形/三角/椰形)
+    if multi_patterns:
+        for name, desc in multi_patterns:
+            if 'BoS (多头' in name or '上升三角' in name or '看涨旗形' in name:
+                score += 2
+                reasons.append(name.split(' ')[1] if ' ' in name else name)
+            elif 'BoS (空头' in name or '下降三角' in name or '看跌旗形' in name:
+                score -= 2
+                reasons.append(name.split(' ')[1] if ' ' in name else name)
+            elif '下降椰形' in name:
+                score += 1
+                reasons.append('下降椰形(偏多)')
+            elif '上升椰形' in name:
+                score -= 1
+                reasons.append('上升椰形(偏空)')
+            elif '三角形 (收敛)' in name:
+                reasons.append('三角收敛(中性)')
+
     # 信号
     if score >= 3:
         signal = '🟢 看多'
@@ -329,13 +451,20 @@ def generate_signal(trend, patterns, supports, resistances, momentum, price):
     return signal, score, reasons
 
 
-def analyze_one(ticker, name=None):
+def analyze_one(ticker, name=None, period='d', days=365, as_json=False):
     """分析一只股票"""
     display = name or ticker
+    
+    # 周期映射
+    interval_map = {'d': '1d', 'w': '1wk'}
+    interval = interval_map.get(period, '1d')
+    period_label = {'d': '日线', 'w': '周线'}.get(period, '日线')
 
-    # 日线
-    df = fetch_data(ticker, period="1y", interval="1d")
+    # 获取数据
+    df = fetch_data(ticker, days=days, interval=interval)
     if df is None or len(df) < 30:
+        if as_json:
+            return {'ticker': ticker, 'name': display, 'error': 'insufficient_data'}
         return f"\n{'='*30}\n{display} — 数据不足\n"
 
     price = df['Close'].iloc[-1]
@@ -361,14 +490,17 @@ def analyze_one(ticker, name=None):
     # 动量
     momentum = recent_momentum(df)
 
+    # 多K线形态 (旗形/三角/椰形/BoS)
+    multi_patterns = identify_multi_k_patterns(df, highs, lows)
+
     # 综合信号
-    signal, score, reasons = generate_signal(trend, patterns, supports, resistances, momentum, price)
+    signal, score, reasons = generate_signal(trend, patterns, supports, resistances, momentum, price, multi_patterns=multi_patterns)
 
     # 输出
     lines = []
     lines.append(f"\n{'='*30}")
     lines.append(f"📊 {display} | {price:.2f} ({change:+.2f}%)")
-    lines.append(f"日期: {date}")
+    lines.append(f"日期: {date} | 周期: {period_label} | 数据: {days}天")
     lines.append(f"{'='*30}")
 
     # 信号
@@ -411,37 +543,88 @@ def analyze_one(ticker, name=None):
     else:
         lines.append(f"\n🕯️ 近期无显著K线形态")
 
+    # 多K线形态
+    if multi_patterns:
+        lines.append(f"\n🔮 多K线形态:")
+        for name, desc in multi_patterns:
+            lines.append(f"  · {name} — {desc}")
+
     # 动量
     lines.append(f"\n💨 近5日动量: {momentum['up']}阳 {momentum['down']}阴 | 量能: {momentum['vol_signal']}(×{momentum['vol_ratio']:.1f})")
+
+    # JSON 输出
+    if as_json:
+        return {
+            'ticker': ticker,
+            'name': display,
+            'period': period_label,
+            'days': days,
+            'date': date,
+            'price': float(price),
+            'change_pct': round(change, 2),
+            'signal': signal,
+            'score': round(score, 2),
+            'reasons': reasons,
+            'trend': trend,
+            'structure_details': structure_details[-4:],
+            'supports': [{'price': round(s['price'], 2), 'strength': s['strength'], 'touches': s['touches'], 'dist_pct': round((price - s['price']) / price * 100, 2)} for s in supports],
+            'resistances': [{'price': round(r['price'], 2), 'strength': r['strength'], 'touches': r['touches'], 'dist_pct': round((r['price'] - price) / price * 100, 2)} for r in resistances],
+            'reactions': reactions,
+            'recent_patterns': [(d.strftime('%m-%d') if hasattr(d, 'strftime') else str(d)[:5], name, desc) for d, name, desc in recent_p],
+            'multi_patterns': multi_patterns,
+            'momentum': momentum,
+        }
 
     return '\n'.join(lines)
 
 
 def main():
+    parser = argparse.ArgumentParser(description='裸K (Price Action) 分析工具')
+    parser.add_argument('ticker', nargs='?', help='股票代码 (如 0700.HK, NVDA)')
+    parser.add_argument('-p', '--period', choices=['d', 'w'], default='d', help='周期: d=日线, w=周线 (默认d)')
+    parser.add_argument('-d', '--days', type=int, default=365, help='数据天数 (默认365)')
+    parser.add_argument('-n', '--name', help='股票名称 (可选)')
+    parser.add_argument('--json', dest='as_json', action='store_true', help='以JSON格式输出')
+    args = parser.parse_args()
+
+    # 默认5只持仓
     tickers = [
         ('0700.HK', '腾讯'),
         ('1810.HK', '小米'),
         ('NVDA', 'NVDA'),
         ('TSLA', 'TSLA'),
         ('QQQ', 'QQQ'),
-        ('9992.HK', '泡泡玛特'),
-        ('PDD', 'PDD'),
     ]
 
-    if len(sys.argv) > 1:
-        # 支持命令行指定单个ticker
-        t = sys.argv[1]
-        name = sys.argv[2] if len(sys.argv) > 2 else t
-        tickers = [(t, name)]
+    # 如果指定了ticker，只跑单个
+    if args.ticker:
+        name = args.name or args.ticker
+        tickers = [(args.ticker, name)]
+
+    period_label = {'d': '日线', 'w': '周线'}.get(args.period, '日线')
+    if args.as_json:
+        import json as _json
+        import time
+        out = {'timestamp': datetime.now().isoformat(), 'period': period_label, 'days': args.days, 'tickers': []}
+        for ticker, name in tickers:
+            try:
+                res = analyze_one(ticker, name, period=args.period, days=args.days, as_json=True)
+                out['tickers'].append(res)
+            except Exception as e:
+                out['tickers'].append({'ticker': ticker, 'name': name, 'error': str(e)})
+            time.sleep(2)
+        print(_json.dumps(out, ensure_ascii=False, default=str))
+        return
 
     print("🔮 裸K (Price Action) 分析报告")
     print(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"周期: {period_label} | 数据: {args.days}天")
     print("纯K线分析 · 无指标 · 看价格本身")
 
     import time
     for ticker, name in tickers:
         try:
-            result = analyze_one(ticker, name)
+            result = analyze_one(ticker, name, period=args.period, days=args.days)
             print(result)
         except Exception as e:
             print(f"\n{'='*30}")
