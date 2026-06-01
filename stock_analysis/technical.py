@@ -7,6 +7,7 @@ from typing import List, Optional
 
 from .data import resolve_technical_timeframes
 from .models import TechnicalSnapshot
+from .wss_methodology import summarize_methodology
 
 
 def analyze_technical(ticker: str, timeframes: Optional[List[str]] = None) -> TechnicalSnapshot:
@@ -52,10 +53,16 @@ def analyze_technical(ticker: str, timeframes: Optional[List[str]] = None) -> Te
     else:
         direction = "neutral"
 
+    summary_parts = []
+    resonance = (payload.get("resonance") or {}).get("action", "")
+    if resonance:
+        summary_parts.append(resonance)
+    summary_parts.extend(summarize_methodology(payload))
+
     return TechnicalSnapshot(
         direction=direction,
         score=round(total, 2),
-        summary=(payload.get("resonance") or {}).get("action", ""),
+        summary="；".join(summary_parts),
         supports=[float(v) for v in supports[:3]],
         resistances=[float(v) for v in resistances[:3]],
         warnings=resolved.warnings,

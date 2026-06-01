@@ -27,3 +27,29 @@ class TechnicalWrapperTests(unittest.TestCase):
         self.assertEqual(snapshot.direction, "bullish")
         self.assertIn("4H", " ".join(snapshot.warnings))
         self.assertIn("日线替代", " ".join(snapshot.warnings))
+
+    def test_analyze_technical_appends_wss_methodology_summary(self):
+        payload = {
+            "ticker": "NVDA",
+            "timeframes": [
+                {
+                    "tf": "日线",
+                    "weighted_score": {"score": 0.5},
+                    "macd": {"zone": "零轴上", "hist_dir": "红柱", "cross": None},
+                    "rsi": 58,
+                    "rsi_signal": "偏强",
+                    "boll_signal": "接近上轨",
+                    "supports": [],
+                    "resistances": [],
+                }
+            ],
+            "resonance": {"action": "无明显共振，观望"},
+        }
+
+        with patch("ma_analysis.analyze") as analyze:
+            analyze.side_effect = lambda *args, **kwargs: print(json.dumps(payload, ensure_ascii=False))
+            snapshot = analyze_technical("NVDA", timeframes=["daily"])
+
+        self.assertIn("无明显共振，观望", snapshot.summary)
+        self.assertIn("MACD零轴上", snapshot.summary)
+        self.assertIn("BOLL", snapshot.summary)
