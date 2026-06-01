@@ -87,6 +87,26 @@ python3 naked_k_analysis.py NVDA
 python3 naked_k_analysis.py 0700.HK -p w -d 240
 ```
 
+### Wall Street Skill 综合分析
+
+```bash
+python3 stock_advisor.py NVDA
+python3 stock_advisor.py 0700.HK --json
+```
+
+WSS 研究 / 泡沫风险 / 财报缓存默认读取 `data/cache/wss/`。缓存刷新有两种方式：
+
+```bash
+# 推荐：从浏览器导出的 WSS 页面 HTML 刷新，只写派生 JSON
+python3 stock_advisor.py NVDA --refresh-wss-cache --wss-html-dir /path/to/wss-html
+
+# 可选：用环境变量里的登录 Cookie 在线刷新
+export WSS_COOKIE='...'
+python3 stock_advisor.py NVDA --refresh-wss-cache
+```
+
+HTML 文件名包含 `market` / `risk` / `bubble` / `泡沫` 会写入 `market_risk.json`；包含 `earning` / `财报` 会写入 `earnings.json`；其他 `.html` 默认按研究页解析写入 `research.json`。缓存只保存分数、评级、风险、催化、市场状态、规则和财报事件等派生字段，不保存原始 HTML、账号、密码或 Cookie。
+
 ### 一键日报
 
 ```bash

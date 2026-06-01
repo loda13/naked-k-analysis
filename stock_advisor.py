@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 from stock_analysis.advisor import build_advice
@@ -18,14 +19,34 @@ def parse_args(argv=None):
     parser.add_argument("--horizons", default="short,medium,long", help="分析周期")
     parser.add_argument("--json", action="store_true", dest="as_json", help="输出JSON")
     parser.add_argument("--refresh-wss-cache", action="store_true", help="刷新WSS缓存")
+    parser.add_argument("--wss-html-dir", help="从本地导出的WSS HTML目录刷新缓存")
     return parser.parse_args(argv)
 
 
 def main(argv=None) -> int:
     args = parse_args(argv)
     if args.refresh_wss_cache:
-        print("refresh_not_implemented: WSS认证刷新将在Milestone 2实现。", file=sys.stderr)
-        return 2
+        from stock_analysis.wss_refresh import refresh_cache_from_html_dir, refresh_cache_from_web
+
+        try:
+            if args.wss_html_dir:
+                result = refresh_cache_from_html_dir(args.wss_html_dir, args.cache_dir)
+            else:
+                result = refresh_cache_from_web(args.cache_dir)
+        except Exception as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+
+        if args.as_json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(
+                "WSS缓存刷新完成: "
+                f"research={result['research_count']}, "
+                f"market_rules={result['market_rules_count']}, "
+                f"earnings={result['earnings_count']}"
+            )
+        return 0
 
     timeframes = ["daily", "weekly"]
     if "short" in args.horizons:
