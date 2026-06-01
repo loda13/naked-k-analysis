@@ -1,3 +1,5 @@
-__pycache__/
+data/cache/
+.wss-session/
 *.pyc
+__pycache__/
 .env

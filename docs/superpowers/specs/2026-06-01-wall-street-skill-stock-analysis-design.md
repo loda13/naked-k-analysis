@@ -106,6 +106,14 @@ Use a modular CLI/report engine, not a web UI in the first version.
 
 The selected design keeps current scripts working while adding a new structured pipeline. This avoids a risky full rewrite of `ma_analysis.py` and allows current CLI users to keep using it.
 
+Version 1 is intentionally smaller than the full architecture:
+
+- Milestone 1: local advisor CLI using fixture/cache files, existing technical functions, naked-K helper output, deterministic methodology rules, and static Wall Street Skill cache lookup.
+- Milestone 2: authenticated cache refresh for research, market-risk, and earnings pages.
+- Milestone 3: richer provider support, true 4h provider coverage, and broader market/sector automation.
+
+The first implementation must complete Milestone 1 only. It may expose `--refresh-wss-cache`, but the command should fail with a clear `refresh_not_implemented` message until Milestone 2 exists.
+
 Planned module boundaries:
 
 - `stock_analysis/data.py`: ticker normalization, OHLCV fetch, interval selection, provider fallback, and consistent DataFrame schema.
@@ -188,6 +196,30 @@ The advisor should use a layered scoring model:
    - Price action can upgrade confidence when it confirms the same direction as the technical context.
    - Price action can block a trade when it shows failed breakout, bearish engulfing near resistance, or breakdown of key structure.
 
+Version 1 deterministic thresholds:
+
+- Market risk:
+  - `rupture` if any cached market rule has `status: rupture`, or if the ticker belongs to an overheated sector and the cached market state is `触发防守`.
+  - `overheated` if market state is `警戒观察` or sector note contains the ticker's mapped sector.
+  - `supportive` if market state is `趋势仍强` and no sector-specific overheat note applies.
+- Research quality:
+  - `strong` if score is at least 80 and evidence completeness is `A` or `A-`.
+  - `acceptable` if score is at least 68 and evidence completeness is `B+` or better.
+  - `weak` if score is below 68, evidence is below `B+`, or the ticker is in an avoid list.
+  - `missing` if no cached research entry exists.
+- Technical direction:
+  - `bullish` if weekly direction is bullish and daily score is positive.
+  - `bearish` if weekly direction is bearish or daily score is below -1.
+  - `neutral` otherwise.
+- Final action:
+  - `买入`: market is supportive or overheated, research is strong or acceptable, technical direction is bullish, and no earnings warning blocks fresh entries.
+  - `小仓试错`: research is strong or acceptable, technical direction is neutral-to-bullish, and naked-K shows a nearby invalidation line.
+  - `持有`: research is strong or acceptable, but entry timing is not favorable.
+  - `减仓`: market is rupture-like or technical direction is bearish while long-term research is still acceptable.
+  - `卖出`: market is rupture-like and technical direction is bearish.
+  - `观望`: research is missing or stale, or signals conflict.
+  - `回避`: research is weak or ticker appears in an avoid list.
+
 Recommended output fields:
 
 - `overall_action`: one of `买入`, `小仓试错`, `持有`, `减仓`, `卖出`, `观望`, `回避`.
@@ -226,6 +258,14 @@ Default behavior:
 
 No Wall Street Skill email, password, cookies, or tokens may be committed.
 
+Cache files are runtime artifacts and must not be committed. The repository should ignore:
+
+- `data/cache/`
+- `.wss-session/`
+- any browser cookie export or login artifact
+
+Tests may use sanitized fixtures under `tests/fixtures/wss/`. Fixtures must contain only hand-written or reduced public/derived values, never raw member-only page dumps, cookies, passwords, or session tokens.
+
 Cache layout:
 
 - `data/cache/wss/research.json`: ticker and sector research snapshots.
@@ -240,6 +280,12 @@ Credential handling:
   - `WSS_PASSWORD`
 - The implementation must not print these values.
 - Cache files should contain derived research facts and timestamps, not raw credentials or cookies.
+
+Milestone 1 refresh behavior:
+
+- `--refresh-wss-cache` should exit non-zero and print a short Chinese message saying authenticated refresh is not implemented yet.
+- Normal advisor runs should read existing cache files if present.
+- If cache files are missing, the advisor should continue with technical-only analysis and cap confidence at `中`.
 
 ## Error Handling
 
@@ -263,6 +309,9 @@ Focused tests should cover:
 - Advisor behavior when research score is high, missing, stale, or weak.
 - Naked-K support/resistance integration into invalidation and target zones.
 - JSON report schema stability.
+- Cache safety: runtime cache paths are ignored by git, and fixture paths remain allowed.
+- Existing CLI compatibility smoke tests for `ma_analysis.py --json` and `naked_k_analysis.py --json`, using monkeypatched or fixture data rather than live network calls.
+- `--refresh-wss-cache` Milestone 1 behavior: clear unsupported message and non-zero exit.
 
 Use small fixture DataFrames for deterministic unit tests. Do not rely on live network data in default tests.
 

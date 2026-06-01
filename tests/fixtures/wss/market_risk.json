@@ -1,0 +1,11 @@
+{
+  "as_of": "2026-05-31",
+  "market_state": "警戒观察",
+  "bubble_phase": "1999 叙事和估值同步加速",
+  "sector_overheats": ["SOX", "HBM", "AI 存储"],
+  "rules": [
+    {"name": "QQQ 防守线", "status": "watch", "value": "738.31", "trigger": "< 720"},
+    {"name": "VIX 破裂线", "status": "supportive", "value": "15.32", "trigger": "> 20"},
+    {"name": "HY OAS 触发线", "status": "supportive", "value": "2.72%", "trigger": "> 3.25%"}
+  ]
+}

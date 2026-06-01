@@ -6,7 +6,7 @@ westock-data wrapper for ma_analysis.py
 
 import subprocess
 import json
-import pandas as pd
+import os
 from datetime import datetime, timedelta
 import sys
 
@@ -25,6 +25,8 @@ TICKER_MAP = {
     'PDD': 'usPDD',
 }
 
+DEFAULT_WESTOCK_DATA_SCRIPT = '/root/.openclaw/workspace/skills/westock-data/scripts/index.js'
+
 def convert_ticker(ticker):
     """转换 ticker 格式: 0700.HK -> hk00700"""
     if ticker in TICKER_MAP:
@@ -41,21 +43,30 @@ def convert_ticker(ticker):
     
     return ticker
 
-def fetch_kline(ticker, period='day', limit=500):
-    """
-    调用 westock-data 获取 K线数据
-    返回 pandas DataFrame，列名与 yfinance 兼容
+def build_westock_command(ticker, period='day', limit=500):
+    """Build the westock-data CLI command.
+
+    WESTOCK_DATA_SCRIPT lets this repo run outside the original OpenClaw path.
     """
     ws_ticker = convert_ticker(ticker)
-    
-    cmd = [
+    script = os.environ.get('WESTOCK_DATA_SCRIPT', DEFAULT_WESTOCK_DATA_SCRIPT)
+    return [
         'node',
-        '/root/.openclaw/workspace/skills/westock-data/scripts/index.js',
+        script,
         'kline',
         ws_ticker,
         period,
         str(limit)
     ]
+
+def fetch_kline(ticker, period='day', limit=500):
+    """
+    调用 westock-data 获取 K线数据
+    返回 pandas DataFrame，列名与 yfinance 兼容
+    """
+    import pandas as pd
+
+    cmd = build_westock_command(ticker, period, limit)
     
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -110,6 +121,20 @@ def fetch_kline(ticker, period='day', limit=500):
         print(f"Error parsing {ticker}: {str(e)}", file=sys.stderr)
         return pd.DataFrame()
 
+def fetch_yfinance(ticker, period='1y', start=None, end=None, interval='1d', progress=False):
+    """Fallback to yfinance when westock-data is unavailable or returns no data."""
+    import yfinance as _yf
+
+    return _yf.download(
+        ticker,
+        period=period if start is None and end is None else None,
+        start=start,
+        end=end,
+        interval=interval,
+        progress=progress,
+        auto_adjust=False,
+    )
+
 def download(ticker, period='1y', start=None, end=None, interval='1d', progress=False):
     """
     模拟 yfinance.download() 接口
@@ -143,12 +168,16 @@ def download(ticker, period='1y', start=None, end=None, interval='1d', progress=
         ws_period = 'day'
     
     df = fetch_kline(ticker, ws_period, limit)
+    if getattr(df, 'empty', True):
+        df = fetch_yfinance(ticker, period=period, start=start, end=end, interval=interval, progress=progress)
     
     # 如果指定了 start/end，过滤数据
     if not df.empty:
         if start:
+            import pandas as pd
             df = df[df.index >= pd.to_datetime(start)]
         if end:
+            import pandas as pd
             df = df[df.index <= pd.to_datetime(end)]
     
     return df

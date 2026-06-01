@@ -1,0 +1,12 @@
+{
+  "as_of": "2026-06-01",
+  "events": {
+    "NVDA": {
+      "date": "2026-06-10",
+      "timing": "盘后",
+      "eps_estimate": "--",
+      "revenue_estimate": "--",
+      "implied_move": 6.5
+    }
+  }
+}
