@@ -39,6 +39,10 @@ class TechnicalWrapperTests(unittest.TestCase):
                     "rsi": 58,
                     "rsi_signal": "偏强",
                     "boll_signal": "接近上轨",
+                    "vegas": {"position": "通道上方", "trend": "多头趋势"},
+                    "ichimoku": {"cloud_pos": "云上(多头)"},
+                    "obv": {"trend": "量价齐升"},
+                    "frvp": {"poc": 100.0, "position": "价值区上方"},
                     "supports": [],
                     "resistances": [],
                 }
@@ -53,3 +57,5 @@ class TechnicalWrapperTests(unittest.TestCase):
         self.assertIn("无明显共振，观望", snapshot.summary)
         self.assertIn("MACD零轴上", snapshot.summary)
         self.assertIn("BOLL", snapshot.summary)
+        self.assertIn("Vegas", snapshot.summary)
+        self.assertIn("FRVP", snapshot.summary)

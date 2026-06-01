@@ -48,3 +48,25 @@ class WssMethodologyTests(unittest.TestCase):
         self.assertIn("日线", summaries[0])
         self.assertIn("MACD零轴上", summaries[0])
         self.assertIn("BOLL", summaries[0])
+
+    def test_interprets_trend_cost_volume_and_fib_context(self):
+        item = {
+            "tf": "日线",
+            "vegas": {"position": "🔴通道下方", "trend": "空头趋势"},
+            "ichimoku": {"cloud_pos": "🔴云下(空头)", "tk_cross": "🔴转换<基准"},
+            "obv": {"trend": "量价齐跌", "divergence": "底背离"},
+            "avwap_low": 428.6,
+            "avwap_high": 517.1,
+            "frvp": {"poc": 505.66, "vah": 516.78, "val": 455.59, "position": "价值区下方"},
+            "fb_signal": "假突破",
+            "fbd_signal": "假跌破",
+        }
+
+        summary = interpret_timeframe(item)
+
+        self.assertIn("Vegas", summary)
+        self.assertIn("一目云", summary)
+        self.assertIn("OBV量价齐跌", summary)
+        self.assertIn("AVWAP成本区", summary)
+        self.assertIn("FRVP", summary)
+        self.assertIn("假突破", summary)

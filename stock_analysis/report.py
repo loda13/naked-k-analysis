@@ -24,6 +24,10 @@ def render_text_report(advice: Advice) -> str:
         lines.append("上方压力/目标: " + " / ".join(advice.upside_zones))
     if advice.downside_zones:
         lines.append("下方支撑/风险: " + " / ".join(advice.downside_zones))
+    if advice.entry_triggers:
+        lines.append("触发条件: " + "；".join(advice.entry_triggers))
+    if advice.blocked_by:
+        lines.append("阻塞因素: " + "；".join(advice.blocked_by))
 
     lines.append("")
     lines.append("依据:")

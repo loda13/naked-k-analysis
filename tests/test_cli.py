@@ -21,6 +21,8 @@ class CliTests(unittest.TestCase):
         self.assertIn(payload["overall_action"], ["买入", "小仓试错", "持有", "观望"])
         self.assertIn("short_term_action", payload)
         self.assertIn("warnings", payload)
+        self.assertIn("entry_triggers", payload)
+        self.assertIn("blocked_by", payload)
 
     def test_refresh_is_explicitly_not_implemented(self):
         proc = subprocess.run(

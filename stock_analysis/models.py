@@ -107,3 +107,5 @@ class Advice:
     downside_zones: List[str]
     evidence: Dict[str, List[str]]
     warnings: List[str]
+    entry_triggers: List[str] = field(default_factory=list)
+    blocked_by: List[str] = field(default_factory=list)

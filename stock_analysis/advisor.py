@@ -65,6 +65,45 @@ def _zones(values: List[float]) -> List[str]:
     return [f"{value:g}" for value in values]
 
 
+def _build_entry_triggers(overall: str, supports: List[float], resistances: List[float], naked: Optional[NakedKSnapshot]) -> List[str]:
+    triggers: List[str] = []
+    if overall == "买入":
+        if naked and naked.invalidation:
+            triggers.append(f"价格站稳{naked.invalidation:g}上方，失效线清晰")
+        if resistances:
+            triggers.append(f"放量突破{resistances[0]:g}后确认")
+        elif supports:
+            triggers.append(f"回踩{supports[0]:g}不破后再加仓")
+    elif overall == "持有":
+        triggers.append("只持有不加仓，等待日线买点或压力突破确认")
+    elif overall == "观望":
+        if resistances:
+            triggers.append(f"等待重新站上{resistances[0]:g}并获得日线确认")
+        elif supports:
+            triggers.append(f"等待回踩{supports[0]:g}出现有效承接")
+        else:
+            triggers.append("等待WSS研究、市场风险和技术信号重新对齐")
+    elif overall in {"减仓", "卖出", "回避"}:
+        triggers.append("不做新开仓，只观察风险解除信号")
+    return triggers
+
+
+def _build_blocked_by(quality: str, market: str, high_risk_earnings: bool, warnings: List[str]) -> List[str]:
+    blocked: List[str] = []
+    if quality == "missing":
+        blocked.append("缺少WSS研究缓存，长期胜率无法确认")
+    elif quality == "weak":
+        blocked.append("WSS研究质量弱或进入回避名单")
+    if market == "rupture":
+        blocked.append("市场风险进入防守/破裂状态")
+    if high_risk_earnings:
+        blocked.append("财报临近且IV隐含波动较高")
+    for warning in warnings:
+        if "缓存已过期" in warning:
+            blocked.append(warning)
+    return blocked
+
+
 def _parse_date(value: str) -> Optional[date]:
     if not value:
         return None
@@ -221,6 +260,9 @@ def build_advice(
     else:
         long_action = "长期观察"
 
+    entry_triggers = _build_entry_triggers(overall, supports, resistances, naked)
+    blocked_by = _build_blocked_by(quality, market, high_risk_earnings, warnings)
+
     return Advice(
         ticker=key,
         overall_action=overall,
@@ -234,4 +276,6 @@ def build_advice(
         downside_zones=_zones(supports),
         evidence=evidence,
         warnings=warnings,
+        entry_triggers=entry_triggers,
+        blocked_by=blocked_by,
     )

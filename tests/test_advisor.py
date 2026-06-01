@@ -24,6 +24,8 @@ class AdvisorTests(unittest.TestCase):
 
         self.assertEqual(advice.overall_action, "买入")
         self.assertIn("118.5", advice.invalidation)
+        self.assertIn("站稳", " ".join(advice.entry_triggers))
+        self.assertEqual(advice.blocked_by, [])
 
     def test_avoid_when_research_marks_weak(self):
         ctx = load_wss_context("tests/fixtures/wss")
@@ -47,6 +49,7 @@ class AdvisorTests(unittest.TestCase):
 
         self.assertEqual(advice.overall_action, "观望")
         self.assertEqual(advice.confidence, "中")
+        self.assertIn("缺少WSS研究缓存", " ".join(advice.blocked_by))
 
     def test_research_quality_details_are_in_evidence(self):
         ctx = load_wss_context("tests/fixtures/wss")
@@ -81,3 +84,4 @@ class AdvisorTests(unittest.TestCase):
         self.assertEqual(advice.overall_action, "观望")
         self.assertEqual(advice.short_term_action, "等财报后再看")
         self.assertIn("财报临近", " ".join(advice.warnings))
+        self.assertIn("财报临近", " ".join(advice.blocked_by))

@@ -94,6 +94,8 @@ python3 stock_advisor.py NVDA
 python3 stock_advisor.py 0700.HK --json
 ```
 
+综合分析会把 WSS 研究质量、市场泡沫/风险、财报 IV、技术指标和裸 K 结构合并成短期 / 中期 / 长期动作建议。JSON 和文本报告都会输出 `entry_triggers`（入场/加仓触发条件）和 `blocked_by`（阻止新开仓的因素），技术依据会解释 MACD、RSI、BOLL、Vegas、一目云、OBV、AVWAP、FRVP 和 Fib/结构信号。
+
 WSS 研究 / 泡沫风险 / 财报缓存默认读取 `data/cache/wss/`。缓存刷新有两种方式：
 
 ```bash
