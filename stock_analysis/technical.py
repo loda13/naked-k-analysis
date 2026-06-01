@@ -5,33 +5,35 @@ import io
 import json
 from typing import List, Optional
 
+from .data import resolve_technical_timeframes
 from .models import TechnicalSnapshot
 
 
 def analyze_technical(ticker: str, timeframes: Optional[List[str]] = None) -> TechnicalSnapshot:
+    resolved = resolve_technical_timeframes(timeframes)
     try:
         import ma_analysis
     except ModuleNotFoundError as exc:
-        return TechnicalSnapshot(warnings=[f"技术分析依赖缺失: {exc.name}"])
+        return TechnicalSnapshot(warnings=resolved.warnings + [f"技术分析依赖缺失: {exc.name}"])
     except Exception as exc:
-        return TechnicalSnapshot(warnings=[f"技术分析不可用: {exc}"])
+        return TechnicalSnapshot(warnings=resolved.warnings + [f"技术分析不可用: {exc}"])
 
     stream = io.StringIO()
     err_stream = io.StringIO()
     try:
         with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(err_stream):
-            ma_analysis.analyze(ticker, timeframes or ["daily", "weekly"], output_json=True)
+            ma_analysis.analyze(ticker, resolved.timeframes, output_json=True)
         raw = stream.getvalue().strip()
         payload = json.loads(raw)
     except Exception as exc:
-        return TechnicalSnapshot(warnings=[f"技术分析失败: {exc}"])
+        return TechnicalSnapshot(warnings=resolved.warnings + [f"技术分析失败: {exc}"])
 
     if payload.get("error"):
         details = err_stream.getvalue().strip().splitlines()
         warning = f"技术分析无数据: {payload['error']}"
         if details:
             warning += f" ({details[-1]})"
-        return TechnicalSnapshot(warnings=[warning])
+        return TechnicalSnapshot(warnings=resolved.warnings + [warning])
 
     scores = []
     supports = []
@@ -56,4 +58,5 @@ def analyze_technical(ticker: str, timeframes: Optional[List[str]] = None) -> Te
         summary=(payload.get("resonance") or {}).get("action", ""),
         supports=[float(v) for v in supports[:3]],
         resistances=[float(v) for v in resistances[:3]],
+        warnings=resolved.warnings,
     )

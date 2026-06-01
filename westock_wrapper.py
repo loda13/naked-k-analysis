@@ -10,6 +10,8 @@ import os
 from datetime import datetime, timedelta
 import sys
 
+from stock_analysis.data import normalize_provider_ticker
+
 # 代码格式转换映射
 TICKER_MAP = {
     '0700.HK': 'hk00700',
@@ -31,17 +33,8 @@ def convert_ticker(ticker):
     """转换 ticker 格式: 0700.HK -> hk00700"""
     if ticker in TICKER_MAP:
         return TICKER_MAP[ticker]
-    
-    # 自动转换规则
-    if ticker.endswith('.HK'):
-        code = ticker.replace('.HK', '')
-        return f'hk{code.zfill(5)}'
-    
-    # 美股默认加 us 前缀
-    if not ticker.startswith(('us', 'hk', 'sh', 'sz', 'bj')):
-        return f'us{ticker}'
-    
-    return ticker
+
+    return normalize_provider_ticker(ticker)
 
 def build_westock_command(ticker, period='day', limit=500):
     """Build the westock-data CLI command.
