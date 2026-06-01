@@ -43,10 +43,14 @@
 
 ### 数据源 (`westock_wrapper.py`)
 
-westock-data 数据接口适配层，提供与 yfinance 兼容的 API。优势：
-- 港股 / A股数据覆盖比 yfinance 好
-- 支持腾讯自选股的批量查询
-- 自动处理代码格式转换（如 `0700.HK` → `hk00700`）
+提供与 yfinance 兼容的 `download()` API，按顺序尝试：
+
+1. `westock-data` CLI（可选，通过 `WESTOCK_DATA_SCRIPT` 指定脚本路径）
+2. 腾讯 K 线接口（`web.ifzq.gtimg.cn`，备用 `proxy.finance.qq.com`）
+3. Yahoo chart JSON 直连（绕过 yfinance cookie 预取）
+4. yfinance 官方库兜底
+
+代码会自动处理代码格式转换（如 `0700.HK` → `hk00700`）。如果本机没有 westock-data，港股仍可通过腾讯 / Yahoo chart 跑技术分析和裸 K。
 
 ## 安装
 
@@ -56,8 +60,8 @@ pip install -r requirements.txt
 
 依赖项：
 - Python 3.8+
-- pandas, numpy
-- westock-data CLI（可选，港股/A股需要）
+- pandas, numpy, yfinance
+- westock-data CLI（可选）
 
 ## 使用
 

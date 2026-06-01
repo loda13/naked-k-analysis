@@ -16,7 +16,10 @@
 
 import sys
 import argparse
-import yfinance as yf
+try:
+    import westock_wrapper as yf
+except Exception:
+    import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -24,10 +27,9 @@ from datetime import datetime, timedelta
 
 def fetch_data(ticker, days=365, interval="1d"):
     """获取K线数据"""
-    t = yf.Ticker(ticker)
     end = datetime.now()
     start = end - timedelta(days=days)
-    df = t.history(start=start, end=end, interval=interval)
+    df = yf.download(ticker, start=start, end=end, interval=interval, progress=False)
     if df.empty:
         return None
     # Flatten MultiIndex columns if present

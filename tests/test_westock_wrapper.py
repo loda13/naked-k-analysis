@@ -1,7 +1,10 @@
 import os
+import json
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+
+import pandas as pd
 
 import westock_wrapper
 
@@ -19,9 +22,124 @@ class WestockWrapperTests(unittest.TestCase):
         empty_df = SimpleNamespace(empty=True)
 
         with patch.object(westock_wrapper, "fetch_kline", return_value=empty_df), patch.object(
+            westock_wrapper, "fetch_tencent_kline", return_value=empty_df
+        ), patch.object(westock_wrapper, "fetch_yahoo_chart", return_value=empty_df), patch.object(
             westock_wrapper, "fetch_yfinance", return_value=fallback_df
         ) as fallback:
             result = westock_wrapper.download("NVDA", period="1y", interval="1d")
 
         self.assertIs(result, fallback_df)
         fallback.assert_called_once()
+
+    def test_download_uses_yahoo_chart_before_yfinance_when_tencent_empty(self):
+        empty_df = pd.DataFrame()
+        yahoo_df = pd.DataFrame(
+            {"Open": [1.0], "High": [2.0], "Low": [0.5], "Close": [1.5], "Volume": [100.0]},
+            index=pd.to_datetime(["2026-06-01"]),
+        )
+
+        with patch.object(westock_wrapper, "fetch_kline", return_value=empty_df), patch.object(
+            westock_wrapper, "fetch_tencent_kline", return_value=empty_df
+        ), patch.object(westock_wrapper, "fetch_yahoo_chart", return_value=yahoo_df), patch.object(
+            westock_wrapper, "fetch_yfinance"
+        ) as fallback:
+            result = westock_wrapper.download("NVDA", period="1y", interval="1d")
+
+        self.assertIs(result, yahoo_df)
+        fallback.assert_not_called()
+
+    def test_fetch_tencent_kline_parses_hk_daily_rows(self):
+        payload = {
+            "code": 0,
+            "data": {
+                "hk00700": {
+                    "day": [
+                        ["2026-05-29", "430.000", "438.000", "439.000", "429.000", "12345.000", {}],
+                        ["2026-06-01", "438.000", "440.000", "445.000", "437.000", "23456.000", {}],
+                    ]
+                }
+            },
+        }
+
+        response = SimpleNamespace(text=json.dumps(payload), raise_for_status=lambda: None)
+        with patch("requests.get", return_value=response):
+            df = westock_wrapper.fetch_tencent_kline("0700.HK", period="day", limit=2)
+
+        self.assertEqual(list(df.columns), ["Open", "High", "Low", "Close", "Volume"])
+        self.assertEqual(df.index[0].strftime("%Y-%m-%d"), "2026-05-29")
+        self.assertEqual(float(df.iloc[-1]["Close"]), 440.0)
+        self.assertEqual(float(df.iloc[-1]["Volume"]), 23456.0)
+
+    def test_fetch_tencent_kline_uses_backup_domain_when_primary_fails(self):
+        payload = {
+            "code": 0,
+            "data": {
+                "hk00700": {
+                    "day": [
+                        ["2026-06-01", "438.000", "440.000", "445.000", "437.000", "23456.000", {}],
+                    ]
+                }
+            },
+        }
+
+        response = SimpleNamespace(text=json.dumps(payload), raise_for_status=lambda: None)
+        with patch("requests.get", side_effect=[RuntimeError("dns"), response]) as get:
+            df = westock_wrapper.fetch_tencent_kline("0700.HK", period="day", limit=1)
+
+        self.assertFalse(df.empty)
+        self.assertEqual(get.call_count, 2)
+
+    def test_fetch_yahoo_chart_parses_daily_rows(self):
+        payload = {
+            "chart": {
+                "result": [
+                    {
+                        "timestamp": [1780272000, 1780358400],
+                        "indicators": {
+                            "quote": [
+                                {
+                                    "open": [432.4, 438.0],
+                                    "high": [442.0, 445.0],
+                                    "low": [430.0, 437.0],
+                                    "close": [438.4, 440.0],
+                                    "volume": [21445870, 23456000],
+                                }
+                            ]
+                        },
+                    }
+                ],
+                "error": None,
+            }
+        }
+
+        response = SimpleNamespace(json=lambda: payload, raise_for_status=lambda: None)
+        with patch("requests.get", return_value=response):
+            df = westock_wrapper.fetch_yahoo_chart("0700.HK", period="5d", interval="1d")
+
+        self.assertEqual(list(df.columns), ["Open", "High", "Low", "Close", "Volume"])
+        self.assertEqual(float(df.iloc[-1]["Close"]), 440.0)
+        self.assertEqual(float(df.iloc[-1]["Volume"]), 23456000.0)
+
+    def test_fetch_kline_skips_missing_default_westock_script(self):
+        with patch.dict(os.environ, {}, clear=True), patch("os.path.exists", return_value=False), patch(
+            "subprocess.run"
+        ) as run:
+            df = westock_wrapper.fetch_kline("0700.HK", period="day", limit=10)
+
+        self.assertTrue(df.empty)
+        run.assert_not_called()
+
+    def test_download_uses_tencent_before_yfinance_when_westock_empty(self):
+        empty_df = pd.DataFrame()
+        tencent_df = pd.DataFrame(
+            {"Open": [1.0], "High": [2.0], "Low": [0.5], "Close": [1.5], "Volume": [100.0]},
+            index=pd.to_datetime(["2026-06-01"]),
+        )
+
+        with patch.object(westock_wrapper, "fetch_kline", return_value=empty_df), patch.object(
+            westock_wrapper, "fetch_tencent_kline", return_value=tencent_df
+        ), patch.object(westock_wrapper, "fetch_yfinance") as fallback:
+            result = westock_wrapper.download("0700.HK", period="1y", interval="1d")
+
+        self.assertIs(result, tencent_df)
+        fallback.assert_not_called()

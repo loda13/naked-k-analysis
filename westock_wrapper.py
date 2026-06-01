@@ -67,6 +67,8 @@ def fetch_kline(ticker, period='day', limit=500):
     import pandas as pd
 
     cmd = build_westock_command(ticker, period, limit)
+    if 'WESTOCK_DATA_SCRIPT' not in os.environ and not os.path.exists(cmd[1]):
+        return pd.DataFrame()
     
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -135,6 +137,92 @@ def fetch_yfinance(ticker, period='1y', start=None, end=None, interval='1d', pro
         auto_adjust=False,
     )
 
+def fetch_yahoo_chart(ticker, period='1y', start=None, end=None, interval='1d'):
+    """Fetch OHLCV data from Yahoo's chart JSON endpoint without yfinance cookies."""
+    import pandas as pd
+    import requests
+
+    url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}'
+    params = {'interval': interval}
+    if start or end:
+        start_ts = int(pd.to_datetime(start or '1970-01-01').timestamp())
+        end_ts = int(pd.to_datetime(end or datetime.now()).timestamp())
+        params.update({'period1': start_ts, 'period2': end_ts})
+    else:
+        params['range'] = period
+
+    try:
+        response = requests.get(url, params=params, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+        response.raise_for_status()
+        payload = response.json()
+        result = ((payload.get('chart') or {}).get('result') or [None])[0]
+        if not result:
+            return pd.DataFrame()
+
+        timestamps = result.get('timestamp') or []
+        quote = (((result.get('indicators') or {}).get('quote') or [{}])[0])
+        rows = {
+            'Open': quote.get('open') or [],
+            'High': quote.get('high') or [],
+            'Low': quote.get('low') or [],
+            'Close': quote.get('close') or [],
+            'Volume': quote.get('volume') or [],
+        }
+        if not timestamps or any(len(values) != len(timestamps) for values in rows.values()):
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows, index=pd.to_datetime(timestamps, unit='s'))
+        df.index.name = 'date'
+        return df.apply(pd.to_numeric, errors='coerce').dropna().sort_index()
+    except Exception as e:
+        print(f"Error fetching Yahoo chart {ticker}: {str(e)}", file=sys.stderr)
+        return pd.DataFrame()
+
+def fetch_tencent_kline(ticker, period='day', limit=500):
+    """Fetch OHLCV data from Tencent's appstock kline endpoint."""
+    import pandas as pd
+    import requests
+
+    ws_ticker = convert_ticker(ticker)
+    urls = [
+        'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get',
+        'https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get',
+    ]
+    params = {'param': f'{ws_ticker},{period},,,{limit},qfq'}
+
+    last_error = None
+    for url in urls:
+        try:
+            response = requests.get(url, params=params, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+            response.raise_for_status()
+            payload = json.loads(response.text)
+            if payload.get('code') != 0:
+                continue
+
+            stock_data = (payload.get('data') or {}).get(ws_ticker) or {}
+            rows = stock_data.get(period) or stock_data.get(f'qfq{period}') or []
+            if not rows:
+                continue
+
+            df = pd.DataFrame(rows)
+            df = df.iloc[:, :6]
+            df.columns = ['date', 'open', 'close', 'high', 'low', 'volume']
+            df['date'] = pd.to_datetime(df['date'])
+            df['Open'] = pd.to_numeric(df['open'], errors='coerce')
+            df['High'] = pd.to_numeric(df['high'], errors='coerce')
+            df['Low'] = pd.to_numeric(df['low'], errors='coerce')
+            df['Close'] = pd.to_numeric(df['close'], errors='coerce')
+            df['Volume'] = pd.to_numeric(df['volume'], errors='coerce')
+            df.set_index('date', inplace=True)
+            df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
+            return df.dropna().sort_index()
+        except Exception as e:
+            last_error = e
+
+    if last_error:
+        print(f"Error fetching Tencent kline {ticker}: {str(last_error)}", file=sys.stderr)
+    return pd.DataFrame()
+
 def download(ticker, period='1y', start=None, end=None, interval='1d', progress=False):
     """
     模拟 yfinance.download() 接口
@@ -168,6 +256,10 @@ def download(ticker, period='1y', start=None, end=None, interval='1d', progress=
         ws_period = 'day'
     
     df = fetch_kline(ticker, ws_period, limit)
+    if getattr(df, 'empty', True):
+        df = fetch_tencent_kline(ticker, ws_period, limit)
+    if getattr(df, 'empty', True):
+        df = fetch_yahoo_chart(ticker, period=period, start=start, end=end, interval=interval)
     if getattr(df, 'empty', True):
         df = fetch_yfinance(ticker, period=period, start=start, end=end, interval=interval, progress=progress)
     
