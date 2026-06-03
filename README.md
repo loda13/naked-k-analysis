@@ -1,16 +1,16 @@
 # Stock MA Analysis
 
-Wall Street Skill 股票综合分析 CLI。项目把 WSS 研究缓存、市场泡沫/风险、财报 IV、街哥核心技术指标、双均线密集度和裸 K 结构合并起来，为港股 / 美股 / A 股标的生成短期、中期、长期分析建议。
+街哥技术流 + 裸 K 股票分析 CLI。项目用 MA/EMA 六线密集度、Vegas、一目云、MACD、RSI、BOLL、AVWAP、FRVP、斐波那契和价格行为结构，为港股 / 美股 / A 股标的生成短期、中期、长期技术分析建议。
 
-当前版本：[v1.1.0](https://github.com/loda13/stock-ma-analysis/releases/tag/v1.1.0)
+当前版本：[v1.2.0](https://github.com/loda13/stock-ma-analysis/releases/tag/v1.2.0)
 
 ## 核心能力
 
-- **综合股票顾问**：`stock_advisor.py` 输出总建议、短期 / 中期 / 长期动作、仓位、失效线、支撑压力、触发条件和阻塞因素。
-- **WSS 研究接入**：读取 Wall Street Skill 派生缓存，纳入研究评级、分数、证据等级、催化、风险、护城河、财务质量、行业地位和估值胜率。
-- **市场风险门禁**：把泡沫阶段、市场防守/破裂状态、板块过热和财报 IV 风险加入决策，避免只看技术形态追高。
-- **街哥核心指标解释**：解释 MACD、RSI、BOLL、Vegas、一目云、OBV、AVWAP、FRVP/POC/VAH/VAL、Fib/假突破/假跌破等信号。
-- **裸 K 辅助分析**：保留纯价格行为判断，识别趋势结构、支撑阻力、吞没、锤子线、十字星、Pin Bar 等形态。
+- **综合技术顾问**：`stock_advisor.py` 输出总建议、短期 / 中期 / 长期动作、仓位、失效线、支撑压力、触发条件和阻塞因素。
+- **街哥技术流**：基于 MA20/60/120 + EMA20/60/120 六线系统，结合回踩 MA20、假突破、假跌破、Vegas 通道、一目云和关键开盘价系统。
+- **指标共振解释**：解释 MACD、RSI、BOLL、OBV、AVWAP、FRVP/POC/VAH/VAL、Fib/结构信号。
+- **裸 K 辅助确认**：识别趋势结构、BoS、支撑阻力、吞没、锤子线、十字星、Pin Bar、旗形和三角形等形态。
+- **多周期判断**：默认覆盖短期 4H、日线、周线；当 4H 数据源不可用时，会提示使用日线代理。
 - **多数据源兜底**：优先 `westock-data`，再走腾讯 K 线、Yahoo chart JSON，最后用 yfinance。
 
 ## 快速开始
@@ -29,37 +29,30 @@ python3 stock_advisor.py 0700.HK --json
 
 输出会包含：
 
-- `overall_action`：总建议，如买入、持有、观望、减仓、回避
+- `overall_action`：总建议，如买入、小仓试错、观望、减仓、卖出
 - `short_term_action` / `medium_term_action` / `long_term_action`
 - `entry_triggers`：入场、加仓或重新评估的触发条件
-- `blocked_by`：阻止新开仓的因素
+- `blocked_by`：阻止新开仓的技术因素
 - `invalidation`：失效线
 - `upside_zones` / `downside_zones`：上方压力和下方支撑
-- `evidence`：WSS、市场、技术、裸 K、财报依据
-- `warnings`：缓存缺失、缓存过期、4H 数据代理等提示
+- `evidence.technical`：街哥技术流依据
+- `evidence.naked_k`：裸 K 依据
+- `warnings`：数据源、周期代理或分析失败提示
 
-## Wall Street Skill 缓存
+## 综合分析逻辑
 
-WSS 研究 / 泡沫风险 / 财报缓存默认读取 `data/cache/wss/`。缓存只保存派生字段，不保存原始 HTML、账号、密码或 Cookie。
+`stock_advisor.py` 会同时运行：
 
-推荐方式是从浏览器导出的 WSS 页面 HTML 生成缓存：
+1. `ma_analysis.py`：街哥技术流，多周期指标和结构分析。
+2. `naked_k_analysis.py`：裸 K，价格行为、支撑阻力和形态分析。
+3. `stock_analysis/advisor.py`：合并两个方向，生成动作建议。
 
-```bash
-python3 stock_advisor.py NVDA --refresh-wss-cache --wss-html-dir /path/to/wss-html
-```
+决策优先级：
 
-也可以用环境变量里的登录 Cookie 在线刷新：
-
-```bash
-export WSS_COOKIE='...'
-python3 stock_advisor.py NVDA --refresh-wss-cache
-```
-
-HTML 文件名规则：
-
-- 包含 `market` / `risk` / `bubble` / `泡沫`：写入 `market_risk.json`
-- 包含 `earning` / `财报`：写入 `earnings.json`
-- 其他 `.html`：按研究页解析写入 `research.json`
+- **买入**：街哥技术流偏多，裸 K 不冲突；如果裸 K 同时偏多，置信度更高。
+- **小仓试错**：技术流中性，但裸 K 在支撑或结构上给出偏多信号。
+- **观望**：技术流和裸 K 没有共振，或技术偏多但裸 K 结构偏空。
+- **减仓 / 卖出**：技术趋势偏空；若裸 K 也偏空，直接提高风险等级。
 
 ## 技术分析工具
 
@@ -72,7 +65,17 @@ python3 ma_analysis.py 1810.HK weekly
 python3 ma_analysis.py 0700.HK 4h,daily,weekly
 ```
 
-基于 MA20/60/120 + EMA20/60/120 六线系统，识别均线密集、价格相对均线位置、VWAP、MACD、RSI、布林带、斐波那契、量价关系、K 线形态、Vegas 通道、一目云、AVWAP 和筹码分布。
+核心信号：
+
+- 均线密集 + K 线在上方：偏多
+- 均线密集 + K 线在下方：偏空
+- 回踩 MA20 不破：加仓观察
+- 假突破 MA20：风险信号
+- 假跌破 MA20 后快速拉回：反向买点观察
+- Vegas 通道上方：趋势偏多
+- Vegas 通道下方：趋势偏空
+- FRVP / POC / VAH / VAL：支撑压力和成本区
+- AVWAP：重要高低点锚定成本
 
 ### 裸 K 分析
 
@@ -81,7 +84,13 @@ python3 naked_k_analysis.py NVDA
 python3 naked_k_analysis.py 0700.HK -p w -d 240
 ```
 
-裸 K 分析不依赖指标，主要看价格结构、前高前低、关键支撑阻力和 K 线反应。
+裸 K 分析不依赖指标，主要看：
+
+- 价格结构：HH/HL、LH/LL、BoS
+- 支撑 / 阻力：前高前低、多次测试位
+- 关键位反应：突破、跌破、受阻、承接
+- K 线形态：吞没、Pin Bar、十字星、大阳线、大阴线
+- 多 K 线形态：旗形、三角形、孕线等
 
 ### 一键日报
 
@@ -100,13 +109,6 @@ bash ma_daily_report.sh
 
 代码会自动处理常见代码格式转换，例如 `0700.HK` -> `hk00700`。如果本机没有 westock-data，港股仍可通过腾讯 / Yahoo chart 跑技术分析和裸 K。
 
-## 决策框架
-
-- **长期**：优先看 WSS 研究质量、商业验证、护城河、行业地位、估值胜率和市场阶段。
-- **中期**：看日线 / 周线趋势、Vegas / 一目云 / FRVP 成本区和支撑压力。
-- **短期**：看 4H / 日线节奏、MACD/RSI/BOLL、裸 K 形态和明确失效线。
-- **风控**：缺少 WSS 研究缓存、市场破裂、财报临近且 IV 高、缓存过期都会降低或阻断新开仓。
-
 ## 测试
 
 ```bash
@@ -115,19 +117,12 @@ python3 -m unittest discover -v
 
 当前覆盖：
 
-- advisor 决策
+- 技术派 advisor 决策
 - CLI JSON 输出
-- WSS 缓存加载和过期警告
-- WSS HTML 派生缓存刷新
 - 腾讯 / Yahoo / yfinance 数据源 fallback
 - 技术方法论摘要
 - 裸 K 数据封装
-
-## 安全与隐私
-
-- 不提交 WSS 账号、密码、Cookie 或原始 HTML。
-- `data/cache/wss/` 仅用于本地派生缓存。
-- 缓存刷新只写研究、市场、财报等结构化派生字段。
+- 周期解析和 4H 日线代理提示
 
 ## 免责声明
 

@@ -1,9 +1,9 @@
 import unittest
 
-from stock_analysis.wss_methodology import interpret_timeframe, summarize_methodology
+from stock_analysis.jg_methodology import interpret_timeframe, summarize_methodology
 
 
-class WssMethodologyTests(unittest.TestCase):
+class JgMethodologyTests(unittest.TestCase):
     def test_macd_reads_zero_axis_before_cross(self):
         item = {
             "tf": "日线",

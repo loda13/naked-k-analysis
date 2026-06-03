@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from .data import resolve_technical_timeframes
 from .models import TechnicalSnapshot
-from .wss_methodology import summarize_methodology
+from .jg_methodology import summarize_methodology
 
 
 def analyze_technical(ticker: str, timeframes: Optional[List[str]] = None) -> TechnicalSnapshot:

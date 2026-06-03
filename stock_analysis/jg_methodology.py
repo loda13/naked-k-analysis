@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Interpret JG technical indicator payloads into readable evidence."""
+
 from typing import Any, Dict, List
 
 

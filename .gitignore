@@ -1,5 +1,4 @@
 data/cache/
-.wss-session/
 *.pyc
 __pycache__/
 .env

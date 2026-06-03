@@ -1,87 +1,73 @@
 import unittest
-from datetime import date
 
 from stock_analysis.advisor import build_advice
-from stock_analysis.cache import load_wss_context
 from stock_analysis.models import NakedKSnapshot, TechnicalSnapshot
 
 
 class AdvisorTests(unittest.TestCase):
-    def test_buy_when_research_accepts_and_technical_bullish(self):
-        ctx = load_wss_context("tests/fixtures/wss")
-
+    def test_buy_when_jg_technical_and_naked_k_are_bullish(self):
         advice = build_advice(
             "NVDA",
-            ctx,
-            technical=TechnicalSnapshot(direction="bullish", score=2.0, warnings=[]),
+            technical=TechnicalSnapshot(direction="bullish", score=2.0, summary="日线突破确认", warnings=[]),
             naked=NakedKSnapshot(
                 direction="bullish",
+                score=2.0,
                 invalidation=118.5,
                 supports=[118.5],
                 resistances=[132.0],
+                summary="上升趋势",
             ),
         )
 
         self.assertEqual(advice.overall_action, "买入")
+        self.assertEqual(advice.confidence, "高")
         self.assertIn("118.5", advice.invalidation)
         self.assertIn("站稳", " ".join(advice.entry_triggers))
         self.assertEqual(advice.blocked_by, [])
+        self.assertEqual(set(advice.evidence), {"technical", "naked_k"})
 
-    def test_avoid_when_research_marks_weak(self):
-        ctx = load_wss_context("tests/fixtures/wss")
-
+    def test_bearish_technical_and_naked_k_blocks_new_buy(self):
         advice = build_advice(
-            "INTC",
-            ctx,
-            technical=TechnicalSnapshot(direction="bullish", score=2.0, warnings=[]),
+            "0700.HK",
+            technical=TechnicalSnapshot(direction="bearish", score=-1.5, summary="Vegas通道下方", warnings=[]),
+            naked=NakedKSnapshot(
+                direction="bearish",
+                score=-4.0,
+                supports=[],
+                resistances=[478.5],
+                summary="下降趋势, BoS",
+            ),
         )
 
-        self.assertEqual(advice.overall_action, "回避")
+        self.assertEqual(advice.overall_action, "卖出")
+        self.assertEqual(advice.short_term_action, "短线减仓")
+        self.assertIn("技术趋势偏空", " ".join(advice.blocked_by))
+        self.assertIn("裸K结构偏空", " ".join(advice.blocked_by))
 
-    def test_missing_research_caps_to_watch(self):
-        ctx = load_wss_context("tests/fixtures/wss")
-
+    def test_neutral_technical_with_bullish_naked_k_is_trial_only(self):
         advice = build_advice(
-            "UNKNOWN",
-            ctx,
-            technical=TechnicalSnapshot(direction="bullish", score=2.0, warnings=[]),
-        )
-
-        self.assertEqual(advice.overall_action, "观望")
-        self.assertEqual(advice.confidence, "中")
-        self.assertIn("缺少WSS研究缓存", " ".join(advice.blocked_by))
-
-    def test_research_quality_details_are_in_evidence(self):
-        ctx = load_wss_context("tests/fixtures/wss")
-
-        advice = build_advice(
-            "NVDA",
-            ctx,
-            technical=TechnicalSnapshot(direction="neutral", score=0.0, warnings=[]),
-        )
-
-        research_text = " ".join(advice.evidence["research"])
-        self.assertIn("护城河: CUDA生态和开发者锁定", research_text)
-        self.assertIn("商业验证: 云厂商AI资本开支持续验证", research_text)
-        self.assertIn("风险扣分: 出口限制和供应链集中", research_text)
-
-    def test_high_iv_near_earnings_blocks_fresh_buy(self):
-        ctx = load_wss_context("tests/fixtures/wss")
-
-        advice = build_advice(
-            "NVDA",
-            ctx,
-            technical=TechnicalSnapshot(direction="bullish", score=2.0, warnings=[]),
+            "BABA",
+            technical=TechnicalSnapshot(direction="neutral", score=0.2, summary="无明显共振", warnings=[]),
             naked=NakedKSnapshot(
                 direction="bullish",
-                invalidation=118.5,
-                supports=[118.5],
-                resistances=[132.0],
+                score=2.0,
+                invalidation=88.0,
+                supports=[88.0],
+                resistances=[96.0],
+                summary="支撑反弹",
             ),
-            today=date(2026, 6, 5),
+        )
+
+        self.assertEqual(advice.overall_action, "小仓试错")
+        self.assertEqual(advice.position_guidance, "小仓")
+        self.assertIn("回踩", " ".join(advice.entry_triggers))
+
+    def test_missing_technical_keeps_observation_without_external_warning(self):
+        advice = build_advice(
+            "UNKNOWN",
+            technical=TechnicalSnapshot(warnings=["技术分析无数据"]),
+            naked=NakedKSnapshot(warnings=["裸K分析无数据"]),
         )
 
         self.assertEqual(advice.overall_action, "观望")
-        self.assertEqual(advice.short_term_action, "等财报后再看")
-        self.assertIn("财报临近", " ".join(advice.warnings))
-        self.assertIn("财报临近", " ".join(advice.blocked_by))
+        self.assertNotIn("外部研究", " ".join(advice.warnings + advice.blocked_by))

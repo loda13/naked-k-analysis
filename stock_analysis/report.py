@@ -12,7 +12,7 @@ def advice_to_json(advice: Advice) -> str:
 
 def render_text_report(advice: Advice) -> str:
     lines = [
-        f"📊 {advice.ticker} Wall Street Skill 综合分析",
+        f"📊 {advice.ticker} 街哥技术流 + 裸K 综合分析",
         "",
         f"总建议: {advice.overall_action} | 置信度: {advice.confidence} | 仓位: {advice.position_guidance}",
         f"短期: {advice.short_term_action}",
@@ -32,11 +32,8 @@ def render_text_report(advice: Advice) -> str:
     lines.append("")
     lines.append("依据:")
     labels = {
-        "market": "市场",
-        "research": "研究",
         "technical": "技术",
         "naked_k": "裸K",
-        "earnings": "财报",
     }
     for key, items in advice.evidence.items():
         if not items:

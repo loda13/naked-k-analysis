@@ -28,7 +28,7 @@ class TechnicalWrapperTests(unittest.TestCase):
         self.assertIn("4H", " ".join(snapshot.warnings))
         self.assertIn("日线替代", " ".join(snapshot.warnings))
 
-    def test_analyze_technical_appends_wss_methodology_summary(self):
+    def test_analyze_technical_appends_jg_methodology_summary(self):
         payload = {
             "ticker": "NVDA",
             "timeframes": [
