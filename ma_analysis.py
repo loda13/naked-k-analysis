@@ -1971,9 +1971,20 @@ def _print_sp(results, close, ath_data=None):
 
 
 def resample_4h(df):
-    """将日线近似转为4h (yfinance 4h数据有限，用1h聚合)"""
-    # yfinance interval=1h 最多730天, 4h需要手动聚合
-    return df  # 直接用1h下载后聚合
+    """将真实 1h K 线聚合为 4h K 线。"""
+    if df.empty:
+        return df
+    hourly = df.sort_index()
+    if not isinstance(hourly.index, pd.DatetimeIndex):
+        return hourly
+    agg = {
+        'Open': 'first',
+        'High': 'max',
+        'Low': 'min',
+        'Close': 'last',
+        'Volume': 'sum',
+    }
+    return hourly.resample('4h', origin=hourly.index[0]).agg(agg).dropna()
 
 
 def analyze(ticker, timeframes=None, output_json=False, force_detailed=False):
@@ -1989,14 +2000,16 @@ def analyze(ticker, timeframes=None, output_json=False, force_detailed=False):
     results = []
     for tf in timeframes:
         if tf == '4h':
-            # westock 不支持小时线，用日线代替，需要足够数据算MA120
-            df_d = yf.download(ticker, period='300d', progress=False)
-            if df_d.empty:
+            df_h = yf.download(ticker, period='300d', interval='1h', progress=False)
+            if df_h.empty:
                 continue
-            if isinstance(df_d.columns, pd.MultiIndex):
-                df_d.columns = df_d.columns.get_level_values(0)
-            r = analyze_timeframe(df_d, ticker, "4小时")
-            if r:
+            if isinstance(df_h.columns, pd.MultiIndex):
+                df_h.columns = df_h.columns.get_level_values(0)
+            df_4h = resample_4h(df_h)
+            if df_4h.empty:
+                continue
+            r = analyze_timeframe(df_4h, ticker, "4小时")
+            if r and r.get('signal') != 'nodata':
                 results.append(r)
 
         elif tf == 'daily':
@@ -2006,7 +2019,7 @@ def analyze(ticker, timeframes=None, output_json=False, force_detailed=False):
             if isinstance(df_d.columns, pd.MultiIndex):
                 df_d.columns = df_d.columns.get_level_values(0)
             r = analyze_timeframe(df_d, ticker, "日线")
-            if r:
+            if r and r.get('signal') != 'nodata':
                 results.append(r)
 
         elif tf == 'weekly':
@@ -2016,7 +2029,7 @@ def analyze(ticker, timeframes=None, output_json=False, force_detailed=False):
             if isinstance(df_w.columns, pd.MultiIndex):
                 df_w.columns = df_w.columns.get_level_values(0)
             r = analyze_timeframe(df_w, ticker, "周线")
-            if r:
+            if r and r.get('signal') != 'nodata':
                 results.append(r)
 
     if not results:

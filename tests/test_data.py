@@ -19,10 +19,9 @@ class DataLayerTests(unittest.TestCase):
         self.assertEqual(normalize_provider_ticker("NVDA"), "usNVDA")
         self.assertEqual(normalize_provider_ticker("hk00700"), "hk00700")
 
-    def test_resolve_technical_timeframes_warns_when_4h_is_daily_proxy(self):
+    def test_resolve_technical_timeframes_keeps_real_4h_without_proxy_warning(self):
         resolved = resolve_technical_timeframes(["4h", "daily", "weekly"])
 
         self.assertEqual(resolved.timeframes, ["4h", "daily", "weekly"])
-        self.assertTrue(resolved.uses_daily_proxy_for_4h)
-        self.assertIn("4H", resolved.warnings[0])
-        self.assertIn("日线替代", resolved.warnings[0])
+        self.assertFalse(resolved.uses_daily_proxy_for_4h)
+        self.assertEqual(resolved.warnings, [])

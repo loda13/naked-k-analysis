@@ -11,6 +11,9 @@ class TechnicalSnapshot:
     summary: str = ""
     supports: List[float] = field(default_factory=list)
     resistances: List[float] = field(default_factory=list)
+    timeframe_scores: Dict[str, float] = field(default_factory=dict)
+    timeframe_directions: Dict[str, str] = field(default_factory=dict)
+    evidence_sections: Dict[str, List[str]] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
 
 

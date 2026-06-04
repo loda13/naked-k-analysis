@@ -158,3 +158,38 @@ class WestockWrapperTests(unittest.TestCase):
 
         self.assertIs(result, tencent_df)
         fallback.assert_not_called()
+
+    def test_download_uses_tencent_hourly_for_hk_1h(self):
+        empty_df = pd.DataFrame()
+        hourly_df = pd.DataFrame(
+            {"Open": [1.0] * 180, "High": [2.0] * 180, "Low": [0.5] * 180, "Close": [1.5] * 180, "Volume": [100.0] * 180},
+            index=pd.date_range("2026-05-01 10:00", periods=180, freq="h"),
+        )
+
+        with patch.object(westock_wrapper, "fetch_kline", return_value=empty_df), patch.object(
+            westock_wrapper, "fetch_tencent_kline", return_value=hourly_df
+        ) as tencent, patch.object(westock_wrapper, "fetch_yahoo_chart") as yahoo:
+            result = westock_wrapper.download("0700.HK", period="60d", interval="1h")
+
+        self.assertIs(result, hourly_df)
+        self.assertEqual(tencent.call_args.args[1], "m60")
+        yahoo.assert_not_called()
+
+    def test_download_falls_back_to_yahoo_when_tencent_hourly_is_too_short(self):
+        empty_df = pd.DataFrame()
+        tiny_tencent_df = pd.DataFrame(
+            {"Open": [1.0], "High": [2.0], "Low": [0.5], "Close": [1.5], "Volume": [100.0]},
+            index=pd.to_datetime(["2026-06-01 10:00"]),
+        )
+        yahoo_df = pd.DataFrame(
+            {"Open": [1.0] * 180, "High": [2.0] * 180, "Low": [0.5] * 180, "Close": [1.5] * 180, "Volume": [100.0] * 180},
+            index=pd.date_range("2026-05-01 10:00", periods=180, freq="h"),
+        )
+
+        with patch.object(westock_wrapper, "fetch_kline", return_value=empty_df), patch.object(
+            westock_wrapper, "fetch_tencent_kline", return_value=tiny_tencent_df
+        ), patch.object(westock_wrapper, "fetch_yahoo_chart", return_value=yahoo_df) as yahoo:
+            result = westock_wrapper.download("0700.HK", period="60d", interval="1h")
+
+        self.assertIs(result, yahoo_df)
+        yahoo.assert_called_once()

@@ -2,7 +2,7 @@
 
 街哥技术流 + 裸 K 股票分析 CLI。项目用 MA/EMA 六线密集度、Vegas、一目云、MACD、RSI、BOLL、AVWAP、FRVP、斐波那契和价格行为结构，为港股 / 美股 / A 股标的生成短期、中期、长期技术分析建议。
 
-当前版本：[v1.2.0](https://github.com/loda13/stock-ma-analysis/releases/tag/v1.2.0)
+当前版本：[v1.3.0](https://github.com/loda13/stock-ma-analysis/releases/tag/v1.3.0)
 
 ## 核心能力
 
@@ -10,7 +10,8 @@
 - **街哥技术流**：基于 MA20/60/120 + EMA20/60/120 六线系统，结合回踩 MA20、假突破、假跌破、Vegas 通道、一目云和关键开盘价系统。
 - **指标共振解释**：解释 MACD、RSI、BOLL、OBV、AVWAP、FRVP/POC/VAH/VAL、Fib/结构信号。
 - **裸 K 辅助确认**：识别趋势结构、BoS、支撑阻力、吞没、锤子线、十字星、Pin Bar、旗形和三角形等形态。
-- **多周期判断**：默认覆盖短期 4H、日线、周线；当 4H 数据源不可用时，会提示使用日线代理。
+- **多周期判断**：默认覆盖短期 4H、日线、周线；4H 使用真实 1H K 线聚合，不再用日线代理。
+- **结构化证据**：技术依据按趋势、动量、成本区拆分，同时保留短期 / 中期 / 长期评分。
 - **多数据源兜底**：优先 `westock-data`，再走腾讯 K 线、Yahoo chart JSON，最后用 yfinance。
 
 ## 快速开始
@@ -35,9 +36,9 @@ python3 stock_advisor.py 0700.HK --json
 - `blocked_by`：阻止新开仓的技术因素
 - `invalidation`：失效线
 - `upside_zones` / `downside_zones`：上方压力和下方支撑
-- `evidence.technical`：街哥技术流依据
+- `evidence.technical`：街哥技术流依据，含 4H / 日线 / 周线评分，以及趋势、动量、成本区结构化证据
 - `evidence.naked_k`：裸 K 依据
-- `warnings`：数据源、周期代理或分析失败提示
+- `warnings`：数据源或分析失败提示
 
 ## 综合分析逻辑
 
@@ -49,8 +50,8 @@ python3 stock_advisor.py 0700.HK --json
 
 决策优先级：
 
-- **买入**：街哥技术流偏多，裸 K 不冲突；如果裸 K 同时偏多，置信度更高。
-- **小仓试错**：技术流中性，但裸 K 在支撑或结构上给出偏多信号。
+- **买入**：整体技术流偏多、日线也偏多，且裸 K 不冲突；如果裸 K 同时偏多，置信度更高。
+- **小仓试错**：技术流偏多但日线买点未确认，或技术流中性但裸 K 在支撑 / 结构上给出偏多信号。
 - **观望**：技术流和裸 K 没有共振，或技术偏多但裸 K 结构偏空。
 - **减仓 / 卖出**：技术趋势偏空；若裸 K 也偏空，直接提高风险等级。
 
@@ -104,10 +105,10 @@ bash ma_daily_report.sh
 
 1. `westock-data` CLI，可通过 `WESTOCK_DATA_SCRIPT` 指定脚本路径
 2. 腾讯 K 线接口：`web.ifzq.gtimg.cn`，备用 `proxy.finance.qq.com`
-3. Yahoo chart JSON 直连，绕过 yfinance cookie 预取
+3. Yahoo chart JSON 直连，绕过 yfinance cookie 预取，支持 1H 数据兜底
 4. yfinance 官方库兜底
 
-代码会自动处理常见代码格式转换，例如 `0700.HK` -> `hk00700`。如果本机没有 westock-data，港股仍可通过腾讯 / Yahoo chart 跑技术分析和裸 K。
+代码会自动处理常见代码格式转换，例如 `0700.HK` -> `hk00700`。如果本机没有 westock-data，港股仍可通过腾讯 / Yahoo chart 跑技术分析和裸 K。分钟线数据不足 120 根时，会继续尝试下一个数据源，避免 4H 分析使用不完整数据。
 
 ## 测试
 
@@ -122,7 +123,7 @@ python3 -m unittest discover -v
 - 腾讯 / Yahoo / yfinance 数据源 fallback
 - 技术方法论摘要
 - 裸 K 数据封装
-- 周期解析和 4H 日线代理提示
+- 真实 1H 聚合 4H、短中长期分层评分和结构化技术证据
 
 ## 免责声明
 

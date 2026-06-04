@@ -71,3 +71,57 @@ class AdvisorTests(unittest.TestCase):
 
         self.assertEqual(advice.overall_action, "观望")
         self.assertNotIn("外部研究", " ".join(advice.warnings + advice.blocked_by))
+
+    def test_horizon_actions_follow_separate_timeframe_directions(self):
+        advice = build_advice(
+            "0700.HK",
+            technical=TechnicalSnapshot(
+                direction="neutral",
+                score=0.0,
+                timeframe_scores={"short": -1.5, "medium": 2.0, "long": -1.2},
+                timeframe_directions={"short": "bearish", "medium": "bullish", "long": "bearish"},
+                evidence_sections={
+                    "trend": ["周线Vegas通道下方"],
+                    "momentum": ["日线MACD零轴上"],
+                    "cost": ["日线FRVP价值区上方"],
+                },
+                warnings=[],
+            ),
+            naked=NakedKSnapshot(direction="neutral", score=0.0),
+        )
+
+        self.assertEqual(advice.short_term_action, "短线减仓")
+        self.assertEqual(advice.medium_term_action, "波段买入")
+        self.assertEqual(advice.long_term_action, "等待趋势修复")
+        self.assertIn("趋势:", " ".join(advice.evidence["technical"]))
+
+    def test_bullish_short_and_long_without_daily_confirmation_is_trial_only(self):
+        advice = build_advice(
+            "9992.HK",
+            technical=TechnicalSnapshot(
+                direction="bullish",
+                score=2.5,
+                timeframe_scores={"short": 1.5, "medium": 0.0, "long": 1.0},
+                timeframe_directions={"short": "bullish", "medium": "neutral", "long": "bullish"},
+            ),
+            naked=NakedKSnapshot(direction="bullish", score=1.0, invalidation=174.85),
+        )
+
+        self.assertEqual(advice.overall_action, "小仓试错")
+        self.assertEqual(advice.position_guidance, "小仓")
+        self.assertIn("日线买点", advice.medium_term_action)
+
+    def test_overall_bearish_risk_prevents_short_trial_language(self):
+        advice = build_advice(
+            "NVDA",
+            technical=TechnicalSnapshot(
+                direction="bearish",
+                score=-1.5,
+                timeframe_scores={"short": -1.0, "medium": -1.0, "long": 0.5},
+                timeframe_directions={"short": "neutral", "medium": "neutral", "long": "neutral"},
+            ),
+            naked=NakedKSnapshot(direction="bullish", score=1.5, invalidation=210.49),
+        )
+
+        self.assertEqual(advice.overall_action, "减仓")
+        self.assertEqual(advice.short_term_action, "短线反弹观察")

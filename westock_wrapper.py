@@ -28,6 +28,7 @@ TICKER_MAP = {
 }
 
 DEFAULT_WESTOCK_DATA_SCRIPT = '/root/.openclaw/workspace/skills/westock-data/scripts/index.js'
+MIN_INTRADAY_ROWS = 120
 
 def convert_ticker(ticker):
     """转换 ticker 格式: 0700.HK -> hk00700"""
@@ -236,6 +237,14 @@ def download(ticker, period='1y', start=None, end=None, interval='1d', progress=
         limit = days
     else:
         limit = 500
+
+    if interval == '1h':
+        if period.endswith('y'):
+            limit = int(period[:-1]) * 250 * 6
+        elif period.endswith('mo'):
+            limit = int(period[:-2]) * 21 * 6
+        elif period.endswith('d'):
+            limit = int(period[:-1]) * 6
     
     # 转换 interval
     if interval == '1d':
@@ -245,15 +254,28 @@ def download(ticker, period='1y', start=None, end=None, interval='1d', progress=
     elif interval == '1mo':
         ws_period = 'month'
     elif interval == '1h':
-        ws_period = 'day'  # westock 不支持小时线，用日线代替
-        limit = min(limit, 500)
+        ws_period = 'm60'
     else:
         ws_period = 'day'
     
+    def _has_enough_rows(frame):
+        if getattr(frame, 'empty', True):
+            return False
+        if interval == '1h':
+            try:
+                return len(frame) >= MIN_INTRADAY_ROWS
+            except TypeError:
+                return True
+        return True
+
     df = fetch_kline(ticker, ws_period, limit)
+    if not _has_enough_rows(df):
+        df = type(df)() if hasattr(df, 'empty') else df
     ws_ticker = convert_ticker(ticker)
     if getattr(df, 'empty', True) and ws_ticker.startswith(('hk', 'sh', 'sz', 'bj')):
         df = fetch_tencent_kline(ticker, ws_period, limit)
+        if not _has_enough_rows(df):
+            df = type(df)() if hasattr(df, 'empty') else df
     if getattr(df, 'empty', True):
         df = fetch_yahoo_chart(ticker, period=period, start=start, end=end, interval=interval)
     if getattr(df, 'empty', True):

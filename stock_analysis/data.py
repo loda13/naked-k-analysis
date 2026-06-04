@@ -40,13 +40,9 @@ def classify_market(ticker: str) -> str:
 
 def resolve_technical_timeframes(timeframes: Iterable[str] | None) -> ResolvedTimeframes:
     selected = list(timeframes or ["daily", "weekly"])
-    warnings: List[str] = []
-    uses_daily_proxy = any(tf.lower() in {"4h", "4小时"} for tf in selected)
-    if uses_daily_proxy:
-        warnings.append("4H数据源暂不可用，当前短线4H分析为日线替代")
 
     return ResolvedTimeframes(
         timeframes=selected,
-        warnings=warnings,
-        uses_daily_proxy_for_4h=uses_daily_proxy,
+        warnings=[],
+        uses_daily_proxy_for_4h=False,
     )
