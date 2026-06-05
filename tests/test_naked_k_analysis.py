@@ -18,3 +18,22 @@ class NakedKAnalysisDataTests(unittest.TestCase):
 
         self.assertIs(result, frame)
         download.assert_called_once()
+
+    def test_analyze_one_returns_data_source_audit(self):
+        frame = pd.DataFrame(
+            {
+                "Open": [10 + i * 0.1 for i in range(80)],
+                "High": [10.5 + i * 0.1 for i in range(80)],
+                "Low": [9.5 + i * 0.1 for i in range(80)],
+                "Close": [10.2 + i * 0.1 for i in range(80)],
+                "Volume": [1000 + i for i in range(80)],
+            },
+            index=pd.date_range("2026-01-01", periods=80, freq="D"),
+        )
+        frame.attrs.update({"source": "yahoo_chart", "rows": 80, "latest": "2026-03-21", "interval": "1d"})
+
+        with patch.object(naked_k_analysis, "fetch_data", return_value=frame):
+            result = naked_k_analysis.analyze_one("NVDA", as_json=True)
+
+        self.assertEqual(result["data_source"]["source"], "yahoo_chart")
+        self.assertEqual(result["data_source"]["rows"], 80)

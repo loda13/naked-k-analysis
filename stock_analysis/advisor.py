@@ -96,6 +96,49 @@ def _build_blocked_by(tech_dir: str, naked_dir: str, overall: str) -> List[str]:
     return blocked
 
 
+def _current_price(technical: Optional[TechnicalSnapshot], naked: Optional[NakedKSnapshot]) -> Optional[float]:
+    if naked and naked.current_price:
+        return naked.current_price
+    if technical and technical.current_price:
+        return technical.current_price
+    return None
+
+
+def _stop_distance_pct(price: Optional[float], invalidation: Optional[float]) -> Optional[float]:
+    if price is None or invalidation is None or price <= 0:
+        return None
+    return abs(price - invalidation) / price * 100
+
+
+def _risk_blockers(
+    technical: Optional[TechnicalSnapshot],
+    price: Optional[float],
+    invalidation: Optional[float],
+) -> List[str]:
+    blockers: List[str] = []
+    risk_flags = technical.risk_flags if technical else []
+    if any("高位过热" in flag for flag in risk_flags):
+        blockers.append("高位过热，不追新仓")
+    stop_dist = _stop_distance_pct(price, invalidation)
+    if stop_dist is not None and stop_dist > 20:
+        blockers.append(f"失效线距离过远({stop_dist:.1f}%)")
+    elif stop_dist is not None and stop_dist > 12:
+        blockers.append(f"失效线距离偏远({stop_dist:.1f}%)")
+    return blockers
+
+
+def _collect_data_sources(
+    technical: Optional[TechnicalSnapshot],
+    naked: Optional[NakedKSnapshot],
+) -> Dict[str, object]:
+    sources: Dict[str, object] = {"technical": {}, "naked_k": {}}
+    if technical and technical.data_sources:
+        sources["technical"] = technical.data_sources
+    if naked and naked.data_source:
+        sources["naked_k"] = naked.data_source
+    return sources
+
+
 def _short_action(tech_dir: str, naked_dir: str, naked: Optional[NakedKSnapshot]) -> str:
     if tech_dir == "bearish":
         return "短线减仓"
@@ -156,6 +199,9 @@ def build_advice(
     tech_dir = _technical_direction(technical)
     naked_dir = _naked_direction(naked)
     medium_dir = _horizon_direction(technical, "medium")
+    current_price = _current_price(technical, naked)
+    raw_invalidation = naked.invalidation if naked else None
+    risk_blockers = _risk_blockers(technical, current_price, raw_invalidation)
 
     warnings: List[str] = []
     if technical:
@@ -206,7 +252,20 @@ def build_advice(
         confidence = "中"
         position = "空仓等待"
 
-    invalidation = _format_price(naked.invalidation if naked else None)
+    if overall in {"买入", "小仓试错"} and any("失效线距离过远" in item for item in risk_blockers):
+        overall = "观望"
+        confidence = "中"
+        position = "空仓等待"
+    elif overall == "买入" and any("高位过热" in item for item in risk_blockers):
+        overall = "小仓试错"
+        confidence = "中"
+        position = "小仓"
+    elif overall == "买入" and any("失效线距离偏远" in item for item in risk_blockers):
+        overall = "小仓试错"
+        confidence = "中"
+        position = "小仓"
+
+    invalidation = _format_price(raw_invalidation)
     supports = naked.supports if naked else (technical.supports if technical else [])
     resistances = naked.resistances if naked else (technical.resistances if technical else [])
 
@@ -215,9 +274,14 @@ def build_advice(
         short_action = "短线反弹观察"
     medium_action = _medium_action(_horizon_direction(technical, "medium"), naked_dir)
     long_action = _long_action(_horizon_direction(technical, "long"))
+    if overall == "观望" and any("高位过热" in item or "失效线距离过远" in item for item in risk_blockers):
+        short_action = "观望"
+        medium_action = "等待日线买点"
 
     entry_triggers = _build_entry_triggers(overall, supports, resistances, naked)
     blocked_by = _build_blocked_by(tech_dir, naked_dir, overall)
+    if overall in {"观望", "小仓试错"}:
+        blocked_by.extend(item for item in risk_blockers if item not in blocked_by)
 
     return Advice(
         ticker=key,
@@ -232,6 +296,7 @@ def build_advice(
         downside_zones=_zones(supports),
         evidence=evidence,
         warnings=warnings,
+        data_sources=_collect_data_sources(technical, naked),
         entry_triggers=entry_triggers,
         blocked_by=blocked_by,
     )

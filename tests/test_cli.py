@@ -21,6 +21,9 @@ class CliTests(unittest.TestCase):
         self.assertIn("warnings", payload)
         self.assertIn("entry_triggers", payload)
         self.assertIn("blocked_by", payload)
+        self.assertIn("data_sources", payload)
+        self.assertIn("technical", payload["data_sources"])
+        self.assertIn("naked_k", payload["data_sources"])
         self.assertEqual(set(payload["evidence"]), {"technical", "naked_k"})
 
     def test_removed_refresh_flags_are_rejected(self):

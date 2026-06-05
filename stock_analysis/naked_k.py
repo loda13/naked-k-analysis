@@ -44,8 +44,10 @@ def analyze_naked_k(ticker: str) -> NakedKSnapshot:
     return NakedKSnapshot(
         direction=direction,
         score=score,
+        current_price=float(payload["price"]) if payload.get("price") is not None else None,
         invalidation=invalidation,
         supports=supports[:3],
         resistances=resistances[:3],
         summary=", ".join(payload.get("reasons", [])[:3]),
+        data_source=payload.get("data_source") or {},
     )

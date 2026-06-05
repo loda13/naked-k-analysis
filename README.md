@@ -2,7 +2,7 @@
 
 街哥技术流 + 裸 K 股票分析 CLI。项目用 MA/EMA 六线密集度、Vegas、一目云、MACD、RSI、BOLL、AVWAP、FRVP、斐波那契和价格行为结构，为港股 / 美股 / A 股标的生成短期、中期、长期技术分析建议。
 
-当前版本：[v1.3.0](https://github.com/loda13/stock-ma-analysis/releases/tag/v1.3.0)
+当前版本：[v1.4.0](https://github.com/loda13/stock-ma-analysis/releases/tag/v1.4.0)
 
 ## 核心能力
 
@@ -12,6 +12,8 @@
 - **裸 K 辅助确认**：识别趋势结构、BoS、支撑阻力、吞没、锤子线、十字星、Pin Bar、旗形和三角形等形态。
 - **多周期判断**：默认覆盖短期 4H、日线、周线；4H 使用真实 1H K 线聚合，不再用日线代理。
 - **结构化证据**：技术依据按趋势、动量、成本区拆分，同时保留短期 / 中期 / 长期评分。
+- **数据源审计**：输出技术和裸 K 的来源、周期、行数和最新 K 线日期，便于判断数据可信度。
+- **过热风控**：高位过热、价值区上方过远或失效线距离过远时，阻止标准买入并降级为观望或小仓试错。
 - **多数据源兜底**：优先 `westock-data`，再走腾讯 K 线、Yahoo chart JSON，最后用 yfinance。
 
 ## 快速开始
@@ -38,6 +40,7 @@ python3 stock_advisor.py 0700.HK --json
 - `upside_zones` / `downside_zones`：上方压力和下方支撑
 - `evidence.technical`：街哥技术流依据，含 4H / 日线 / 周线评分，以及趋势、动量、成本区结构化证据
 - `evidence.naked_k`：裸 K 依据
+- `data_sources`：技术和裸 K 的数据源审计，含 source、interval、rows、latest
 - `warnings`：数据源或分析失败提示
 
 ## 综合分析逻辑
@@ -54,6 +57,7 @@ python3 stock_advisor.py 0700.HK --json
 - **小仓试错**：技术流偏多但日线买点未确认，或技术流中性但裸 K 在支撑 / 结构上给出偏多信号。
 - **观望**：技术流和裸 K 没有共振，或技术偏多但裸 K 结构偏空。
 - **减仓 / 卖出**：技术趋势偏空；若裸 K 也偏空，直接提高风险等级。
+- **过热阻断**：RSI 高位且价格在 FRVP 价值区上方时标记高位过热；如果失效线距离当前价超过 20%，标准买入会降级为观望。
 
 ## 技术分析工具
 
@@ -123,7 +127,8 @@ python3 -m unittest discover -v
 - 腾讯 / Yahoo / yfinance 数据源 fallback
 - 技术方法论摘要
 - 裸 K 数据封装
-- 真实 1H 聚合 4H、短中长期分层评分和结构化技术证据
+- 数据源审计、真实 1H 聚合 4H、短中长期分层评分和结构化技术证据
+- 高位过热与失效线距离风控降级
 
 ## 免责声明
 

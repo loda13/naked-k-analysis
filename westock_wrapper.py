@@ -219,6 +219,32 @@ def fetch_tencent_kline(ticker, period='day', limit=500):
         print(f"Error fetching Tencent kline {ticker}: {str(last_error)}", file=sys.stderr)
     return pd.DataFrame()
 
+def _annotate_download(df, source, ticker, period, interval):
+    if not hasattr(df, 'attrs'):
+        return df
+    try:
+        rows = len(df)
+    except TypeError:
+        rows = 0
+    latest = ""
+    try:
+        if rows:
+            latest_value = df.index[-1]
+            latest = latest_value.strftime('%Y-%m-%d') if hasattr(latest_value, 'strftime') else str(latest_value)
+    except Exception:
+        latest = ""
+    df.attrs.update(
+        {
+            'source': source,
+            'ticker': ticker,
+            'period': period,
+            'interval': interval,
+            'rows': rows,
+            'latest': latest,
+        }
+    )
+    return df
+
 def download(ticker, period='1y', start=None, end=None, interval='1d', progress=False):
     """
     模拟 yfinance.download() 接口
@@ -268,18 +294,26 @@ def download(ticker, period='1y', start=None, end=None, interval='1d', progress=
                 return True
         return True
 
+    source = 'yfinance'
     df = fetch_kline(ticker, ws_period, limit)
     if not _has_enough_rows(df):
         df = type(df)() if hasattr(df, 'empty') else df
+    elif not getattr(df, 'empty', True):
+        source = 'westock'
     ws_ticker = convert_ticker(ticker)
     if getattr(df, 'empty', True) and ws_ticker.startswith(('hk', 'sh', 'sz', 'bj')):
         df = fetch_tencent_kline(ticker, ws_period, limit)
         if not _has_enough_rows(df):
             df = type(df)() if hasattr(df, 'empty') else df
+        elif not getattr(df, 'empty', True):
+            source = 'tencent'
     if getattr(df, 'empty', True):
         df = fetch_yahoo_chart(ticker, period=period, start=start, end=end, interval=interval)
+        if not getattr(df, 'empty', True):
+            source = 'yahoo_chart'
     if getattr(df, 'empty', True):
         df = fetch_yfinance(ticker, period=period, start=start, end=end, interval=interval, progress=progress)
+        source = 'yfinance'
     
     # 如果指定了 start/end，过滤数据
     if not df.empty:
@@ -290,7 +324,7 @@ def download(ticker, period='1y', start=None, end=None, interval='1d', progress=
             import pandas as pd
             df = df[df.index <= pd.to_datetime(end)]
     
-    return df
+    return _annotate_download(df, source, ticker, period, interval)
 
 if __name__ == '__main__':
     # 测试

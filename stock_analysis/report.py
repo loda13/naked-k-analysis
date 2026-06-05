@@ -40,6 +40,24 @@ def render_text_report(advice: Advice) -> str:
             continue
         lines.append(f"- {labels.get(key, key)}: " + "；".join(items))
 
+    if advice.data_sources:
+        lines.append("")
+        lines.append("数据源:")
+        technical_sources = advice.data_sources.get("technical") or {}
+        if isinstance(technical_sources, dict):
+            for horizon, source in technical_sources.items():
+                if isinstance(source, dict):
+                    lines.append(
+                        f"- 技术 {horizon}: {source.get('source', 'unknown')} "
+                        f"{source.get('interval', '')} rows={source.get('rows', '')} latest={source.get('latest', '')}"
+                    )
+        naked_source = advice.data_sources.get("naked_k") or {}
+        if isinstance(naked_source, dict):
+            lines.append(
+                f"- 裸K: {naked_source.get('source', 'unknown')} "
+                f"{naked_source.get('interval', '')} rows={naked_source.get('rows', '')} latest={naked_source.get('latest', '')}"
+            )
+
     if advice.warnings:
         lines.append("")
         lines.append("警告:")

@@ -125,3 +125,48 @@ class AdvisorTests(unittest.TestCase):
 
         self.assertEqual(advice.overall_action, "减仓")
         self.assertEqual(advice.short_term_action, "短线反弹观察")
+
+    def test_overheated_far_invalidation_blocks_standard_buy(self):
+        advice = build_advice(
+            "MRVL",
+            technical=TechnicalSnapshot(
+                direction="bullish",
+                score=3.0,
+                current_price=316.0,
+                timeframe_scores={"short": 2.0, "medium": 1.0, "long": 0.0},
+                timeframe_directions={"short": "bullish", "medium": "bullish", "long": "neutral"},
+                risk_flags=["高位过热"],
+            ),
+            naked=NakedKSnapshot(
+                direction="bullish",
+                score=6.0,
+                current_price=316.0,
+                invalidation=170.0,
+                supports=[170.0],
+            ),
+        )
+
+        self.assertEqual(advice.overall_action, "观望")
+        self.assertEqual(advice.short_term_action, "观望")
+        self.assertEqual(advice.medium_term_action, "等待日线买点")
+        self.assertEqual(advice.position_guidance, "空仓等待")
+        self.assertIn("高位过热", " ".join(advice.blocked_by))
+        self.assertIn("失效线距离过远", " ".join(advice.blocked_by))
+
+    def test_advice_carries_data_source_audit(self):
+        advice = build_advice(
+            "NVDA",
+            technical=TechnicalSnapshot(
+                direction="bullish",
+                score=2.0,
+                data_sources={"medium": {"source": "yahoo_chart", "rows": 250, "latest": "2026-06-01"}},
+            ),
+            naked=NakedKSnapshot(
+                direction="bullish",
+                score=2.0,
+                data_source={"source": "yahoo_chart", "rows": 365, "latest": "2026-06-01"},
+            ),
+        )
+
+        self.assertEqual(advice.data_sources["technical"]["medium"]["source"], "yahoo_chart")
+        self.assertEqual(advice.data_sources["naked_k"]["source"], "yahoo_chart")

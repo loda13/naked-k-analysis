@@ -1984,7 +1984,40 @@ def resample_4h(df):
         'Close': 'last',
         'Volume': 'sum',
     }
-    return hourly.resample('4h', origin=hourly.index[0]).agg(agg).dropna()
+    resampled = hourly.resample('4h', origin=hourly.index[0]).agg(agg).dropna()
+    resampled.attrs.update(getattr(hourly, 'attrs', {}))
+    resampled.attrs['interval'] = '4h'
+    resampled.attrs['rows'] = len(resampled)
+    if len(resampled):
+        latest = resampled.index[-1]
+        resampled.attrs['latest'] = latest.strftime('%Y-%m-%d') if hasattr(latest, 'strftime') else str(latest)
+    return resampled
+
+
+def _data_source_audit(df):
+    attrs = getattr(df, 'attrs', {}) or {}
+    if not attrs:
+        return {}
+    rows = attrs.get('rows')
+    if rows is None:
+        try:
+            rows = len(df)
+        except TypeError:
+            rows = 0
+    latest = attrs.get('latest', '')
+    if not latest:
+        try:
+            latest_value = df.index[-1]
+            latest = latest_value.strftime('%Y-%m-%d') if hasattr(latest_value, 'strftime') else str(latest_value)
+        except Exception:
+            latest = ''
+    return {
+        'source': attrs.get('source', 'unknown'),
+        'rows': rows,
+        'latest': latest,
+        'period': attrs.get('period', ''),
+        'interval': attrs.get('interval', ''),
+    }
 
 
 def analyze(ticker, timeframes=None, output_json=False, force_detailed=False):
@@ -2010,6 +2043,7 @@ def analyze(ticker, timeframes=None, output_json=False, force_detailed=False):
                 continue
             r = analyze_timeframe(df_4h, ticker, "4小时")
             if r and r.get('signal') != 'nodata':
+                r['data_source'] = _data_source_audit(df_4h)
                 results.append(r)
 
         elif tf == 'daily':
@@ -2020,6 +2054,7 @@ def analyze(ticker, timeframes=None, output_json=False, force_detailed=False):
                 df_d.columns = df_d.columns.get_level_values(0)
             r = analyze_timeframe(df_d, ticker, "日线")
             if r and r.get('signal') != 'nodata':
+                r['data_source'] = _data_source_audit(df_d)
                 results.append(r)
 
         elif tf == 'weekly':
@@ -2030,6 +2065,7 @@ def analyze(ticker, timeframes=None, output_json=False, force_detailed=False):
                 df_w.columns = df_w.columns.get_level_values(0)
             r = analyze_timeframe(df_w, ticker, "周线")
             if r and r.get('signal') != 'nodata':
+                r['data_source'] = _data_source_audit(df_w)
                 results.append(r)
 
     if not results:
@@ -2077,6 +2113,7 @@ def analyze(ticker, timeframes=None, output_json=False, force_detailed=False):
                 'obv': r.get('obv'),
                 'frvp': r.get('frvp'),
                 'inside_bar': r.get('inside_bar'),
+                'data_source': r.get('data_source') or {},
             }
             out['timeframes'].append(tf_out)
         out['resonance'] = compute_resonance(results)

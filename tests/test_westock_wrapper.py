@@ -47,6 +47,9 @@ class WestockWrapperTests(unittest.TestCase):
 
         self.assertIs(result, yahoo_df)
         fallback.assert_not_called()
+        self.assertEqual(result.attrs["source"], "yahoo_chart")
+        self.assertEqual(result.attrs["rows"], 1)
+        self.assertEqual(result.attrs["latest"], "2026-06-01")
 
     def test_download_skips_tencent_kline_for_us_ticker(self):
         empty_df = pd.DataFrame()
@@ -157,6 +160,7 @@ class WestockWrapperTests(unittest.TestCase):
             result = westock_wrapper.download("0700.HK", period="1y", interval="1d")
 
         self.assertIs(result, tencent_df)
+        self.assertEqual(result.attrs["source"], "tencent")
         fallback.assert_not_called()
 
     def test_download_uses_tencent_hourly_for_hk_1h(self):

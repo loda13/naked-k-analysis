@@ -38,6 +38,30 @@ def fetch_data(ticker, days=365, interval="1d"):
     return df
 
 
+def data_source_audit(df):
+    attrs = getattr(df, 'attrs', {}) or {}
+    rows = attrs.get('rows')
+    if rows is None:
+        try:
+            rows = len(df)
+        except TypeError:
+            rows = 0
+    latest = attrs.get('latest', '')
+    if not latest:
+        try:
+            latest_value = df.index[-1]
+            latest = latest_value.strftime('%Y-%m-%d') if hasattr(latest_value, 'strftime') else str(latest_value)
+        except Exception:
+            latest = ''
+    return {
+        'source': attrs.get('source', 'unknown'),
+        'rows': rows,
+        'latest': latest,
+        'period': attrs.get('period', f'{len(df)}rows'),
+        'interval': attrs.get('interval', ''),
+    }
+
+
 def identify_candle_patterns(df):
     """识别K线形态, 返回最近20根K线的形态列表"""
     patterns = []
@@ -575,6 +599,7 @@ def analyze_one(ticker, name=None, period='d', days=365, as_json=False):
             'recent_patterns': [(d.strftime('%m-%d') if hasattr(d, 'strftime') else str(d)[:5], name, desc) for d, name, desc in recent_p],
             'multi_patterns': multi_patterns,
             'momentum': momentum,
+            'data_source': data_source_audit(df),
         }
 
     return '\n'.join(lines)

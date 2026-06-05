@@ -12,6 +12,8 @@ class TechnicalWrapperTests(unittest.TestCase):
             "timeframes": [
                 {
                     "tf": "4小时",
+                    "close": 120.0,
+                    "data_source": {"source": "yahoo_chart", "rows": 180, "latest": "2026-06-01"},
                     "weighted_score": {"score": 1.0},
                     "supports": [{"price": 100.0}],
                     "resistances": [{"price": 120.0}],
@@ -28,6 +30,7 @@ class TechnicalWrapperTests(unittest.TestCase):
         self.assertEqual(snapshot.warnings, [])
         self.assertEqual(snapshot.timeframe_scores["short"], 1.0)
         self.assertEqual(snapshot.timeframe_directions["short"], "bullish")
+        self.assertEqual(snapshot.data_sources["short"]["source"], "yahoo_chart")
 
     def test_analyze_technical_appends_jg_methodology_summary(self):
         payload = {
@@ -68,9 +71,11 @@ class TechnicalWrapperTests(unittest.TestCase):
                 {
                     "tf": "日线",
                     "weighted_score": {"score": 1.0},
+                    "close": 120.0,
+                    "data_source": {"source": "yahoo_chart", "rows": 250, "latest": "2026-06-01"},
                     "arrangement": "多头排列",
                     "macd": {"zone": "零轴上", "hist_dir": "红柱", "cross": None},
-                    "rsi": 58,
+                    "rsi": 88,
                     "rsi_signal": "偏强",
                     "boll_signal": "接近上轨",
                     "vegas": {"position": "通道上方", "trend": "多头趋势"},
@@ -92,3 +97,5 @@ class TechnicalWrapperTests(unittest.TestCase):
         self.assertIn("MACD", " ".join(snapshot.evidence_sections["momentum"]))
         self.assertIn("FRVP", " ".join(snapshot.evidence_sections["cost"]))
         self.assertIn("100", " ".join(snapshot.evidence_sections["cost"]))
+        self.assertEqual(snapshot.current_price, 120.0)
+        self.assertIn("高位过热", " ".join(snapshot.risk_flags))

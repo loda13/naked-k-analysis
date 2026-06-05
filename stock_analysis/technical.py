@@ -103,6 +103,21 @@ def _build_evidence_sections(payload: Dict[str, Any]) -> Dict[str, List[str]]:
     return {key: value for key, value in sections.items() if value}
 
 
+def _build_risk_flags(payload: Dict[str, Any]) -> List[str]:
+    flags: List[str] = []
+    for item in payload.get("timeframes", []):
+        rsi = item.get("rsi")
+        frvp = item.get("frvp") or {}
+        try:
+            rsi_value = float(rsi)
+        except (TypeError, ValueError):
+            rsi_value = 0.0
+        if rsi_value >= 80 and "价值区上方" in str(frvp.get("position") or ""):
+            flags.append("高位过热")
+            break
+    return flags
+
+
 def analyze_technical(ticker: str, timeframes: Optional[List[str]] = None) -> TechnicalSnapshot:
     resolved = resolve_technical_timeframes(timeframes)
     try:
@@ -134,6 +149,8 @@ def analyze_technical(ticker: str, timeframes: Optional[List[str]] = None) -> Te
     resistances = []
     timeframe_scores: Dict[str, float] = {}
     timeframe_directions: Dict[str, str] = {}
+    data_sources: Dict[str, Dict[str, Any]] = {}
+    current_price: Optional[float] = None
     for item in payload.get("timeframes", []):
         score = ((item.get("weighted_score") or {}).get("score") or 0)
         numeric_score = float(score)
@@ -142,6 +159,14 @@ def analyze_technical(ticker: str, timeframes: Optional[List[str]] = None) -> Te
         if horizon:
             timeframe_scores[horizon] = numeric_score
             timeframe_directions[horizon] = _score_direction(numeric_score)
+            if item.get("data_source"):
+                data_sources[horizon] = item["data_source"]
+        if item.get("close") is not None:
+            try:
+                price = float(item["close"])
+                current_price = price if horizon == "medium" or current_price is None else current_price
+            except (TypeError, ValueError):
+                pass
         supports.extend(level.get("price") for level in item.get("supports", []) if level.get("price") is not None)
         resistances.extend(level.get("price") for level in item.get("resistances", []) if level.get("price") is not None)
 
@@ -162,11 +187,14 @@ def analyze_technical(ticker: str, timeframes: Optional[List[str]] = None) -> Te
     return TechnicalSnapshot(
         direction=direction,
         score=round(total, 2),
+        current_price=current_price,
         summary="；".join(summary_parts),
         supports=[float(v) for v in supports[:3]],
         resistances=[float(v) for v in resistances[:3]],
         timeframe_scores=timeframe_scores,
         timeframe_directions=timeframe_directions,
         evidence_sections=_build_evidence_sections(payload),
+        data_sources=data_sources,
+        risk_flags=_build_risk_flags(payload),
         warnings=resolved.warnings,
     )
