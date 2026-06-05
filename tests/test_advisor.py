@@ -170,3 +170,54 @@ class AdvisorTests(unittest.TestCase):
 
         self.assertEqual(advice.data_sources["technical"]["medium"]["source"], "yahoo_chart")
         self.assertEqual(advice.data_sources["naked_k"]["source"], "yahoo_chart")
+
+    def test_unreliable_medium_data_blocks_buy_signal(self):
+        advice = build_advice(
+            "NVDA",
+            technical=TechnicalSnapshot(
+                direction="bullish",
+                score=2.0,
+                current_price=120.0,
+                timeframe_scores={"medium": 2.0},
+                timeframe_directions={"medium": "bullish"},
+                data_sources={"medium": {"source": "yahoo_chart", "rows": 35, "latest": "2026-06-01"}},
+            ),
+            naked=NakedKSnapshot(
+                direction="bullish",
+                score=2.0,
+                current_price=120.0,
+                invalidation=112.0,
+                data_source={"source": "yahoo_chart", "rows": 120, "latest": "2026-06-01"},
+            ),
+        )
+
+        self.assertEqual(advice.overall_action, "观望")
+        self.assertEqual(advice.short_term_action, "观望")
+        self.assertEqual(advice.medium_term_action, "等待数据修复")
+        self.assertEqual(advice.position_guidance, "空仓等待")
+        self.assertIn("中期(日线)数据行数不足", " ".join(advice.warnings))
+        self.assertIn("关键数据质量不足", " ".join(advice.blocked_by))
+        self.assertIn("数据恢复", " ".join(advice.entry_triggers))
+
+    def test_stale_naked_k_data_blocks_trial_signal(self):
+        advice = build_advice(
+            "BABA",
+            technical=TechnicalSnapshot(
+                direction="neutral",
+                score=0.0,
+                data_sources={"medium": {"source": "tencent", "rows": 250, "latest": "2026-06-01"}},
+            ),
+            naked=NakedKSnapshot(
+                direction="bullish",
+                score=2.0,
+                invalidation=88.0,
+                data_source={"source": "tencent", "rows": 240, "latest": "2020-01-01"},
+            ),
+        )
+
+        self.assertEqual(advice.overall_action, "观望")
+        self.assertEqual(advice.short_term_action, "观望")
+        self.assertEqual(advice.medium_term_action, "等待数据修复")
+        self.assertIn("裸K数据过旧", " ".join(advice.warnings))
+        self.assertIn("关键数据质量不足", " ".join(advice.blocked_by))
+        self.assertIn("数据恢复", " ".join(advice.entry_triggers))

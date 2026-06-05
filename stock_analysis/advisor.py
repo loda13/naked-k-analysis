@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from datetime import date, datetime
+from typing import Any, Dict, List, Optional, Tuple
 
 from .models import Advice, NakedKSnapshot, TechnicalSnapshot
 
 
 EVIDENCE_ORDER = ["technical", "naked_k"]
+SOURCE_LABELS = {"short": "短期(4H)", "medium": "中期(日线)", "long": "长期(周线)"}
+MIN_SOURCE_ROWS = {"short": 120, "medium": 120, "long": 52, "naked_k": 80}
+MAX_STALE_DAYS = {"short": 10, "medium": 10, "long": 35, "naked_k": 10}
 
 
 def _ticker_key(ticker: str) -> str:
@@ -139,6 +143,97 @@ def _collect_data_sources(
     return sources
 
 
+def _parse_latest_date(value: Any) -> Optional[date]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    for candidate in (text[:10], text):
+        try:
+            return datetime.fromisoformat(candidate).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _source_rows(source: Dict[str, Any]) -> Optional[int]:
+    rows = source.get("rows")
+    if rows in (None, ""):
+        return None
+    try:
+        return int(rows)
+    except (TypeError, ValueError):
+        return None
+
+
+def _append_once(items: List[str], value: str) -> None:
+    if value not in items:
+        items.append(value)
+
+
+def _check_source_quality(
+    label: str,
+    source: Dict[str, Any],
+    min_rows: int,
+    max_stale_days: int,
+    critical: bool,
+    warnings: List[str],
+    blockers: List[str],
+) -> None:
+    source_name = source.get("source", "unknown")
+    rows = _source_rows(source)
+    if rows is not None and rows < min_rows:
+        warnings.append(f"{label}数据行数不足(rows={rows}, source={source_name})")
+        if critical:
+            _append_once(blockers, "关键数据质量不足")
+
+    latest = _parse_latest_date(source.get("latest"))
+    if latest is None:
+        return
+    stale_days = (date.today() - latest).days
+    if stale_days > max_stale_days:
+        warnings.append(f"{label}数据过旧(latest={latest.isoformat()}, {stale_days}天前, source={source_name})")
+        if critical:
+            _append_once(blockers, "关键数据质量不足")
+
+
+def _data_quality_findings(
+    technical: Optional[TechnicalSnapshot],
+    naked: Optional[NakedKSnapshot],
+) -> Tuple[List[str], List[str]]:
+    warnings: List[str] = []
+    blockers: List[str] = []
+    if technical and technical.data_sources:
+        for horizon, label in SOURCE_LABELS.items():
+            source = technical.data_sources.get(horizon)
+            if isinstance(source, dict):
+                _check_source_quality(
+                    label,
+                    source,
+                    MIN_SOURCE_ROWS[horizon],
+                    MAX_STALE_DAYS[horizon],
+                    critical=horizon == "medium",
+                    warnings=warnings,
+                    blockers=blockers,
+                )
+    if naked and naked.data_source:
+        _check_source_quality(
+            "裸K",
+            naked.data_source,
+            MIN_SOURCE_ROWS["naked_k"],
+            MAX_STALE_DAYS["naked_k"],
+            critical=True,
+            warnings=warnings,
+            blockers=blockers,
+        )
+    return warnings, blockers
+
+
 def _short_action(tech_dir: str, naked_dir: str, naked: Optional[NakedKSnapshot]) -> str:
     if tech_dir == "bearish":
         return "短线减仓"
@@ -202,12 +297,14 @@ def build_advice(
     current_price = _current_price(technical, naked)
     raw_invalidation = naked.invalidation if naked else None
     risk_blockers = _risk_blockers(technical, current_price, raw_invalidation)
+    data_warnings, data_blockers = _data_quality_findings(technical, naked)
 
     warnings: List[str] = []
     if technical:
         warnings.extend(technical.warnings)
     if naked:
         warnings.extend(naked.warnings)
+    warnings.extend(data_warnings)
 
     evidence: Dict[str, List[str]] = {name: [] for name in EVIDENCE_ORDER}
     _append_technical_evidence(evidence, technical)
@@ -264,6 +361,10 @@ def build_advice(
         overall = "小仓试错"
         confidence = "中"
         position = "小仓"
+    if overall in {"买入", "小仓试错"} and data_blockers:
+        overall = "观望"
+        confidence = "中"
+        position = "空仓等待"
 
     invalidation = _format_price(raw_invalidation)
     supports = naked.supports if naked else (technical.supports if technical else [])
@@ -277,11 +378,17 @@ def build_advice(
     if overall == "观望" and any("高位过热" in item or "失效线距离过远" in item for item in risk_blockers):
         short_action = "观望"
         medium_action = "等待日线买点"
+    if overall == "观望" and data_blockers:
+        short_action = "观望"
+        medium_action = "等待数据修复"
 
     entry_triggers = _build_entry_triggers(overall, supports, resistances, naked)
+    if overall == "观望" and data_blockers:
+        entry_triggers = ["等待关键数据恢复后重新评估"]
     blocked_by = _build_blocked_by(tech_dir, naked_dir, overall)
     if overall in {"观望", "小仓试错"}:
         blocked_by.extend(item for item in risk_blockers if item not in blocked_by)
+        blocked_by.extend(item for item in data_blockers if item not in blocked_by)
 
     return Advice(
         ticker=key,
