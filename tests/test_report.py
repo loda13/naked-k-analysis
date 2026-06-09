@@ -34,4 +34,3 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("再观察条件: 等待重新站上480.6并获得日线确认。", report)
         self.assertIn("总建议: 观望", report)
         self.assertIn("依据:", report)
-        self.assertNotIn("裸K", report)

@@ -27,9 +27,8 @@ class AdvisorTests(unittest.TestCase):
         self.assertEqual(advice.invalidation, "暂无明确失效线")
         self.assertEqual(advice.current_price, 120.0)
         self.assertEqual(set(advice.evidence), {"technical"})
-        self.assertFalse(hasattr(advice, "risk_reward"))
 
-    def test_bearish_technical_triggers_reduction_without_naked_confirmation(self):
+    def test_bearish_technical_triggers_reduction(self):
         advice = build_advice(
             "0700.HK",
             technical=TechnicalSnapshot(direction="bearish", score=-1.5, summary="Vegas通道下方", warnings=[]),
@@ -38,7 +37,6 @@ class AdvisorTests(unittest.TestCase):
         self.assertEqual(advice.overall_action, "减仓")
         self.assertEqual(advice.short_term_action, "短线减仓")
         self.assertIn("技术趋势偏空", " ".join(advice.blocked_by))
-        self.assertNotIn("裸K", " ".join(advice.blocked_by))
 
     def test_neutral_technical_stays_observation(self):
         advice = build_advice(
@@ -155,7 +153,6 @@ class AdvisorTests(unittest.TestCase):
         )
 
         self.assertEqual(advice.data_sources["technical"]["medium"]["source"], "yahoo_chart")
-        self.assertNotIn("naked_k", advice.data_sources)
 
     def test_unreliable_medium_data_blocks_buy_signal(self):
         advice = build_advice(

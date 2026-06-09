@@ -22,29 +22,6 @@ class TechnicalSnapshot:
 
 
 @dataclass(frozen=True)
-class NakedKSnapshot:
-    direction: str = "neutral"
-    score: float = 0.0
-    current_price: Optional[float] = None
-    invalidation: Optional[float] = None
-    risk_reward: Optional[float] = None
-    supports: List[float] = field(default_factory=list)
-    resistances: List[float] = field(default_factory=list)
-    summary: str = ""
-    data_source: Dict[str, Any] = field(default_factory=dict)
-    warnings: List[str] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class FundamentalSnapshot:
-    ticker: str = ""
-    total_score: float = 0.0
-    status: str = "观察"
-    evidence_grade: str = "B"
-    components: Dict[str, float] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
 class Advice:
     ticker: str
     overall_action: str
