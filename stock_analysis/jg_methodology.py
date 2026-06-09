@@ -45,6 +45,30 @@ def _interpret_macd(item: Dict[str, Any]) -> str:
     return "，".join(parts)
 
 
+def interpret_macd_regime(item: Dict[str, Any]) -> str:
+    macd = item.get("macd") or {}
+    if not macd:
+        return ""
+
+    zone = _text(macd.get("zone"))
+    cross = _text(macd.get("cross"))
+    hist = _text(macd.get("hist_dir"))
+
+    if "零轴上" in zone and "金叉" in cross:
+        return "零轴上金叉=趋势续强"
+    if "零轴下" in zone and "金叉" in cross:
+        return "零轴下金叉=反弹确认，不默认反转"
+    if "零轴上" in zone and "死叉" in cross:
+        return "零轴上死叉=高位转弱预警"
+    if "零轴下" in zone and "死叉" in cross:
+        return "零轴下死叉=弱势延续"
+    if "零轴上" in zone and "红柱" in hist:
+        return "零轴上红柱=多头动能延续"
+    if "零轴下" in zone and "绿柱" in hist:
+        return "零轴下绿柱=空头动能延续"
+    return ""
+
+
 def _interpret_rsi(item: Dict[str, Any]) -> str:
     rsi = item.get("rsi")
     signal = _text(item.get("rsi_signal"))
@@ -143,6 +167,7 @@ def interpret_timeframe(item: Dict[str, Any]) -> str:
     label = _text(item.get("tf")) or "未知周期"
     parts = [
         _interpret_macd(item),
+        interpret_macd_regime(item),
         _interpret_rsi(item),
         _interpret_bollinger(item),
         _interpret_vegas(item),

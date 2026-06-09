@@ -14,6 +14,7 @@ class TechnicalSnapshot:
     resistances: List[float] = field(default_factory=list)
     timeframe_scores: Dict[str, float] = field(default_factory=dict)
     timeframe_directions: Dict[str, str] = field(default_factory=dict)
+    macd_regimes: Dict[str, str] = field(default_factory=dict)
     evidence_sections: Dict[str, List[str]] = field(default_factory=dict)
     data_sources: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     risk_flags: List[str] = field(default_factory=list)
@@ -26,11 +27,21 @@ class NakedKSnapshot:
     score: float = 0.0
     current_price: Optional[float] = None
     invalidation: Optional[float] = None
+    risk_reward: Optional[float] = None
     supports: List[float] = field(default_factory=list)
     resistances: List[float] = field(default_factory=list)
     summary: str = ""
     data_source: Dict[str, Any] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class FundamentalSnapshot:
+    ticker: str = ""
+    total_score: float = 0.0
+    status: str = "观察"
+    evidence_grade: str = "B"
+    components: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -47,6 +58,8 @@ class Advice:
     downside_zones: List[str]
     evidence: Dict[str, List[str]]
     warnings: List[str]
+    current_price: Optional[float] = None
     data_sources: Dict[str, Any] = field(default_factory=dict)
     entry_triggers: List[str] = field(default_factory=list)
     blocked_by: List[str] = field(default_factory=list)
+    timeframe_state: str = ""

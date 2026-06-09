@@ -23,8 +23,9 @@ class CliTests(unittest.TestCase):
         self.assertIn("blocked_by", payload)
         self.assertIn("data_sources", payload)
         self.assertIn("technical", payload["data_sources"])
-        self.assertIn("naked_k", payload["data_sources"])
-        self.assertEqual(set(payload["evidence"]), {"technical", "naked_k"})
+        self.assertNotIn("naked_k", payload["data_sources"])
+        self.assertEqual(set(payload["evidence"]), {"technical"})
+        self.assertNotIn("risk_reward", payload)
 
     def test_removed_refresh_flags_are_rejected(self):
         proc = subprocess.run(

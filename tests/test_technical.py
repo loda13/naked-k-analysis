@@ -99,3 +99,33 @@ class TechnicalWrapperTests(unittest.TestCase):
         self.assertIn("100", " ".join(snapshot.evidence_sections["cost"]))
         self.assertEqual(snapshot.current_price, 120.0)
         self.assertIn("高位过热", " ".join(snapshot.risk_flags))
+
+    def test_analyze_technical_carries_macd_regime_by_horizon(self):
+        payload = {
+            "ticker": "NVDA",
+            "timeframes": [
+                {
+                    "tf": "日线",
+                    "weighted_score": {"score": 1.0},
+                    "macd": {"zone": "零轴上", "hist_dir": "红柱", "cross": "金叉"},
+                    "supports": [],
+                    "resistances": [],
+                },
+                {
+                    "tf": "周线",
+                    "weighted_score": {"score": -1.0},
+                    "macd": {"zone": "零轴下", "hist_dir": "绿柱", "cross": "死叉"},
+                    "supports": [],
+                    "resistances": [],
+                },
+            ],
+            "resonance": {"action": "多周期测试"},
+        }
+
+        with patch("ma_analysis.analyze") as analyze:
+            analyze.side_effect = lambda *args, **kwargs: print(json.dumps(payload, ensure_ascii=False))
+            snapshot = analyze_technical("NVDA", timeframes=["daily", "weekly"])
+
+        self.assertEqual(snapshot.macd_regimes["medium"], "零轴上金叉=趋势续强")
+        self.assertEqual(snapshot.macd_regimes["long"], "零轴下死叉=弱势延续")
+        self.assertIn("零轴上金叉", " ".join(snapshot.evidence_sections["momentum"]))

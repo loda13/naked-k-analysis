@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pandas as pd
 
 import naked_k_analysis
+from stock_analysis.naked_k import analyze_naked_k
 
 
 class NakedKAnalysisDataTests(unittest.TestCase):
@@ -37,3 +38,19 @@ class NakedKAnalysisDataTests(unittest.TestCase):
 
         self.assertEqual(result["data_source"]["source"], "yahoo_chart")
         self.assertEqual(result["data_source"]["rows"], 80)
+
+    def test_analyze_naked_k_calculates_risk_reward_from_nearest_levels(self):
+        payload = {
+            "price": 100.0,
+            "score": 2.0,
+            "supports": [{"price": 92.0}, {"price": 80.0}],
+            "resistances": [{"price": 116.0}, {"price": 130.0}],
+            "reasons": ["实体支撑反弹"],
+            "data_source": {"source": "fixture", "rows": 120, "latest": "2026-06-01"},
+        }
+
+        with patch.object(naked_k_analysis, "analyze_one", return_value=payload):
+            snapshot = analyze_naked_k("NVDA")
+
+        self.assertEqual(snapshot.invalidation, 92.0)
+        self.assertEqual(snapshot.risk_reward, 2.0)

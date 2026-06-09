@@ -15,6 +15,8 @@ class JgMethodologyTests(unittest.TestCase):
         self.assertLess(summary.index("零轴下"), summary.index("绿柱"))
         self.assertLess(summary.index("绿柱"), summary.index("金叉"))
         self.assertIn("金叉只作节奏确认", summary)
+        self.assertIn("零轴下金叉", summary)
+        self.assertIn("反弹确认", summary)
 
     def test_rsi_is_context_aware_in_strong_trend(self):
         item = {
@@ -70,3 +72,16 @@ class JgMethodologyTests(unittest.TestCase):
         self.assertIn("AVWAP成本区", summary)
         self.assertIn("FRVP", summary)
         self.assertIn("假突破", summary)
+
+    def test_macd_zero_axis_regime_distinguishes_strong_and_weak_crosses(self):
+        above = {
+            "tf": "日线",
+            "macd": {"zone": "零轴上", "hist_dir": "红柱", "cross": "金叉"},
+        }
+        below = {
+            "tf": "4小时",
+            "macd": {"zone": "零轴下", "hist_dir": "绿柱", "cross": "死叉"},
+        }
+
+        self.assertIn("零轴上金叉=趋势续强", interpret_timeframe(above))
+        self.assertIn("零轴下死叉=弱势延续", interpret_timeframe(below))

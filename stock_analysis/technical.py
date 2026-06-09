@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from .data import resolve_technical_timeframes
 from .models import TechnicalSnapshot
-from .jg_methodology import summarize_methodology
+from .jg_methodology import interpret_macd_regime, summarize_methodology
 
 
 def _horizon_key(label: str) -> Optional[str]:
@@ -66,6 +66,9 @@ def _build_evidence_sections(payload: Dict[str, Any]) -> Dict[str, List[str]]:
         if macd:
             macd_parts = [str(macd.get(key) or "") for key in ["zone", "hist_dir", "cross"] if macd.get(key)]
             momentum_parts.append("MACD" + " ".join(macd_parts))
+            regime = interpret_macd_regime(item)
+            if regime:
+                momentum_parts.append("MACD" + regime)
         if item.get("rsi") is not None or item.get("rsi_signal"):
             momentum_parts.append(f"RSI{item.get('rsi') or '未知'}{item.get('rsi_signal') or ''}")
         if item.get("boll_signal"):
@@ -149,6 +152,7 @@ def analyze_technical(ticker: str, timeframes: Optional[List[str]] = None) -> Te
     resistances = []
     timeframe_scores: Dict[str, float] = {}
     timeframe_directions: Dict[str, str] = {}
+    macd_regimes: Dict[str, str] = {}
     data_sources: Dict[str, Dict[str, Any]] = {}
     current_price: Optional[float] = None
     for item in payload.get("timeframes", []):
@@ -159,6 +163,9 @@ def analyze_technical(ticker: str, timeframes: Optional[List[str]] = None) -> Te
         if horizon:
             timeframe_scores[horizon] = numeric_score
             timeframe_directions[horizon] = _score_direction(numeric_score)
+            regime = interpret_macd_regime(item)
+            if regime:
+                macd_regimes[horizon] = regime
             if item.get("data_source"):
                 data_sources[horizon] = item["data_source"]
         if item.get("close") is not None:
@@ -193,6 +200,7 @@ def analyze_technical(ticker: str, timeframes: Optional[List[str]] = None) -> Te
         resistances=[float(v) for v in resistances[:3]],
         timeframe_scores=timeframe_scores,
         timeframe_directions=timeframe_directions,
+        macd_regimes=macd_regimes,
         evidence_sections=_build_evidence_sections(payload),
         data_sources=data_sources,
         risk_flags=_build_risk_flags(payload),
