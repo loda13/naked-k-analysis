@@ -16,21 +16,86 @@
 - **过热风控**：高位过热、价值区上方过远时，阻止标准买入并降级为小仓试错。
 - **多数据源兜底**：优先 `westock-data`，再走腾讯 K 线、Yahoo chart JSON，最后用 yfinance。
 
-## 快速开始
+## 如何使用
+
+### 1. 安装依赖
 
 ```bash
 python3 -m pip install -r requirements.txt
+```
 
-# 综合分析，文本输出
+项目主要依赖 `pandas`、`numpy`、`requests`、`yfinance`。如果本机装了 `westock-data`，程序会优先用它；没有也会自动尝试腾讯、Yahoo chart 和 yfinance。
+
+### 2. 跑综合建议
+
+```bash
 python3 stock_advisor.py 0700.HK
 python3 stock_advisor.py 9992.HK
 python3 stock_advisor.py NVDA
+```
 
-# JSON 输出，适合接入脚本或看板
+`stock_advisor.py` 是日常主入口。它会调用街哥核心技术流，输出：
+
+- 当前结论：买入、小仓试错、观望、减仓
+- 短期 / 中期 / 长期动作
+- 仓位建议、触发条件、阻塞因素
+- 上方压力、下方支撑
+- 多周期状态和技术依据
+- 数据源、行数、最新 K 线日期和警告
+
+### 3. 选择分析周期
+
+```bash
+# 默认：short,medium,long，即 4H + 日线 + 周线
+python3 stock_advisor.py NVDA
+
+# 只看日线 + 周线
+python3 stock_advisor.py NVDA --horizons medium,long
+
+# 带短线触发：4H + 日线 + 周线
+python3 stock_advisor.py 0700.HK --horizons short,medium,long
+```
+
+当前 CLI 的周期逻辑很直接：`--horizons` 包含 `short` 时会额外跑 4H；否则只跑日线和周线。`medium` 和 `long` 是默认底座。
+
+### 4. 输出 JSON
+
+```bash
 python3 stock_advisor.py 0700.HK --json
 ```
 
-输出会包含：
+JSON 适合接入脚本、看板或自动化流程。核心字段包括：
+
+- `overall_action`：总建议
+- `short_term_action` / `medium_term_action` / `long_term_action`：分周期动作
+- `confidence` / `position_guidance`：置信度和仓位
+- `timeframe_state`：周线、日线、4H 的组合状态
+- `entry_triggers`：重新评估或入场触发条件
+- `blocked_by`：阻止开仓的原因
+- `evidence.technical`：街哥技术流依据
+- `data_sources`：每个周期的数据源审计
+- `warnings`：数据不足、数据过旧或分析失败提示
+
+### 5. 直接跑技术分析引擎
+
+```bash
+python3 ma_analysis.py 0700.HK 4h
+python3 ma_analysis.py NVDA daily
+python3 ma_analysis.py 1810.HK weekly
+python3 ma_analysis.py 0700.HK 4h,daily,weekly
+```
+
+`ma_analysis.py` 输出更底层的技术分析明细，适合调试指标、核对支撑压力、查看每个周期的原始评分。
+
+### 6. 一键日报
+
+```bash
+bash ma_daily_report.sh
+```
+
+日报脚本默认跑 `0700.HK 1810.HK NVDA TSLA QQQ` 的 4H、日线、周线分析。脚本里的 `MA_SCRIPT`、`TICKERS` 和 `PYTHON` 可以按本机路径和股票池调整。
+
+主要输出字段：
 
 - `overall_action`：总建议，如买入、小仓试错、观望、减仓、卖出
 - `short_term_action` / `medium_term_action` / `long_term_action`
@@ -58,18 +123,7 @@ python3 stock_advisor.py 0700.HK --json
 - **过热阻断**：RSI 高位且价格在 FRVP 价值区上方时标记高位过热，标准买入会降级为小仓试错。
 - **数据质量阻断**：短期 / 中期 / 长期会分别检查行数和最新日期；中期日线不可信时，买入和小仓试错都会降级为观望。
 
-## 技术分析工具
-
-### 双均线密集度
-
-```bash
-python3 ma_analysis.py 0700.HK 4h
-python3 ma_analysis.py NVDA daily
-python3 ma_analysis.py 1810.HK weekly
-python3 ma_analysis.py 0700.HK 4h,daily,weekly
-```
-
-核心信号：
+## 核心信号
 
 - 均线密集 + K 线在上方：偏多
 - 均线密集 + K 线在下方：偏空
@@ -80,12 +134,6 @@ python3 ma_analysis.py 0700.HK 4h,daily,weekly
 - Vegas 通道下方：趋势偏空
 - FRVP / POC / VAH / VAL：支撑压力和成本区
 - AVWAP：重要高低点锚定成本
-
-### 一键日报
-
-```bash
-bash ma_daily_report.sh
-```
 
 ## 数据源
 
