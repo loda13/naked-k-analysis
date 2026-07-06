@@ -2,3 +2,6 @@ data/cache/
 *.pyc
 __pycache__/
 .env
+.omc/
+reports/*.md
+reports/*.jsonl

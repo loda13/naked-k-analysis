@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """
-westock-data wrapper for ma_analysis.py
-将 yfinance 格式转换为 westock-data 格式
+Market data wrapper for naked K analysis.
+返回与 yfinance.download() 兼容的 OHLCV DataFrame。
 """
 
 import subprocess
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 import sys
-
-from stock_analysis.data import normalize_provider_ticker
 
 # 代码格式转换映射
 TICKER_MAP = {
@@ -29,6 +27,21 @@ TICKER_MAP = {
 
 DEFAULT_WESTOCK_DATA_SCRIPT = '/root/.openclaw/workspace/skills/westock-data/scripts/index.js'
 MIN_INTRADAY_ROWS = 120
+
+
+def normalize_provider_ticker(ticker):
+    """Normalize common Yahoo-style tickers to westock/Tencent symbols."""
+    symbol = ticker.strip().upper()
+    if symbol.endswith(".HK"):
+        return f"hk{symbol[:-3].zfill(5)}"
+    if symbol.endswith(".SS"):
+        return f"sh{symbol[:-3]}"
+    if symbol.endswith(".SZ"):
+        return f"sz{symbol[:-3]}"
+    if symbol.endswith(".BJ"):
+        return f"bj{symbol[:-3]}"
+    return f"us{symbol}"
+
 
 def convert_ticker(ticker):
     """转换 ticker 格式: 0700.HK -> hk00700"""

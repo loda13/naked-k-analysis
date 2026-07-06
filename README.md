@@ -1,166 +1,137 @@
-# Stock MA Analysis
+# Naked K Analysis
 
-街哥核心战法股票分析 CLI。项目用 MA/EMA 六线密集度、Vegas、一目云、MACD、RSI、BOLL、AVWAP、FRVP 和斐波那契，为港股 / 美股 / A 股标的生成短期、中期、长期技术分析建议。
+裸 K 分析 CLI。项目只专注于 K 线本身：实体、影线、收盘位置、前高/前低、结构性突破/假突破、孕线、吞没、Pin Bar、十字星、确认 K、止损触发和复盘日志。
 
-当前版本：[v1.6.0](https://github.com/loda13/stock-ma-analysis/releases/tag/v1.6.0)
+当前版本：[v2.0.0](https://github.com/loda13/naked-k-analysis/releases/tag/v2.0.0)
 
 ## 核心能力
 
-- **综合技术顾问**：`stock_advisor.py` 输出总建议、短期 / 中期 / 长期动作、仓位、失效线、支撑压力、触发条件和阻塞因素。
-- **街哥技术流**：基于 MA20/60/120 + EMA20/60/120 六线系统，结合回踩 MA20、假突破、假跌破、Vegas 通道、一目云和关键开盘价系统。
-- **指标共振解释**：解释 MACD、RSI、BOLL、OBV、AVWAP、FRVP/POC/VAH/VAL、Fib/结构信号。
-- **多周期判断**：默认覆盖短期 4H、日线、周线；4H 使用真实 1H K 线聚合，不再用日线代理。
-- **结构化证据**：技术依据按趋势、动量、成本区拆分，同时保留短期 / 中期 / 长期评分。
-- **数据源审计**：输出技术分析的来源、周期、行数和最新 K 线日期，便于判断数据可信度。
-- **数据质量门槛**：中期日线数据过旧或行数不足时，会给出警告并阻断买入 / 小仓试错。
-- **过热风控**：高位过热、价值区上方过远时，阻止标准买入并降级为小仓试错。
+- **裸 K 收盘计划**：用日线 / 周线 K 线生成动作、触发位、失效位、第一目标和目标盈亏比。
+- **读线结构化**：输出最新 K 线实体强弱、上下影线、收盘位置、前高/前低突破或失败、波幅收敛和高低点节奏。
+- **标准形态识别**：覆盖看涨/看跌吸收、Pin Bar、十字星、锤子线、射击之星、早晨星、黄昏星、孕线。
+- **确认 K 触发**：多头先突破信号 K 高点，空头先跌破信号 K 低点，避免只凭单根形态追价。
+- **ATR 自适应缓冲**：触发位和止损位最低缓冲 0.2%，高波动股票自动放宽。
+- **1H 盘中确认**：盘中只做触发 / 失效预警，不覆盖日线和周线主计划。
+- **复盘日志**：每次运行写入 `reports/naked_k_journal.jsonl`，下一次会复盘上一根 K 的触发和失效情况。
 - **多数据源兜底**：优先 `westock-data`，再走腾讯 K 线、Yahoo chart JSON，最后用 yfinance。
 
-## 如何使用
-
-### 1. 安装依赖
+## 安装
 
 ```bash
-python3 -m pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-项目主要依赖 `pandas`、`numpy`、`requests`、`yfinance`。如果本机装了 `westock-data`，程序会优先用它；没有也会自动尝试腾讯、Yahoo chart 和 yfinance。
+依赖包括 `pandas`、`numpy`、`requests`、`yfinance`。如果本机配置了 `westock-data`，程序会优先使用它；否则自动尝试腾讯、Yahoo chart 和 yfinance。
 
-### 2. 跑综合建议
+## 使用
 
 ```bash
-python3 stock_advisor.py 0700.HK
-python3 stock_advisor.py 9992.HK
-python3 stock_advisor.py NVDA
+python naked_k_analysis.py
+python naked_k_analysis.py --json
 ```
 
-`stock_advisor.py` 是日常主入口。它会调用街哥核心技术流，输出：
+默认股票池：
 
-- 当前结论：买入、小仓试错、观望、减仓
-- 短期 / 中期 / 长期动作
-- 仓位建议、触发条件、阻塞因素
-- 上方压力、下方支撑
-- 多周期状态和技术依据
-- 数据源、行数、最新 K 线日期和警告
+- 腾讯：`0700.HK`
+- 小米：`1810.HK`
+- PDD：`PDD`
+- 泡泡玛特：`9992.HK`
 
-### 3. 选择分析周期
+输出文件：
+
+- 最新 Markdown 报告：`reports/naked_k_latest.md`
+- 复盘日志：`reports/naked_k_journal.jsonl`
+
+可以用参数改输出路径：
 
 ```bash
-# 默认：short,medium,long，即 4H + 日线 + 周线
-python3 stock_advisor.py NVDA
-
-# 只看日线 + 周线
-python3 stock_advisor.py NVDA --horizons medium,long
-
-# 带短线触发：4H + 日线 + 周线
-python3 stock_advisor.py 0700.HK --horizons short,medium,long
+python naked_k_analysis.py --report-path reports/today.md --journal-path reports/journal.jsonl
 ```
 
-当前 CLI 的周期逻辑很直接：`--horizons` 包含 `short` 时会额外跑 4H；否则只跑日线和周线。`medium` 和 `long` 是默认底座。
+## 报告字段
 
-### 4. 输出 JSON
+- `action`：`买入`、`小仓试错`、`观望`、`减仓`、`回避`
+- `signal_state`：`planned_long`、`planned_short`、`watching`
+- `price_action`：裸 K 解读，包括 K 线标签、结构信号、风险提示、收盘位置和量能状态
+- `entry_trigger`：突破 / 跌破信号 K 极值后的触发位
+- `stop_loss`：信号失效位
+- `target_price`：第一目标位，优先使用最近结构压力 / 支撑
+- `risk_per_share`：单股风险
+- `reward_to_risk`：第一目标对应的目标盈亏比
+- `position_size`：按 1% 账户风险预算和动作上限反推的仓位上限
+- `intraday_status`：1H 盘中状态，只做触发 / 失效预警
+- `review`：上一条计划在当前 K 线中的触发、失效和错误类型
 
-```bash
-python3 stock_advisor.py 0700.HK --json
-```
+## 裸 K 逻辑
 
-JSON 适合接入脚本、看板或自动化流程。核心字段包括：
+日线决定触发，周线决定背景过滤。
 
-- `overall_action`：总建议
-- `short_term_action` / `medium_term_action` / `long_term_action`：分周期动作
-- `confidence` / `position_guidance`：置信度和仓位
-- `timeframe_state`：周线、日线、4H 的组合状态
-- `entry_triggers`：重新评估或入场触发条件
-- `blocked_by`：阻止开仓的原因
-- `evidence.technical`：街哥技术流依据
-- `data_sources`：每个周期的数据源审计
-- `warnings`：数据不足、数据过旧或分析失败提示
+多头计划：
 
-### 5. 直接跑技术分析引擎
+- 日线出现看涨形态，或收盘突破前 N 日高点。
+- 周线偏多时可给 `买入`，周线未确认时降为 `小仓试错`。
+- 触发位使用信号 K 高点加 ATR 缓冲。
+- 失效位使用信号 K 低点减 ATR 缓冲。
 
-```bash
-python3 ma_analysis.py 0700.HK 4h
-python3 ma_analysis.py NVDA daily
-python3 ma_analysis.py 1810.HK weekly
-python3 ma_analysis.py 0700.HK 4h,daily,weekly
-```
+空头 / 回避计划：
 
-`ma_analysis.py` 输出更底层的技术分析明细，适合调试指标、核对支撑压力、查看每个周期的原始评分。
+- 日线出现看跌形态，或上破前高失败、收盘跌破前 N 日低点。
+- 周线偏空或中性时优先 `回避`，周线偏多时用 `减仓` 处理风险。
+- 触发位使用信号 K 低点减 ATR 缓冲。
+- 失效位使用信号 K 高点加 ATR 缓冲。
 
-### 6. 一键日报
+观察计划：
 
-```bash
-bash ma_daily_report.sh
-```
+- 十字星、孕线、波幅收敛或区间内震荡时，不提前给方向。
+- 等待下一根 K 线突破母线高低点或关键结构位。
 
-日报脚本默认跑 `0700.HK 1810.HK NVDA TSLA QQQ` 的 4H、日线、周线分析。脚本里的 `MA_SCRIPT`、`TICKERS` 和 `PYTHON` 可以按本机路径和股票池调整。
+## 盘中状态
 
-主要输出字段：
+- `接近触发`：最新有效 1H 价格距离触发位 1% 以内
+- `盘中确认`：最近有效 1H 收盘站上多头触发位，或跌破空头触发位
+- `盘中突破未确认` / `盘中跌破未确认`：盘中触碰触发位，但 1H 收盘未确认
+- `接近失效位`：盘中价格接近止损 / 失效位
+- `盘中数据未确认`：最新 1H K 线成交量为 0，等待有效 K 线
 
-- `overall_action`：总建议，如买入、小仓试错、观望、减仓、卖出
-- `short_term_action` / `medium_term_action` / `long_term_action`
-- `entry_triggers`：入场、加仓或重新评估的触发条件
-- `blocked_by`：阻止新开仓的技术因素
-- `invalidation`：失效线
-- `upside_zones` / `downside_zones`：上方压力和下方支撑
-- `evidence.technical`：街哥技术流依据，含 4H / 日线 / 周线评分，以及趋势、动量、成本区结构化证据
-- `data_sources`：技术分析的数据源审计，含 source、interval、rows、latest
-- `warnings`：数据源或分析失败提示
+## 文件结构
 
-## 综合分析逻辑
-
-`stock_advisor.py` 会运行：
-
-1. `ma_analysis.py`：街哥技术流，多周期指标和结构分析。
-2. `stock_analysis/advisor.py`：根据街哥核心战法信号生成动作建议。
-
-决策优先级：
-
-- **买入**：整体技术流偏多，且日线方向确认偏多。
-- **小仓试错**：技术流偏多但日线买点未确认，或高位过热需要降级处理。
-- **观望**：技术流未形成清晰共振，或关键技术数据质量不可信。
-- **减仓**：技术趋势偏空。
-- **过热阻断**：RSI 高位且价格在 FRVP 价值区上方时标记高位过热，标准买入会降级为小仓试错。
-- **数据质量阻断**：短期 / 中期 / 长期会分别检查行数和最新日期；中期日线不可信时，买入和小仓试错都会降级为观望。
-
-## 核心信号
-
-- 均线密集 + K 线在上方：偏多
-- 均线密集 + K 线在下方：偏空
-- 回踩 MA20 不破：加仓观察
-- 假突破 MA20：风险信号
-- 假跌破 MA20 后快速拉回：反向买点观察
-- Vegas 通道上方：趋势偏多
-- Vegas 通道下方：趋势偏空
-- FRVP / POC / VAH / VAL：支撑压力和成本区
-- AVWAP：重要高低点锚定成本
+- `naked_k_analysis.py`：CLI、交易计划、报告、日志和复盘逻辑
+- `naked_k_patterns.py`：纯 K 线形态检测
+- `westock_wrapper.py`：市场数据获取和 ticker 转换
+- `tests/test_naked_k_analysis.py`：裸 K 计划和报告测试
+- `tests/test_naked_k_patterns.py`：K 线形态测试
+- `tests/test_westock_wrapper.py`：数据源 fallback 测试
 
 ## 数据源
 
-`westock_wrapper.py` 提供与 yfinance 兼容的 `download()` API，按顺序尝试：
+`westock_wrapper.py` 提供与 `yfinance.download()` 兼容的 `download()` API，按顺序尝试：
 
 1. `westock-data` CLI，可通过 `WESTOCK_DATA_SCRIPT` 指定脚本路径
 2. 腾讯 K 线接口：`web.ifzq.gtimg.cn`，备用 `proxy.finance.qq.com`
-3. Yahoo chart JSON 直连，绕过 yfinance cookie 预取，支持 1H 数据兜底
-4. yfinance 官方库兜底
+3. Yahoo chart JSON，绕过 yfinance cookie 预取，支持 1H 数据兜底
+4. yfinance 官方库
 
-代码会自动处理常见代码格式转换，例如 `0700.HK` -> `hk00700`。如果本机没有 westock-data，港股仍可通过腾讯 / Yahoo chart 跑技术分析。分钟线数据不足 120 根时，会继续尝试下一个数据源，避免 4H 分析使用不完整数据。
+常见 ticker 会自动转换：
+
+- 港股：`0700.HK` -> `hk00700`
+- A 股：`600703.SS` -> `sh600703`、`001391.SZ` -> `sz001391`
+- 美股：`NVDA` -> `usNVDA`
 
 ## 测试
 
 ```bash
-python3 -m unittest discover -v
+python -m unittest discover -v
 ```
 
-当前覆盖：
+当前测试覆盖：
 
-- 技术派 advisor 决策
-- CLI JSON 输出
+- 裸 K 形态识别
+- 结构性突破、假突破、下破收回
+- ATR 缓冲、触发位、失效位、第一目标和 R/R
+- 1H 盘中确认和零成交量过滤
+- 未收盘日线 / 周线过滤
+- 复盘日志去重和上一计划复盘
 - 腾讯 / Yahoo / yfinance 数据源 fallback
-- 技术方法论摘要
-- 数据源审计、真实 1H 聚合 4H、短中长期分层评分和结构化技术证据
-- 数据新鲜度、行数门槛和关键数据质量降级
-- 高位过热风控降级
 
 ## 免责声明
 

@@ -1,1 +1,1 @@
-"""Unit tests for stock-ma-analysis."""
+"""Unit tests for naked-k-analysis."""

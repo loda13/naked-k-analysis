@@ -1,4 +1,5 @@
 import os
+import inspect
 import json
 from types import SimpleNamespace
 import unittest
@@ -10,6 +11,17 @@ import westock_wrapper
 
 
 class WestockWrapperTests(unittest.TestCase):
+    def test_wrapper_no_longer_imports_legacy_stock_analysis_package(self):
+        source = inspect.getsource(westock_wrapper)
+
+        self.assertNotIn("stock_analysis", source)
+
+    def test_convert_ticker_normalizes_common_markets_locally(self):
+        self.assertEqual(westock_wrapper.convert_ticker("0700.HK"), "hk00700")
+        self.assertEqual(westock_wrapper.convert_ticker("600703.SS"), "sh600703")
+        self.assertEqual(westock_wrapper.convert_ticker("001391.SZ"), "sz001391")
+        self.assertEqual(westock_wrapper.convert_ticker("NVDA"), "usNVDA")
+
     def test_uses_env_script_path(self):
         with patch.dict(os.environ, {"WESTOCK_DATA_SCRIPT": "/tmp/westock.js"}):
             cmd = westock_wrapper.build_westock_command("NVDA", "day", 10)
