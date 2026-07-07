@@ -59,6 +59,48 @@ class NakedKAnalysisTests(unittest.TestCase):
         self.assertIn("上影线压力", context["candle"])
         self.assertGreater(context["close_position_pct"], 0)
         self.assertLess(context["close_position_pct"], 50)
+        self.assertEqual(context["volume_pressure"], "派发压力")
+        self.assertIn("放量上破失败", context["warnings"])
+
+    def test_price_action_context_flags_trend_volume_and_volatility_confirmation(self):
+        frame = pd.DataFrame(
+            {
+                "Open": [100.0, 102.0, 104.0, 106.0, 108.0, 110.0],
+                "High": [103.0, 105.0, 107.0, 109.0, 111.0, 118.0],
+                "Low": [99.0, 101.0, 103.0, 105.0, 107.0, 109.0],
+                "Close": [102.0, 104.0, 106.0, 108.0, 110.0, 117.0],
+                "Volume": [1000, 1050, 980, 1020, 1010, 1900],
+            },
+            index=pd.date_range("2026-06-22", periods=6, freq="D"),
+        )
+
+        context = naked_k_analysis.analyze_price_action_context(frame, lookback=5)
+
+        self.assertEqual(context["bias"], "bullish")
+        self.assertEqual(context["trend"]["direction"], "up")
+        self.assertEqual(context["trend"]["strength"], "strong")
+        self.assertEqual(context["volatility_state"], "突破扩张")
+        self.assertEqual(context["volume_pressure"], "量价确认")
+        self.assertIn("趋势结构向上", context["signals"])
+        self.assertIn("放量突破扩张", context["signals"])
+
+    def test_price_action_context_classifies_bullish_pullback_depth(self):
+        frame = pd.DataFrame(
+            {
+                "Open": [100.0, 106.0, 112.0, 118.0, 118.0, 115.0],
+                "High": [106.0, 113.0, 120.0, 121.0, 119.0, 116.0],
+                "Low": [99.0, 105.0, 111.0, 116.0, 114.0, 112.0],
+                "Close": [105.0, 112.0, 119.0, 118.0, 115.0, 113.0],
+                "Volume": [1000, 1100, 1300, 1200, 900, 850],
+            },
+            index=pd.date_range("2026-06-22", periods=6, freq="D"),
+        )
+
+        context = naked_k_analysis.analyze_price_action_context(frame, lookback=5)
+
+        self.assertEqual(context["pullback"]["direction"], "bullish")
+        self.assertEqual(context["pullback"]["zone"], "健康回撤")
+        self.assertAlmostEqual(context["pullback"]["depth_pct"], 36.4, places=1)
 
     def test_price_action_context_flags_failed_breakdown_reclaim(self):
         frame = pd.DataFrame(
@@ -338,6 +380,10 @@ class NakedKAnalysisTests(unittest.TestCase):
                 "candle": ["强阳收近高点"],
                 "signals": ["收盘突破5日高点"],
                 "close_position_pct": 83.3,
+                "trend": {"state": "上升结构", "strength": "strong"},
+                "volatility_state": "突破扩张",
+                "volume_pressure": "量价确认",
+                "pullback": {"direction": "bullish", "zone": "健康回撤", "depth_pct": 36.4},
             },
         )
 
@@ -346,6 +392,10 @@ class NakedKAnalysisTests(unittest.TestCase):
         self.assertIn("- 裸K解读：", text)
         self.assertIn("强阳收近高点", text)
         self.assertIn("收盘突破5日高点", text)
+        self.assertIn("上升结构", text)
+        self.assertIn("突破扩张", text)
+        self.assertIn("健康回撤", text)
+        self.assertIn("量价确认", text)
 
     def test_format_report_uses_none_for_best_trial_when_no_actionable_setups(self):
         report = naked_k_analysis.InstrumentReport(

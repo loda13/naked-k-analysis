@@ -1,3 +1,22 @@
+# v2.1.0 - Naked K Context Enhancements
+
+## Summary
+
+This release deepens the naked K reading layer without bringing indicators back. The report now explains trend structure, pullback depth, volatility state, and volume-price confirmation inside the existing price-action context.
+
+## Added
+
+- Added short-window trend structure classification for upward, downward, and sideways price action.
+- Added pullback context based on the latest close against the prior swing high/low range.
+- Added volatility state classification for breakout expansion, breakdown expansion, wide-range chop, normal range, and compression.
+- Added volume-pressure labels for volume-confirmed breakouts, breakdowns, failed breakouts, downside reclaim, and low-volume breakout warnings.
+- Expanded report summaries so trend, pullback, volatility, and volume-pressure details appear in the naked K interpretation.
+
+## Changed
+
+- Updated the trade-plan improvement note to describe enhanced naked K context instead of only shadow, close-position, and prior high/low reading.
+- Extended unit coverage for trend confirmation, bullish pullback depth, and volume-pressure reporting.
+
 # v2.0.0 - Naked K Focus
 
 ## Summary

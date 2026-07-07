@@ -323,6 +323,146 @@ def classify_latest_candle(bar: pd.Series) -> list[str]:
     return labels
 
 
+def analyze_trend_structure(clean: pd.DataFrame, window: int = 5) -> dict[str, Any]:
+    recent = clean.tail(window)
+    if len(recent) < 3:
+        return {
+            "direction": "neutral",
+            "state": "样本不足",
+            "strength": "weak",
+            "score": 0,
+        }
+
+    highs = recent["High"].astype(float).tolist()
+    lows = recent["Low"].astype(float).tolist()
+    closes = recent["Close"].astype(float).tolist()
+    comparisons = len(recent) - 1
+
+    higher_highs = sum(1 for i in range(1, len(highs)) if highs[i] > highs[i - 1])
+    higher_lows = sum(1 for i in range(1, len(lows)) if lows[i] > lows[i - 1])
+    higher_closes = sum(1 for i in range(1, len(closes)) if closes[i] > closes[i - 1])
+    lower_highs = sum(1 for i in range(1, len(highs)) if highs[i] < highs[i - 1])
+    lower_lows = sum(1 for i in range(1, len(lows)) if lows[i] < lows[i - 1])
+    lower_closes = sum(1 for i in range(1, len(closes)) if closes[i] < closes[i - 1])
+
+    up_points = higher_highs + higher_lows + higher_closes
+    down_points = lower_highs + lower_lows + lower_closes
+    max_points = comparisons * 3
+    threshold = max(4, round(max_points * 0.65))
+
+    if up_points >= threshold and up_points > down_points:
+        direction = "up"
+        state = "上升结构"
+        raw_strength = up_points / max_points
+        score = 1
+    elif down_points >= threshold and down_points > up_points:
+        direction = "down"
+        state = "下降结构"
+        raw_strength = down_points / max_points
+        score = -1
+    else:
+        return {
+            "direction": "sideways",
+            "state": "横盘结构",
+            "strength": "weak",
+            "score": 0,
+            "up_points": up_points,
+            "down_points": down_points,
+        }
+
+    if raw_strength >= 0.85:
+        strength = "strong"
+    elif raw_strength >= 0.65:
+        strength = "developing"
+    else:
+        strength = "weak"
+
+    return {
+        "direction": direction,
+        "state": state,
+        "strength": strength,
+        "score": score,
+        "up_points": up_points,
+        "down_points": down_points,
+    }
+
+
+def analyze_pullback_context(clean: pd.DataFrame, lookback: int) -> dict[str, Any]:
+    prior = clean.iloc[:-1].tail(lookback)
+    if len(prior) < 3:
+        return {"direction": "none", "zone": "样本不足"}
+
+    latest_close = float(clean["Close"].iloc[-1])
+    prior_high_idx = prior["High"].astype(float).idxmax()
+    prior_low_idx = prior["Low"].astype(float).idxmin()
+    prior_high = float(prior.loc[prior_high_idx, "High"])
+    prior_low = float(prior.loc[prior_low_idx, "Low"])
+    impulse = prior_high - prior_low
+    if impulse <= 0:
+        return {"direction": "none", "zone": "无有效波段"}
+
+    if prior.index.get_loc(prior_low_idx) < prior.index.get_loc(prior_high_idx):
+        direction = "bullish"
+        depth_pct = (prior_high - latest_close) / impulse * 100
+    elif prior.index.get_loc(prior_high_idx) < prior.index.get_loc(prior_low_idx):
+        direction = "bearish"
+        depth_pct = (latest_close - prior_low) / impulse * 100
+    else:
+        return {"direction": "none", "zone": "无有效波段"}
+
+    if depth_pct < 0:
+        zone = "突破延伸"
+    elif depth_pct <= 23.6:
+        zone = "浅回撤"
+    elif depth_pct <= 50.0:
+        zone = "健康回撤"
+    elif depth_pct <= 61.8:
+        zone = "深回撤观察"
+    elif depth_pct <= 78.6:
+        zone = "深回撤"
+    else:
+        zone = "趋势破坏"
+
+    return {
+        "direction": direction,
+        "zone": zone,
+        "depth_pct": round(depth_pct, 1),
+        "anchor_low": round(prior_low, 2),
+        "anchor_high": round(prior_high, 2),
+    }
+
+
+def classify_volatility_state(
+    latest: pd.Series,
+    prior: pd.DataFrame,
+    prior_high: float,
+    prior_low: float,
+) -> dict[str, Any]:
+    latest_range = float(latest["High"]) - float(latest["Low"])
+    prior_ranges = (prior["High"].astype(float) - prior["Low"].astype(float)).tail(5)
+    avg_range = float(prior_ranges.mean()) if not prior_ranges.empty else 0.0
+    if latest_range <= 0 or avg_range <= 0:
+        return {"state": "波动未知", "range_ratio": None}
+
+    range_ratio = latest_range / avg_range
+    latest_close = float(latest["Close"])
+    if range_ratio >= 1.5 and latest_close > prior_high:
+        state = "突破扩张"
+    elif range_ratio >= 1.5 and latest_close < prior_low:
+        state = "跌破扩张"
+    elif range_ratio >= 1.5:
+        state = "宽幅震荡"
+    elif range_ratio <= 0.7:
+        state = "波幅压缩"
+    else:
+        state = "常态波动"
+
+    return {
+        "state": state,
+        "range_ratio": round(range_ratio, 2),
+    }
+
+
 def analyze_price_action_context(frame: pd.DataFrame, lookback: int = 20) -> dict[str, Any]:
     if frame.empty or len(frame) < 2:
         return {
@@ -354,6 +494,9 @@ def analyze_price_action_context(frame: pd.DataFrame, lookback: int = 20) -> dic
     signals: list[str] = []
     warnings: list[str] = []
     score = 0
+    trend = analyze_trend_structure(clean)
+    pullback = analyze_pullback_context(clean, actual_lookback)
+    volatility = classify_volatility_state(latest, prior, prior_high, prior_low)
 
     if latest_high > prior_high and latest_close < prior_high:
         signals.append(f"上破{actual_lookback}日高点失败")
@@ -370,6 +513,19 @@ def analyze_price_action_context(frame: pd.DataFrame, lookback: int = 20) -> dic
         signals.append(f"收盘跌破{actual_lookback}日低点")
         warnings.append("前低失守")
         score -= 2
+
+    if trend["direction"] == "up":
+        signals.append("趋势结构向上")
+        score += int(trend["score"])
+    elif trend["direction"] == "down":
+        signals.append("趋势结构向下")
+        score += int(trend["score"])
+
+    volatility_state = str(volatility["state"])
+    if volatility_state == "突破扩张":
+        score += 1
+    elif volatility_state == "跌破扩张":
+        score -= 1
 
     recent = clean.tail(3)
     if len(recent) == 3:
@@ -409,6 +565,40 @@ def analyze_price_action_context(frame: pd.DataFrame, lookback: int = 20) -> dic
     elif avg_volume > 0 and latest_volume <= avg_volume * 0.6:
         volume_state = "缩量"
 
+    volume_pressure = "量能中性"
+    if volume_state == "放量":
+        if latest_high > prior_high and latest_close < prior_high:
+            volume_pressure = "派发压力"
+            warnings.append("放量上破失败")
+            score -= 1
+        elif latest_low < prior_low and latest_close > prior_low:
+            volume_pressure = "承接增强"
+            signals.append("放量下破收回")
+            score += 1
+        elif volatility_state == "突破扩张" and metrics["close_position_pct"] >= 70:
+            volume_pressure = "量价确认"
+            signals.append("放量突破扩张")
+            signals.append("量价确认")
+            score += 1
+        elif volatility_state == "跌破扩张" and metrics["close_position_pct"] <= 30:
+            volume_pressure = "量价确认"
+            signals.append("放量跌破扩张")
+            signals.append("量价确认")
+            score -= 1
+        elif float(latest["Close"]) > float(clean["Close"].iloc[-2]) and metrics["close_position_pct"] >= 65:
+            volume_pressure = "量价确认"
+            signals.append("量价确认")
+        elif float(latest["Close"]) < float(clean["Close"].iloc[-2]) and metrics["close_position_pct"] <= 35:
+            volume_pressure = "量价确认"
+            signals.append("量价确认")
+    elif volume_state == "缩量":
+        if latest_close > prior_high:
+            volume_pressure = "缩量突破待确认"
+            warnings.append("缩量突破，等待放量确认")
+        elif latest_close < prior_low:
+            volume_pressure = "缩量跌破待确认"
+            warnings.append("缩量跌破，等待放量确认")
+
     if score >= 2:
         bias = "bullish"
     elif score <= -2:
@@ -435,6 +625,11 @@ def analyze_price_action_context(frame: pd.DataFrame, lookback: int = 20) -> dic
         "upper_shadow_pct": metrics["upper_shadow_pct"],
         "lower_shadow_pct": metrics["lower_shadow_pct"],
         "volume_state": volume_state,
+        "volume_pressure": volume_pressure,
+        "trend": trend,
+        "volatility_state": volatility_state,
+        "volatility": volatility,
+        "pullback": pullback,
     }
 
 
@@ -445,14 +640,28 @@ def format_price_action_summary(price_action: dict[str, Any]) -> str:
     candle = price_action.get("candle") or []
     signals = price_action.get("signals") or []
     warnings = price_action.get("warnings") or []
+    trend = price_action.get("trend") or {}
+    pullback = price_action.get("pullback") or {}
     if candle:
         parts.append(f"K线：{'、'.join(str(item) for item in candle)}")
     if signals:
         parts.append(f"结构：{'、'.join(str(item) for item in signals)}")
+    if trend.get("state") and trend.get("state") != "样本不足":
+        strength = {"strong": "强", "developing": "形成中", "weak": "弱"}.get(str(trend.get("strength")), str(trend.get("strength")))
+        parts.append(f"趋势：{trend['state']}（{strength}）")
+    if price_action.get("volatility_state"):
+        parts.append(f"波动：{price_action['volatility_state']}")
+    if pullback.get("direction") not in {None, "none"} and pullback.get("zone"):
+        if pullback.get("depth_pct") is not None:
+            parts.append(f"回撤：{pullback['zone']}（{pullback['depth_pct']}%）")
+        else:
+            parts.append(f"回撤：{pullback['zone']}")
     if warnings:
         parts.append(f"风险：{'、'.join(str(item) for item in warnings)}")
     if price_action.get("close_position_pct") is not None:
         parts.append(f"收盘位置：{price_action['close_position_pct']}%")
+    if price_action.get("volume_pressure"):
+        parts.append(f"量价：{price_action['volume_pressure']}")
     if price_action.get("volume_state"):
         parts.append(f"量能：{price_action['volume_state']}")
     return "；".join(parts) if parts else "暂无"
@@ -708,7 +917,7 @@ def build_trade_plan(
             "weekly": round(float(weekly_bar["Close"]), 2),
         },
         review=review,
-        improvement="新增裸K结构读线：识别影线、收盘位置、前高/前低突破或失败，再用确认K触发。",
+        improvement="新增裸K增强读线：趋势结构、波动扩张/压缩、回撤深度、量价确认与假突破压力均纳入价格行为上下文。",
         intraday_status=intraday_status,
         price_action=price_action,
     )
