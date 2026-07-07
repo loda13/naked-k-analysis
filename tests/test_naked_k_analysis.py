@@ -1,10 +1,14 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
+import json
 
 import pandas as pd
 
+import naked_k_config
+import naked_k_llm
 import naked_k_analysis
 
 
@@ -59,6 +63,48 @@ class NakedKAnalysisTests(unittest.TestCase):
         self.assertIn("上影线压力", context["candle"])
         self.assertGreater(context["close_position_pct"], 0)
         self.assertLess(context["close_position_pct"], 50)
+        self.assertEqual(context["volume_pressure"], "派发压力")
+        self.assertIn("放量上破失败", context["warnings"])
+
+    def test_price_action_context_flags_trend_volume_and_volatility_confirmation(self):
+        frame = pd.DataFrame(
+            {
+                "Open": [100.0, 102.0, 104.0, 106.0, 108.0, 110.0],
+                "High": [103.0, 105.0, 107.0, 109.0, 111.0, 118.0],
+                "Low": [99.0, 101.0, 103.0, 105.0, 107.0, 109.0],
+                "Close": [102.0, 104.0, 106.0, 108.0, 110.0, 117.0],
+                "Volume": [1000, 1050, 980, 1020, 1010, 1900],
+            },
+            index=pd.date_range("2026-06-22", periods=6, freq="D"),
+        )
+
+        context = naked_k_analysis.analyze_price_action_context(frame, lookback=5)
+
+        self.assertEqual(context["bias"], "bullish")
+        self.assertEqual(context["trend"]["direction"], "up")
+        self.assertEqual(context["trend"]["strength"], "strong")
+        self.assertEqual(context["volatility_state"], "突破扩张")
+        self.assertEqual(context["volume_pressure"], "量价确认")
+        self.assertIn("趋势结构向上", context["signals"])
+        self.assertIn("放量突破扩张", context["signals"])
+
+    def test_price_action_context_classifies_bullish_pullback_depth(self):
+        frame = pd.DataFrame(
+            {
+                "Open": [100.0, 106.0, 112.0, 118.0, 118.0, 115.0],
+                "High": [106.0, 113.0, 120.0, 121.0, 119.0, 116.0],
+                "Low": [99.0, 105.0, 111.0, 116.0, 114.0, 112.0],
+                "Close": [105.0, 112.0, 119.0, 118.0, 115.0, 113.0],
+                "Volume": [1000, 1100, 1300, 1200, 900, 850],
+            },
+            index=pd.date_range("2026-06-22", periods=6, freq="D"),
+        )
+
+        context = naked_k_analysis.analyze_price_action_context(frame, lookback=5)
+
+        self.assertEqual(context["pullback"]["direction"], "bullish")
+        self.assertEqual(context["pullback"]["zone"], "健康回撤")
+        self.assertAlmostEqual(context["pullback"]["depth_pct"], 36.4, places=1)
 
     def test_price_action_context_flags_failed_breakdown_reclaim(self):
         frame = pd.DataFrame(
@@ -99,6 +145,160 @@ class NakedKAnalysisTests(unittest.TestCase):
         self.assertEqual(report.price_action["bias"], "bullish")
         self.assertIn("收盘突破5日高点", report.price_action["signals"])
         self.assertIn("裸K结构", report.rationale)
+
+    def test_trade_plan_reports_market_structure_and_regime(self):
+        daily = pd.DataFrame(
+            {
+                "Open": [9.0, 10.5, 10.0, 12.5, 12.0, 14.5, 14.0, 15.5, 15.0, 18.0],
+                "High": [10.0, 12.0, 11.0, 14.0, 13.0, 16.0, 15.0, 17.0, 16.0, 19.0],
+                "Low": [8.0, 9.0, 8.5, 10.0, 9.5, 12.0, 11.0, 13.0, 12.5, 15.0],
+                "Close": [9.0, 11.0, 10.0, 13.0, 12.0, 15.0, 14.0, 16.0, 15.0, 18.5],
+                "Volume": [1000, 1200, 950, 1300, 980, 1400, 1000, 1500, 1050, 1800],
+            },
+            index=pd.date_range("2026-06-01", periods=10, freq="D"),
+        )
+        weekly = daily.copy()
+
+        report = naked_k_analysis.build_trade_plan("测试", "TEST", daily, weekly, previous=None)
+        text = naked_k_analysis.format_report("2026-06-12 16:00:00 CST", [report], naked_k_analysis.DEFAULT_JOURNAL_PATH)
+
+        self.assertEqual(report.market_structure["sequence"], "HH/HL")
+        self.assertEqual(report.market_structure["latest_event"]["kind"], "BOS")
+        self.assertEqual(report.market_regime["state"], "trend")
+        self.assertIn("- 市场结构：", text)
+        self.assertIn("BOS", text)
+        self.assertIn("- 市场状态：趋势市场", text)
+
+    def test_trade_plan_reports_multitimeframe_context(self):
+        daily = pd.DataFrame(
+            {
+                "Open": [18.0, 19.0, 20.0, 21.0, 22.0, 23.0],
+                "High": [20.0, 21.0, 22.0, 23.0, 24.0, 26.0],
+                "Low": [17.0, 18.0, 19.0, 20.0, 21.0, 22.0],
+                "Close": [19.0, 20.0, 21.0, 22.0, 23.0, 25.0],
+                "Volume": [1000, 1000, 1000, 1000, 1000, 1600],
+            },
+            index=pd.date_range("2026-06-01", periods=6, freq="D"),
+        )
+        weekly = daily.copy()
+        monthly = daily.copy()
+
+        report = naked_k_analysis.build_trade_plan("测试", "TEST", daily, weekly, previous=None, monthly=monthly)
+        text = naked_k_analysis.format_report("2026-06-12 16:00:00 CST", [report], naked_k_analysis.DEFAULT_JOURNAL_PATH)
+
+        self.assertEqual(report.timeframe_context["macro"]["role"], "长期方向")
+        self.assertIn("大周期方向", report.timeframe_context["framework"])
+        self.assertIn("- 多周期框架：", text)
+
+    def test_trade_plan_reports_trader_brief(self):
+        daily = pd.DataFrame(
+            {
+                "Open": [100.0, 101.0, 102.0, 103.0, 104.0, 108.0],
+                "High": [106.0, 107.0, 108.0, 109.0, 110.0, 113.0],
+                "Low": [98.0, 99.0, 100.0, 101.0, 102.0, 107.0],
+                "Close": [104.0, 105.0, 106.0, 107.0, 108.0, 112.0],
+                "Volume": [1000, 980, 1020, 1010, 990, 1800],
+            },
+            index=pd.date_range("2026-06-22", periods=6, freq="D"),
+        )
+        weekly = daily.copy()
+
+        report = naked_k_analysis.build_trade_plan("测试", "TEST", daily, weekly, previous=None)
+        text = naked_k_analysis.format_report("2026-06-29 16:00:00 CST", [report], naked_k_analysis.DEFAULT_JOURNAL_PATH)
+
+        self.assertIn("交易计划", report.trader_brief)
+        self.assertIn("胜率估计", report.trader_brief["交易计划"])
+        self.assertIn("- 交易员简报：", text)
+
+    def test_trade_plan_reports_structured_risk_plan(self):
+        daily = pd.DataFrame(
+            {
+                "Open": [100.0, 140.0, 101.0, 100.0, 94.0],
+                "High": [102.0, 140.0, 102.0, 101.0, 107.0],
+                "Low": [98.0, 110.0, 95.0, 94.0, 93.0],
+                "Close": [101.0, 120.0, 100.0, 95.0, 106.0],
+                "Volume": [1000, 1000, 1000, 1000, 1200],
+            },
+            index=pd.to_datetime(["2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26"]),
+        )
+        weekly = daily.copy()
+
+        report = naked_k_analysis.build_trade_plan("测试", "TEST", daily, weekly, previous=None)
+        text = naked_k_analysis.format_report("2026-06-26 16:00:00 CST", [report], naked_k_analysis.DEFAULT_JOURNAL_PATH)
+
+        self.assertEqual(report.risk_plan["direction"], "long")
+        self.assertEqual(report.risk_plan["status"], "active")
+        self.assertIn("1R", report.risk_plan["targets_by_r"])
+        self.assertEqual(report.position_size, report.risk_plan["position_size"])
+        self.assertIn("- 风险计划：", text)
+        self.assertIn("账户风险", text)
+
+    def test_trade_plan_accepts_configured_risk_limits(self):
+        config = naked_k_config.TradingConfig(
+            risk=naked_k_config.RiskConfig(
+                account_risk_pct=0.5,
+                action_gross_caps={"买入": 8.0, "小仓试错": 4.0, "减仓": 5.0, "回避": 0.0, "观望": 0.0},
+            )
+        )
+        daily = pd.DataFrame(
+            {
+                "Open": [100.0, 140.0, 101.0, 100.0, 94.0],
+                "High": [102.0, 140.0, 102.0, 101.0, 107.0],
+                "Low": [98.0, 110.0, 95.0, 94.0, 93.0],
+                "Close": [101.0, 120.0, 100.0, 95.0, 106.0],
+                "Volume": [1000, 1000, 1000, 1000, 1200],
+            },
+            index=pd.to_datetime(["2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26"]),
+        )
+
+        report = naked_k_analysis.build_trade_plan("测试", "TEST", daily, daily.copy(), previous=None, config=config)
+
+        self.assertEqual(report.risk_plan["base_account_risk_pct"], 0.5)
+        self.assertEqual(report.risk_plan["max_gross_pct"], config.risk.action_gross_caps[report.action])
+
+    def test_trade_plan_reports_trade_setup_playbook(self):
+        daily = pd.DataFrame(
+            {
+                "Open": [9.0, 10.5, 10.0, 12.5, 12.0, 14.5, 14.0, 15.5, 15.0, 18.0],
+                "High": [10.0, 12.0, 11.0, 14.0, 13.0, 16.0, 15.0, 17.0, 16.0, 19.0],
+                "Low": [8.0, 9.0, 8.5, 10.0, 9.5, 12.0, 11.0, 13.0, 12.5, 15.0],
+                "Close": [9.0, 11.0, 10.0, 13.0, 12.0, 15.0, 14.0, 16.0, 15.0, 18.5],
+                "Volume": [1000, 1200, 950, 1300, 980, 1400, 1000, 1500, 1050, 1800],
+            },
+            index=pd.date_range("2026-06-01", periods=10, freq="D"),
+        )
+        weekly = daily.copy()
+
+        report = naked_k_analysis.build_trade_plan("测试", "TEST", daily, weekly, previous=None)
+        text = naked_k_analysis.format_report("2026-06-12 16:00:00 CST", [report], naked_k_analysis.DEFAULT_JOURNAL_PATH)
+
+        self.assertEqual(report.trade_setup["key"], "bullish_bos_continuation")
+        self.assertEqual(report.trade_setup["direction"], "long")
+        self.assertIn("多头BOS趋势延续", text)
+        self.assertIn("- 交易剧本：", text)
+
+    def test_trade_plan_reports_structured_price_zones(self):
+        daily = pd.DataFrame(
+            {
+                "Open": [100, 105, 101, 106, 102, 107, 103, 106, 102, 105],
+                "High": [104, 111.0, 105, 111.4, 106, 111.2, 107, 110.8, 106, 108],
+                "Low": [98, 102, 99, 103, 100, 104, 101, 103, 99, 101],
+                "Close": [103, 104, 104, 105, 105, 106, 106, 104, 103, 104],
+                "Volume": [1000, 1700, 1000, 1800, 1000, 1750, 1000, 1600, 1000, 1000],
+            },
+            index=pd.date_range("2026-06-01", periods=10, freq="D"),
+        )
+        weekly = daily.copy()
+
+        report = naked_k_analysis.build_trade_plan("测试", "TEST", daily, weekly, previous=None)
+        text = naked_k_analysis.format_report("2026-06-12 16:00:00 CST", [report], naked_k_analysis.DEFAULT_JOURNAL_PATH)
+
+        self.assertEqual(report.price_zones["nearest_resistance"]["kind"], "supply")
+        self.assertEqual(report.price_zones["liquidity_pools"][0]["kind"], "buy_side_liquidity")
+        self.assertEqual(report.resistance, report.price_zones["nearest_resistance"]["midpoint"])
+        self.assertIn("- 关键价格区域：", text)
+        self.assertIn("供给区", text)
+        self.assertIn("上方买方流动性池", text)
 
     def test_position_guidance_is_capped_by_risk_budget(self):
         guidance = naked_k_analysis.build_position_guidance(
@@ -338,6 +538,10 @@ class NakedKAnalysisTests(unittest.TestCase):
                 "candle": ["强阳收近高点"],
                 "signals": ["收盘突破5日高点"],
                 "close_position_pct": 83.3,
+                "trend": {"state": "上升结构", "strength": "strong"},
+                "volatility_state": "突破扩张",
+                "volume_pressure": "量价确认",
+                "pullback": {"direction": "bullish", "zone": "健康回撤", "depth_pct": 36.4},
             },
         )
 
@@ -346,6 +550,10 @@ class NakedKAnalysisTests(unittest.TestCase):
         self.assertIn("- 裸K解读：", text)
         self.assertIn("强阳收近高点", text)
         self.assertIn("收盘突破5日高点", text)
+        self.assertIn("上升结构", text)
+        self.assertIn("突破扩张", text)
+        self.assertIn("健康回撤", text)
+        self.assertIn("量价确认", text)
 
     def test_format_report_uses_none_for_best_trial_when_no_actionable_setups(self):
         report = naked_k_analysis.InstrumentReport(
@@ -376,6 +584,143 @@ class NakedKAnalysisTests(unittest.TestCase):
         text = naked_k_analysis.format_report("2026-06-29 16:00:00 CST", [report], naked_k_analysis.DEFAULT_JOURNAL_PATH)
 
         self.assertIn("- 最值得试错：暂无（无满足触发条件标的）", text)
+
+    def test_format_report_includes_portfolio_exposure_summary(self):
+        report = naked_k_analysis.InstrumentReport(
+            name="测试",
+            ticker="0700.HK",
+            action="小仓试错",
+            entry_trigger=101.0,
+            stop_loss=95.0,
+            target_price=112.0,
+            risk_per_share=6.0,
+            reward_to_risk=1.83,
+            signal_state="planned_long",
+            resistance=112.0,
+            support=95.0,
+            position_size="最高约10.0%仓位",
+            rationale="测试",
+            daily_patterns=[],
+            weekly_patterns=[],
+            weekly_context="周线中性",
+            data_sources={"daily": "fixture", "weekly": "fixture"},
+            latest_k_dates={"daily": "2026-06-26", "weekly": "2026-06-26"},
+            latest_closes={"daily": 99.0, "weekly": 99.0},
+            review={"status": "观察中", "error_type": None, "note": "测试"},
+            improvement="测试",
+            intraday_status={"status": "盘中观察", "note": "测试"},
+            risk_plan={"direction": "long", "suggested_gross_pct": 10.0, "effective_account_risk_pct": 0.8},
+        )
+
+        text = naked_k_analysis.format_report("2026-06-29 16:00:00 CST", [report], naked_k_analysis.DEFAULT_JOURNAL_PATH)
+
+        self.assertIn("- 组合风险：", text)
+        self.assertIn("总仓位", text)
+
+    def test_run_analysis_writes_structured_audit_events(self):
+        frame = pd.DataFrame(
+            {
+                "Open": [100.0, 101.0, 102.0, 103.0, 104.0, 108.0],
+                "High": [106.0, 107.0, 108.0, 109.0, 110.0, 113.0],
+                "Low": [98.0, 99.0, 100.0, 101.0, 102.0, 107.0],
+                "Close": [104.0, 105.0, 106.0, 107.0, 108.0, 112.0],
+                "Volume": [1000, 980, 1020, 1010, 990, 1800],
+            },
+            index=pd.date_range("2026-06-22", periods=6, freq="D"),
+        )
+        frame.attrs["source"] = "fixture"
+
+        def fake_load_ohlcv(_ticker, interval, period):
+            loaded = frame.copy()
+            loaded.attrs["source"] = f"fixture-{interval}"
+            return loaded
+
+        with TemporaryDirectory() as tmpdir:
+            journal_path = Path(tmpdir) / "journal.jsonl"
+            audit_path = Path(tmpdir) / "audit.jsonl"
+            with patch.object(naked_k_analysis, "load_ohlcv", side_effect=fake_load_ohlcv):
+                _, reports = naked_k_analysis.run_analysis(
+                    [("测试", "TEST")],
+                    journal_path,
+                    audit_path=audit_path,
+                )
+
+            events = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines()]
+
+        event_types = [event["event_type"] for event in events]
+        self.assertIn("run_started", event_types)
+        self.assertIn("data_loaded", event_types)
+        self.assertIn("plan_generated", event_types)
+        self.assertIn("portfolio_exposure", event_types)
+        self.assertIn("run_completed", event_types)
+        self.assertEqual(reports[0].ticker, "TEST")
+        data_events = [event for event in events if event["event_type"] == "data_loaded"]
+        self.assertEqual({event["payload"]["interval"] for event in data_events}, {"1d", "1wk", "1mo", "1h"})
+        plan_event = next(event for event in events if event["event_type"] == "plan_generated")
+        self.assertEqual(plan_event["payload"]["ticker"], "TEST")
+        self.assertEqual(plan_event["payload"]["action"], reports[0].action)
+
+    def test_run_analysis_attaches_llm_commentary_when_enabled(self):
+        frame = pd.DataFrame(
+            {
+                "Open": [100.0, 101.0, 102.0, 103.0, 104.0, 108.0],
+                "High": [106.0, 107.0, 108.0, 109.0, 110.0, 113.0],
+                "Low": [98.0, 99.0, 100.0, 101.0, 102.0, 107.0],
+                "Close": [104.0, 105.0, 106.0, 107.0, 108.0, 112.0],
+                "Volume": [1000, 980, 1020, 1010, 990, 1800],
+            },
+            index=pd.date_range("2026-06-22", periods=6, freq="D"),
+        )
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": '{"market_reading":"突破测试","journal_note":"等待回踩确认"}'
+                            }
+                        }
+                    ]
+                }
+
+        def fake_load_ohlcv(_ticker, interval, period):
+            loaded = frame.copy()
+            loaded.attrs["source"] = f"fixture-{interval}"
+            return loaded
+
+        def fake_post(url, headers, json, timeout):
+            return FakeResponse()
+
+        llm_config = naked_k_llm.LLMConfig(
+            enabled=True,
+            base_url="https://ark.cn-beijing.volces.com/api/coding/v3",
+            api_key="test-secret-key",
+            model="glm-5.2",
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            journal_path = Path(tmpdir) / "journal.jsonl"
+            audit_path = Path(tmpdir) / "audit.jsonl"
+            with patch.object(naked_k_analysis, "load_ohlcv", side_effect=fake_load_ohlcv):
+                _, reports = naked_k_analysis.run_analysis(
+                    [("测试", "TEST")],
+                    journal_path,
+                    audit_path=audit_path,
+                    llm_config=llm_config,
+                    llm_post=fake_post,
+                )
+
+            audit_text = audit_path.read_text(encoding="utf-8")
+
+        commentary = reports[0].ai_assistant["llm_commentary"]
+        self.assertEqual(commentary["status"], "ok")
+        self.assertEqual(commentary["parsed"]["journal_note"], "等待回踩确认")
+        self.assertIn("llm_commentary_generated", audit_text)
+        self.assertNotIn("test-secret-key", audit_text)
 
     def test_review_previous_bullish_call_flags_false_breakout(self):
         previous = {
@@ -444,6 +789,27 @@ class NakedKAnalysisTests(unittest.TestCase):
         )
 
         self.assertEqual(trimmed.index[-1].strftime("%Y-%m-%d"), "2026-06-26")
+
+    def test_drop_incomplete_monthly_bar_during_current_month(self):
+        frame = pd.DataFrame(
+            {
+                "Open": [410.0, 423.0],
+                "High": [438.0, 425.0],
+                "Low": [405.0, 420.0],
+                "Close": [424.0, 423.6],
+                "Volume": [5000, 900],
+            },
+            index=pd.to_datetime(["2026-05-31", "2026-06-01"]),
+        )
+
+        trimmed = naked_k_analysis.trim_to_closed_bars(
+            frame,
+            market="hk",
+            interval="1mo",
+            now=pd.Timestamp("2026-06-29 10:55:00", tz=ZoneInfo("Asia/Shanghai")),
+        )
+
+        self.assertEqual(trimmed.index[-1].strftime("%Y-%m-%d"), "2026-05-31")
 
     def test_drop_zero_volume_latest_intraday_bar(self):
         frame = pd.DataFrame(

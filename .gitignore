@@ -5,3 +5,4 @@ __pycache__/
 .omc/
 reports/*.md
 reports/*.jsonl
+reports/*.json

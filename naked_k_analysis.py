@@ -3,14 +3,55 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-import naked_k_patterns
+import naked_k_audit
+import naked_k_ai
+import naked_k_config
+import naked_k_context
+import naked_k_interpreter
+import naked_k_llm
+import naked_k_planner
+import naked_k_portfolio
+import naked_k_timeframes
+from naked_k_trade import (
+    BEARISH_ACTIONS,
+    BEARISH_PATTERN_KEYS,
+    BULLISH_ACTIONS,
+    BULLISH_PATTERN_KEYS,
+    MIN_ACTIONABLE_REWARD_TO_RISK,
+    WATCH_PATTERN_KEYS,
+    analyze_price_action_context,
+    analyze_pullback_context,
+    analyze_trend_structure,
+    build_breakout_trigger,
+    build_intraday_status,
+    build_invalidation_level,
+    build_position_guidance,
+    build_signal_state,
+    build_trade_metrics,
+    build_volatility_buffer_ratio,
+    calculate_atr,
+    classify_latest_candle,
+    classify_patterns,
+    classify_volatility_state,
+    detect_price_action_patterns,
+    downgrade_low_reward_setup,
+    find_price_levels,
+    format_market_regime_summary,
+    format_market_structure_summary,
+    format_price_action_summary,
+    format_price_zones_summary,
+    format_risk_plan_summary,
+    format_trade_setup_summary,
+    resolve_weekly_context,
+    review_previous_call,
+)
 import westock_wrapper as yf
 
 DEFAULT_TICKERS = [
@@ -21,13 +62,9 @@ DEFAULT_TICKERS = [
 ]
 DEFAULT_JOURNAL_PATH = Path("reports/naked_k_journal.jsonl")
 DEFAULT_REPORT_PATH = Path("reports/naked_k_latest.md")
+DEFAULT_AUDIT_PATH = Path("reports/naked_k_audit.jsonl")
 
-BULLISH_PATTERN_KEYS = ("看涨吸收", "看涨Pin", "锤子线", "早晨星", "蜻蜓十字", "阴孕阳")
-BEARISH_PATTERN_KEYS = ("看跌吸收", "看跌Pin", "射击之星", "黄昏星", "墓碑十字", "阳孕阴")
-WATCH_PATTERN_KEYS = ("十字星", "双孕线", "孕线")
-BULLISH_ACTIONS = {"买入", "小仓试错"}
-BEARISH_ACTIONS = {"减仓", "回避"}
-MIN_ACTIONABLE_REWARD_TO_RISK = 1.0
+InstrumentReport = naked_k_planner.InstrumentReport
 
 
 def classify_market(ticker: str) -> str:
@@ -37,436 +74,6 @@ def classify_market(ticker: str) -> str:
     if symbol.endswith((".SS", ".SZ")):
         return "cn"
     return "us"
-
-
-@dataclass
-class InstrumentReport:
-    name: str
-    ticker: str
-    action: str
-    entry_trigger: float
-    stop_loss: float
-    target_price: float | None
-    risk_per_share: float
-    reward_to_risk: float | None
-    signal_state: str
-    resistance: float
-    support: float
-    position_size: str
-    rationale: str
-    daily_patterns: list[str]
-    weekly_patterns: list[str]
-    weekly_context: str
-    data_sources: dict[str, str]
-    latest_k_dates: dict[str, str]
-    latest_closes: dict[str, float]
-    review: dict[str, Any]
-    improvement: str
-    intraday_status: dict[str, Any] = field(default_factory=dict)
-    price_action: dict[str, Any] = field(default_factory=dict)
-
-
-def build_breakout_trigger(bar: pd.Series, side: str, buffer_ratio: float = 0.002) -> float:
-    if side == "bullish":
-        return round(float(bar["High"]) * (1 + buffer_ratio), 2)
-    return round(float(bar["Low"]) * (1 - buffer_ratio), 2)
-
-
-def build_invalidation_level(bar: pd.Series, side: str, buffer_ratio: float = 0.002) -> float:
-    if side == "bullish":
-        return round(float(bar["Low"]) * (1 - buffer_ratio), 2)
-    return round(float(bar["High"]) * (1 + buffer_ratio), 2)
-
-
-def calculate_atr(frame: pd.DataFrame, window: int = 14) -> float | None:
-    if frame.empty or not {"High", "Low", "Close"}.issubset(frame.columns):
-        return None
-    high = frame["High"].astype(float)
-    low = frame["Low"].astype(float)
-    close = frame["Close"].astype(float)
-    prev_close = close.shift(1)
-    true_range = pd.concat(
-        [
-            high - low,
-            (high - prev_close).abs(),
-            (low - prev_close).abs(),
-        ],
-        axis=1,
-    ).max(axis=1)
-    true_range = true_range.dropna()
-    if true_range.empty:
-        return None
-    sample = true_range.tail(window)
-    return float(sample.mean())
-
-
-def build_volatility_buffer_ratio(
-    frame: pd.DataFrame,
-    base_ratio: float = 0.002,
-    atr_fraction: float = 0.10,
-    max_ratio: float = 0.015,
-) -> float:
-    atr = calculate_atr(frame)
-    if atr is None:
-        return base_ratio
-    close = float(frame["Close"].iloc[-1])
-    if close <= 0:
-        return base_ratio
-    atr_buffer = atr / close * atr_fraction
-    return round(max(base_ratio, min(max_ratio, atr_buffer)), 4)
-
-
-def build_signal_state(action: str) -> str:
-    if action in BULLISH_ACTIONS:
-        return "planned_long"
-    if action in BEARISH_ACTIONS:
-        return "planned_short"
-    return "watching"
-
-
-def build_trade_metrics(
-    action: str,
-    entry_trigger: float,
-    stop_loss: float,
-    resistance: float,
-    support: float,
-) -> tuple[float | None, float, float | None]:
-    risk_per_share = round(abs(entry_trigger - stop_loss), 2)
-    target_price: float | None = None
-    if action in BULLISH_ACTIONS and resistance > entry_trigger:
-        target_price = resistance
-    elif action in BEARISH_ACTIONS and support < entry_trigger:
-        target_price = support
-
-    reward_to_risk: float | None = None
-    if target_price is not None and risk_per_share > 0:
-        reward_to_risk = round(abs(target_price - entry_trigger) / risk_per_share, 2)
-    return target_price, risk_per_share, reward_to_risk
-
-
-def downgrade_low_reward_setup(
-    action: str,
-    target_price: float | None,
-    reward_to_risk: float | None,
-    minimum_reward_to_risk: float = MIN_ACTIONABLE_REWARD_TO_RISK,
-) -> tuple[str, float | None, float | None, str | None]:
-    if action not in BULLISH_ACTIONS:
-        return action, target_price, reward_to_risk, None
-    if target_price is None or reward_to_risk is None:
-        return action, target_price, reward_to_risk, None
-    if reward_to_risk >= minimum_reward_to_risk:
-        return action, target_price, reward_to_risk, None
-    return "观望", None, None, f"首个压力位空间不足，盈亏比不足 {minimum_reward_to_risk:.1f}R"
-
-
-def build_position_guidance(
-    action: str,
-    entry_trigger: float,
-    stop_loss: float,
-    account_risk_pct: float = 1.0,
-) -> str:
-    if action == "买入":
-        max_gross_pct = 30.0
-    elif action == "小仓试错":
-        max_gross_pct = 15.0
-    elif action == "减仓":
-        return "降至10%以内"
-    elif action == "回避":
-        return "0%-5%"
-    else:
-        return "0%-10%"
-
-    if entry_trigger <= 0:
-        return f"最高约{max_gross_pct:.1f}%仓位"
-    risk_pct = abs(entry_trigger - stop_loss) / entry_trigger * 100
-    if risk_pct <= 0:
-        return f"最高约{max_gross_pct:.1f}%仓位"
-    risk_budget_cap = account_risk_pct / risk_pct * 100
-    gross_pct = min(max_gross_pct, risk_budget_cap)
-    return f"最高约{gross_pct:.1f}%仓位（按{account_risk_pct:g}%账户风险，单股风险{risk_pct:.1f}%）"
-
-
-def _to_float(value: Any) -> float:
-    return round(float(value), 2)
-
-
-def _format_ts(value: Any) -> str:
-    ts = pd.Timestamp(value)
-    return ts.strftime("%Y-%m-%d %H:%M:%S")
-
-
-def build_intraday_status(
-    frame: pd.DataFrame | None,
-    action: str,
-    entry_trigger: float,
-    stop_loss: float,
-    proximity_pct: float = 1.0,
-) -> dict[str, Any]:
-    if frame is None or getattr(frame, "empty", True):
-        return {
-            "status": "无盘中数据",
-            "note": "未获取到1h盘中K线",
-        }
-
-    latest = frame.iloc[-1]
-    latest_volume = _to_float(latest.get("Volume", 0))
-    payload = {
-        "status": "盘中观察",
-        "note": "未接近触发位或失效位",
-        "source": str(frame.attrs.get("source", "unknown")),
-        "interval": str(frame.attrs.get("interval", "1h")),
-        "latest_time": _format_ts(frame.index[-1]),
-        "latest_close": _to_float(latest["Close"]),
-        "latest_high": _to_float(latest["High"]),
-        "latest_low": _to_float(latest["Low"]),
-        "latest_volume": latest_volume,
-    }
-
-    if latest_volume <= 0:
-        payload.update(
-            {
-                "status": "盘中数据未确认",
-                "note": "最新1h K线成交量为0，等待有效K线确认",
-            }
-        )
-        return payload
-
-    close = float(latest["Close"])
-    high = float(latest["High"])
-    low = float(latest["Low"])
-    proximity = proximity_pct / 100
-    is_bearish_plan = action in BEARISH_ACTIONS
-
-    if is_bearish_plan:
-        if close <= entry_trigger:
-            payload.update({"status": "盘中确认", "note": "最近有效1h收盘跌破触发位"})
-        elif low <= entry_trigger:
-            payload.update({"status": "盘中跌破未确认", "note": "盘中跌破触发位，但1h收盘未确认"})
-        elif high >= stop_loss * (1 - proximity):
-            payload.update({"status": "接近失效位", "note": "盘中价格接近空头失效位"})
-        elif close <= entry_trigger * (1 + proximity):
-            payload.update({"status": "接近触发", "note": "最新1h价格距离触发位1%以内"})
-    else:
-        if close >= entry_trigger:
-            payload.update({"status": "盘中确认", "note": "最近有效1h收盘站上触发位"})
-        elif high >= entry_trigger:
-            payload.update({"status": "盘中突破未确认", "note": "盘中突破触发位，但1h收盘未确认"})
-        elif low <= stop_loss * (1 + proximity):
-            payload.update({"status": "接近失效位", "note": "盘中价格接近多头失效位"})
-        elif close >= entry_trigger * (1 - proximity):
-            payload.update({"status": "接近触发", "note": "最新1h价格距离触发位1%以内"})
-
-    return payload
-
-
-def _latest_bar_metrics(bar: pd.Series) -> dict[str, float]:
-    open_price = float(bar["Open"])
-    high = float(bar["High"])
-    low = float(bar["Low"])
-    close = float(bar["Close"])
-    full_range = max(high - low, 0.0)
-    body = abs(close - open_price)
-    upper_shadow = max(high - max(open_price, close), 0.0)
-    lower_shadow = max(min(open_price, close) - low, 0.0)
-    if full_range <= 0:
-        close_position_pct = 50.0
-        body_pct = 0.0
-        upper_shadow_pct = 0.0
-        lower_shadow_pct = 0.0
-    else:
-        close_position_pct = (close - low) / full_range * 100
-        body_pct = body / full_range * 100
-        upper_shadow_pct = upper_shadow / full_range * 100
-        lower_shadow_pct = lower_shadow / full_range * 100
-
-    return {
-        "open": round(open_price, 2),
-        "high": round(high, 2),
-        "low": round(low, 2),
-        "close": round(close, 2),
-        "range": round(full_range, 2),
-        "body_pct": round(body_pct, 1),
-        "upper_shadow_pct": round(upper_shadow_pct, 1),
-        "lower_shadow_pct": round(lower_shadow_pct, 1),
-        "close_position_pct": round(close_position_pct, 1),
-    }
-
-
-def classify_latest_candle(bar: pd.Series) -> list[str]:
-    metrics = _latest_bar_metrics(bar)
-    open_price = float(metrics["open"])
-    close = float(metrics["close"])
-    candle_range = float(metrics["range"])
-    body_pct = float(metrics["body_pct"])
-    upper_shadow_pct = float(metrics["upper_shadow_pct"])
-    lower_shadow_pct = float(metrics["lower_shadow_pct"])
-    close_position_pct = float(metrics["close_position_pct"])
-    labels: list[str] = []
-
-    if candle_range <= 0:
-        return ["无波动K线"]
-
-    if body_pct <= 12:
-        labels.append("十字犹豫")
-    elif close > open_price and body_pct >= 55 and close_position_pct >= 70:
-        labels.append("强阳收近高点")
-    elif close < open_price and body_pct >= 55 and close_position_pct <= 30:
-        labels.append("强阴收近低点")
-
-    if upper_shadow_pct >= 45 and upper_shadow_pct > lower_shadow_pct * 1.5 and close_position_pct < 60:
-        labels.append("上影线压力")
-    if lower_shadow_pct >= 45 and lower_shadow_pct > upper_shadow_pct * 1.5 and close_position_pct > 40:
-        labels.append("下影线承接")
-
-    if not labels:
-        labels.append("普通阳线" if close >= open_price else "普通阴线")
-    return labels
-
-
-def analyze_price_action_context(frame: pd.DataFrame, lookback: int = 20) -> dict[str, Any]:
-    if frame.empty or len(frame) < 2:
-        return {
-            "bias": "neutral",
-            "candle": [],
-            "signals": ["样本不足"],
-            "warnings": [],
-        }
-
-    clean = frame[["Open", "High", "Low", "Close", "Volume"]].dropna().copy()
-    if len(clean) < 2:
-        return {
-            "bias": "neutral",
-            "candle": [],
-            "signals": ["样本不足"],
-            "warnings": [],
-        }
-
-    latest = clean.iloc[-1]
-    prior = clean.iloc[:-1].tail(lookback)
-    actual_lookback = len(prior)
-    prior_high = float(prior["High"].max())
-    prior_low = float(prior["Low"].min())
-    latest_high = float(latest["High"])
-    latest_low = float(latest["Low"])
-    latest_close = float(latest["Close"])
-    metrics = _latest_bar_metrics(latest)
-    candle = classify_latest_candle(latest)
-    signals: list[str] = []
-    warnings: list[str] = []
-    score = 0
-
-    if latest_high > prior_high and latest_close < prior_high:
-        signals.append(f"上破{actual_lookback}日高点失败")
-        warnings.append("前高假突破风险")
-        score -= 2
-    elif latest_close > prior_high:
-        signals.append(f"收盘突破{actual_lookback}日高点")
-        score += 2
-
-    if latest_low < prior_low and latest_close > prior_low:
-        signals.append(f"下破{actual_lookback}日低点收回")
-        score += 2
-    elif latest_close < prior_low:
-        signals.append(f"收盘跌破{actual_lookback}日低点")
-        warnings.append("前低失守")
-        score -= 2
-
-    recent = clean.tail(3)
-    if len(recent) == 3:
-        highs = recent["High"].astype(float).tolist()
-        lows = recent["Low"].astype(float).tolist()
-        if highs[0] < highs[1] < highs[2] and lows[0] < lows[1] < lows[2]:
-            signals.append("高低点抬高")
-            score += 1
-        elif highs[0] > highs[1] > highs[2] and lows[0] > lows[1] > lows[2]:
-            signals.append("高低点降低")
-            score -= 1
-
-    ranges = (clean["High"].astype(float) - clean["Low"].astype(float)).tail(4).tolist()
-    if len(ranges) == 4 and ranges[1] > ranges[2] > ranges[3] and ranges[3] < sum(ranges[:3]) / 3:
-        signals.append("波幅连续收敛")
-
-    if "强阳收近高点" in candle:
-        score += 1
-    if "强阴收近低点" in candle:
-        score -= 1
-    if "上影线压力" in candle:
-        score -= 1
-    if "下影线承接" in candle:
-        score += 1
-
-    latest_volume = float(latest.get("Volume", 0) or 0)
-    avg_volume = float(prior["Volume"].astype(float).mean()) if "Volume" in prior else 0.0
-    volume_state = "成交量中性"
-    if avg_volume > 0 and latest_volume >= avg_volume * 1.5:
-        volume_state = "放量"
-        if score > 0:
-            signals.append("放量配合多头K线")
-        elif score < 0:
-            signals.append("放量配合空头K线")
-        else:
-            signals.append("放量换手")
-    elif avg_volume > 0 and latest_volume <= avg_volume * 0.6:
-        volume_state = "缩量"
-
-    if score >= 2:
-        bias = "bullish"
-    elif score <= -2:
-        bias = "bearish"
-    elif any(signal in signals for signal in ["波幅连续收敛"]) or "十字犹豫" in candle:
-        bias = "watch"
-    else:
-        bias = "neutral"
-
-    if not signals:
-        signals.append("区间内震荡")
-
-    return {
-        "bias": bias,
-        "score": score,
-        "candle": candle,
-        "signals": signals,
-        "warnings": warnings,
-        "lookback": actual_lookback,
-        "range_high": round(prior_high, 2),
-        "range_low": round(prior_low, 2),
-        "close_position_pct": metrics["close_position_pct"],
-        "body_pct": metrics["body_pct"],
-        "upper_shadow_pct": metrics["upper_shadow_pct"],
-        "lower_shadow_pct": metrics["lower_shadow_pct"],
-        "volume_state": volume_state,
-    }
-
-
-def format_price_action_summary(price_action: dict[str, Any]) -> str:
-    if not price_action:
-        return "暂无"
-    parts: list[str] = []
-    candle = price_action.get("candle") or []
-    signals = price_action.get("signals") or []
-    warnings = price_action.get("warnings") or []
-    if candle:
-        parts.append(f"K线：{'、'.join(str(item) for item in candle)}")
-    if signals:
-        parts.append(f"结构：{'、'.join(str(item) for item in signals)}")
-    if warnings:
-        parts.append(f"风险：{'、'.join(str(item) for item in warnings)}")
-    if price_action.get("close_position_pct") is not None:
-        parts.append(f"收盘位置：{price_action['close_position_pct']}%")
-    if price_action.get("volume_state"):
-        parts.append(f"量能：{price_action['volume_state']}")
-    return "；".join(parts) if parts else "暂无"
-
-
-def classify_patterns(patterns: list[str]) -> str:
-    joined = " ".join(patterns)
-    if any(key in joined for key in BULLISH_PATTERN_KEYS):
-        return "bullish"
-    if any(key in joined for key in BEARISH_PATTERN_KEYS):
-        return "bearish"
-    if any(key in joined for key in WATCH_PATTERN_KEYS):
-        return "watch"
-    return "neutral"
 
 
 def market_timezone(market: str) -> ZoneInfo:
@@ -507,6 +114,9 @@ def trim_to_closed_bars(
         if last_week == current_week and before_weekly_close:
             return frame.iloc[:-1]
 
+    if interval == "1mo" and (last_ts.year, last_ts.month) == (clock.year, clock.month):
+        return frame.iloc[:-1]
+
     if interval == "1h" and len(frame) > 1:
         latest_volume = pd.to_numeric(pd.Series([frame.iloc[-1].get("Volume")]), errors="coerce").iloc[0]
         if pd.notna(latest_volume) and float(latest_volume) <= 0:
@@ -528,83 +138,6 @@ def load_ohlcv(ticker: str, interval: str, period: str) -> pd.DataFrame:
     return frame
 
 
-def detect_price_action_patterns(frame: pd.DataFrame) -> list[str]:
-    patterns = list(naked_k_patterns.detect_kline_patterns(frame))
-    inside = naked_k_patterns.detect_inside_bar(frame)
-    if inside:
-        patterns.append(inside)
-    return patterns
-
-
-def resolve_weekly_context(frame: pd.DataFrame, patterns: list[str]) -> str:
-    latest = frame.iloc[-1]
-    recent = frame.tail(9)
-    prior = recent.iloc[:-1]
-    pattern_bias = classify_patterns(patterns)
-    if pattern_bias == "bullish":
-        return "周线偏多，允许日线多头触发"
-    if pattern_bias == "bearish":
-        return "周线偏空，优先过滤日线追多"
-
-    prior_high = float(prior["High"].max()) if not prior.empty else float(latest["High"])
-    prior_low = float(prior["Low"].min()) if not prior.empty else float(latest["Low"])
-    range_mid = (prior_high + prior_low) / 2
-    if float(latest["Close"]) >= range_mid:
-        return "周线中性偏多，只接受确认后做多"
-    return "周线中性偏空，等待更强确认"
-
-
-def find_price_levels(frame: pd.DataFrame, close: float) -> tuple[float, float]:
-    recent = frame.tail(30)
-    swing_lows: list[float] = []
-    swing_highs: list[float] = []
-    for i in range(1, len(recent) - 1):
-        low = float(recent["Low"].iloc[i])
-        high = float(recent["High"].iloc[i])
-        if low <= float(recent["Low"].iloc[i - 1]) and low <= float(recent["Low"].iloc[i + 1]):
-            swing_lows.append(low)
-        if high >= float(recent["High"].iloc[i - 1]) and high >= float(recent["High"].iloc[i + 1]):
-            swing_highs.append(high)
-
-    support_candidates = [value for value in swing_lows if value < close]
-    resistance_candidates = [value for value in swing_highs if value > close]
-
-    support = max(support_candidates) if support_candidates else float(recent["Low"].tail(10).min())
-    resistance = min(resistance_candidates) if resistance_candidates else float(recent["High"].tail(10).max())
-    return round(support, 2), round(resistance, 2)
-
-
-def review_previous_call(previous: dict[str, Any] | None, current_bar: pd.Series, current_close: float) -> dict[str, Any]:
-    if not previous:
-        return {"status": "无上次记录", "error_type": None, "note": "首日运行，暂无可复盘样本"}
-
-    action = previous.get("action")
-    trigger = previous.get("entry_trigger")
-    stop_loss = previous.get("stop_loss")
-    high = float(current_bar["High"])
-    low = float(current_bar["Low"])
-
-    if action in BULLISH_ACTIONS:
-        if trigger is not None and high >= float(trigger):
-            if stop_loss is not None and low <= float(stop_loss):
-                return {"status": "未命中", "error_type": "假突破", "note": "触发后回落到失效位"}
-            if current_close < float(trigger):
-                return {"status": "未命中", "error_type": "假突破", "note": "盘中上破但收盘未站稳触发位"}
-            return {"status": "命中", "error_type": None, "note": "触发位被突破且收盘保持在其上"}
-        return {"status": "未触发", "error_type": "缺少确认K", "note": "没有突破信号K高点"}
-
-    if action in BEARISH_ACTIONS:
-        if trigger is not None and low <= float(trigger):
-            if stop_loss is not None and high >= float(stop_loss):
-                return {"status": "未命中", "error_type": "假跌破", "note": "跌破后快速收回失效位"}
-            if current_close > float(trigger):
-                return {"status": "未命中", "error_type": "假跌破", "note": "盘中跌破但收盘未守住"}
-            return {"status": "命中", "error_type": None, "note": "跌破触发位且收盘仍弱"}
-        return {"status": "未触发", "error_type": "缺少确认K", "note": "没有跌破信号K低点"}
-
-    return {"status": "观察中", "error_type": None, "note": "上一交易日偏观察，不计入成败"}
-
-
 def build_trade_plan(
     name: str,
     ticker: str,
@@ -612,105 +145,18 @@ def build_trade_plan(
     weekly: pd.DataFrame,
     previous: dict[str, Any] | None,
     intraday: pd.DataFrame | None = None,
+    monthly: pd.DataFrame | None = None,
+    config: naked_k_config.TradingConfig | None = None,
 ) -> InstrumentReport:
-    daily_bar = daily.iloc[-1]
-    weekly_bar = weekly.iloc[-1]
-    daily_patterns = detect_price_action_patterns(daily)
-    weekly_patterns = detect_price_action_patterns(weekly)
-    price_action = analyze_price_action_context(daily)
-    weekly_context = resolve_weekly_context(weekly, weekly_patterns)
-    support, resistance = find_price_levels(daily, float(daily_bar["Close"]))
-    buffer_ratio = build_volatility_buffer_ratio(daily)
-
-    daily_bias = classify_patterns(daily_patterns)
-    weekly_bias = classify_patterns(weekly_patterns)
-    structure_bias = str(price_action.get("bias", "neutral"))
-
-    if daily_bias == "bullish":
-        action = "买入" if weekly_bias == "bullish" else "小仓试错"
-        entry_trigger = build_breakout_trigger(daily_bar, "bullish", buffer_ratio=buffer_ratio)
-        stop_loss = build_invalidation_level(daily_bar, "bullish", buffer_ratio=buffer_ratio)
-    elif daily_bias == "bearish":
-        action = "回避" if weekly_bias in {"bearish", "neutral"} else "减仓"
-        entry_trigger = build_breakout_trigger(daily_bar, "bearish", buffer_ratio=buffer_ratio)
-        stop_loss = build_invalidation_level(daily_bar, "bearish", buffer_ratio=buffer_ratio)
-    elif daily_bias == "watch":
-        action = "观望"
-        entry_trigger = build_breakout_trigger(daily_bar, "bullish", buffer_ratio=buffer_ratio)
-        stop_loss = build_invalidation_level(daily_bar, "bearish", buffer_ratio=buffer_ratio)
-    elif structure_bias == "bullish":
-        action = "买入" if weekly_bias == "bullish" else "小仓试错"
-        entry_trigger = build_breakout_trigger(daily_bar, "bullish", buffer_ratio=buffer_ratio)
-        stop_loss = build_invalidation_level(daily_bar, "bullish", buffer_ratio=buffer_ratio)
-    elif structure_bias == "bearish":
-        action = "回避" if weekly_bias in {"bearish", "neutral"} else "减仓"
-        entry_trigger = build_breakout_trigger(daily_bar, "bearish", buffer_ratio=buffer_ratio)
-        stop_loss = build_invalidation_level(daily_bar, "bearish", buffer_ratio=buffer_ratio)
-    else:
-        action = "观望"
-        entry_trigger = round(resistance * 1.002, 2)
-        stop_loss = round(support * 0.998, 2)
-
-    target_price, risk_per_share, reward_to_risk = build_trade_metrics(
-        action,
-        entry_trigger,
-        stop_loss,
-        resistance,
-        support,
-    )
-    action, target_price, reward_to_risk, reward_filter_note = downgrade_low_reward_setup(
-        action,
-        target_price,
-        reward_to_risk,
-    )
-    position_size = build_position_guidance(action, entry_trigger, stop_loss)
-    signal_state = build_signal_state(action)
-    intraday_status = build_intraday_status(intraday, action, entry_trigger, stop_loss)
-    review = review_previous_call(previous, daily_bar, float(daily_bar["Close"]))
-    rationale_parts = [
-        f"日线形态：{'、'.join(daily_patterns) if daily_patterns else '无明确信号'}",
-        f"周线背景：{'、'.join(weekly_patterns) if weekly_patterns else '无明确信号'}",
-        weekly_context,
-        f"裸K结构：{format_price_action_summary(price_action)}",
-        f"ATR缓冲：{buffer_ratio * 100:.2f}%",
-        "改进：多头/空头都要求先突破信号K极值再触发，减少无确认追价。",
-    ]
-    if reward_filter_note:
-        rationale_parts.append(f"改进：{reward_filter_note}")
-
-    return InstrumentReport(
-        name=name,
-        ticker=ticker,
-        action=action,
-        entry_trigger=entry_trigger,
-        stop_loss=stop_loss,
-        target_price=target_price,
-        risk_per_share=risk_per_share,
-        reward_to_risk=reward_to_risk,
-        signal_state=signal_state,
-        resistance=resistance,
-        support=support,
-        position_size=position_size,
-        rationale="；".join(rationale_parts),
-        daily_patterns=daily_patterns,
-        weekly_patterns=weekly_patterns,
-        weekly_context=weekly_context,
-        data_sources={
-            "daily": str(daily.attrs.get("source", "unknown")),
-            "weekly": str(weekly.attrs.get("source", "unknown")),
-        },
-        latest_k_dates={
-            "daily": daily.index[-1].strftime("%Y-%m-%d"),
-            "weekly": weekly.index[-1].strftime("%Y-%m-%d"),
-        },
-        latest_closes={
-            "daily": round(float(daily_bar["Close"]), 2),
-            "weekly": round(float(weekly_bar["Close"]), 2),
-        },
-        review=review,
-        improvement="新增裸K结构读线：识别影线、收盘位置、前高/前低突破或失败，再用确认K触发。",
-        intraday_status=intraday_status,
-        price_action=price_action,
+    return naked_k_planner.build_trade_plan(
+        name,
+        ticker,
+        daily,
+        weekly,
+        previous,
+        intraday=intraday,
+        monthly=monthly,
+        config=config,
     )
 
 
@@ -771,6 +217,15 @@ def append_journal(path: Path, run_date: str, report: InstrumentReport) -> None:
         "improvement": report.improvement,
         "intraday_status": report.intraday_status,
         "price_action": report.price_action,
+        "market_structure": report.market_structure,
+        "market_regime": report.market_regime,
+        "risk_plan": report.risk_plan,
+        "trade_setup": report.trade_setup,
+        "price_zones": report.price_zones,
+        "timeframe_context": report.timeframe_context,
+        "trader_brief": report.trader_brief,
+        "candle_context": report.candle_context,
+        "ai_assistant": report.ai_assistant,
     }
     rows = load_journal(path)
     match_key = (report.ticker, report.latest_k_dates["daily"])
@@ -785,7 +240,24 @@ def append_journal(path: Path, run_date: str, report: InstrumentReport) -> None:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def format_report(run_date: str, reports: list[InstrumentReport], journal_path: Path) -> str:
+def build_data_audit_payload(ticker: str, interval: str, period: str, frame: pd.DataFrame) -> dict[str, Any]:
+    latest = pd.Timestamp(frame.index[-1]).isoformat() if not frame.empty else None
+    return {
+        "ticker": ticker,
+        "interval": interval,
+        "period": period,
+        "rows": len(frame),
+        "latest": latest,
+        "source": str(frame.attrs.get("source", "unknown")),
+    }
+
+
+def format_report(
+    run_date: str,
+    reports: list[InstrumentReport],
+    journal_path: Path,
+    config: naked_k_config.TradingConfig | None = None,
+) -> str:
     sections = [
         f"# 裸K收盘报告",
         f"生成日期：{run_date}",
@@ -822,7 +294,16 @@ def format_report(run_date: str, reports: list[InstrumentReport], journal_path: 
                 f"- 单股风险：{report.risk_per_share}",
                 f"- 目标盈亏比：{reward_to_risk_text}",
                 f"- 盘中状态：{intraday_line}",
+                f"- 多周期框架：{naked_k_timeframes.format_timeframe_context(report.timeframe_context)}",
+                f"- 交易员简报：{naked_k_interpreter.format_trader_brief(report.trader_brief)}",
                 f"- 裸K解读：{format_price_action_summary(report.price_action)}",
+                f"- 市场结构：{format_market_structure_summary(report.market_structure)}",
+                f"- 市场状态：{format_market_regime_summary(report.market_regime)}",
+                f"- 交易剧本：{format_trade_setup_summary(report.trade_setup)}",
+                f"- 关键价格区域：{format_price_zones_summary(report.price_zones)}",
+                f"- K线行为上下文：{naked_k_context.format_candle_context_summary(report.candle_context)}",
+                f"- AI交易助手：{naked_k_ai.format_ai_assistant_summary(report.ai_assistant)}",
+                f"- 风险计划：{format_risk_plan_summary(report.risk_plan)}",
                 f"- 上方压力：{report.resistance}",
                 f"- 下方支撑：{report.support}",
                 f"- 仓位建议：{report.position_size}",
@@ -843,12 +324,17 @@ def format_report(run_date: str, reports: list[InstrumentReport], journal_path: 
         if best_trial is not None
         else "暂无（无满足触发条件标的）"
     )
+    portfolio_exposure = naked_k_portfolio.evaluate_portfolio_exposure(
+        reports,
+        config=config.portfolio if config is not None else None,
+    )
     sections.extend(
         [
             "## 今日结论",
             f"- 最值得试错：{best_trial_text}",
             f"- 继续观察：{next((item.name for item in ranked if item.action == '观望'), ranked[1].name if len(ranked) > 1 else ranked[0].name)}",
             f"- 需要回避：{next((item.name for item in ranked if item.action in {'回避', '减仓'}), ranked[-1].name)}",
+            f"- 组合风险：{naked_k_portfolio.format_portfolio_exposure(portfolio_exposure)}",
             "",
             "不构成投资建议；以上仅作交易辅助。",
         ]
@@ -856,28 +342,117 @@ def format_report(run_date: str, reports: list[InstrumentReport], journal_path: 
     return "\n".join(sections)
 
 
-def run_analysis(tickers: list[tuple[str, str]], journal_path: Path) -> tuple[str, list[InstrumentReport]]:
+def run_analysis(
+    tickers: list[tuple[str, str]],
+    journal_path: Path,
+    config: naked_k_config.TradingConfig | None = None,
+    audit_path: Path | None = None,
+    llm_config: naked_k_llm.LLMConfig | None = None,
+    llm_post: naked_k_llm.PostCallable | None = None,
+) -> tuple[str, list[InstrumentReport]]:
+    audit = naked_k_audit.AuditLogger(audit_path)
     journal_rows = load_journal(journal_path)
     reports: list[InstrumentReport] = []
     run_date = pd.Timestamp.now(tz="Asia/Shanghai").strftime("%Y-%m-%d %H:%M:%S %Z")
+    audit.info("run_started", ticker_count=len(tickers), journal_path=journal_path, run_date=run_date)
 
     for name, ticker in tickers:
-        daily = load_ohlcv(ticker, interval="1d", period="18mo")
-        weekly = load_ohlcv(ticker, interval="1wk", period="5y")
+        try:
+            daily = load_ohlcv(ticker, interval="1d", period="18mo")
+            audit.info("data_loaded", **build_data_audit_payload(ticker, "1d", "18mo", daily))
+            weekly = load_ohlcv(ticker, interval="1wk", period="5y")
+            audit.info("data_loaded", **build_data_audit_payload(ticker, "1wk", "5y", weekly))
+        except Exception as exc:
+            audit.error(
+                "run_failed",
+                ticker=ticker,
+                name=name,
+                stage="required_data_load",
+                error_type=exc.__class__.__name__,
+                error=str(exc),
+            )
+            raise
+        try:
+            monthly = load_ohlcv(ticker, interval="1mo", period="10y")
+            audit.info("data_loaded", **build_data_audit_payload(ticker, "1mo", "10y", monthly))
+        except Exception as exc:
+            audit.warning(
+                "data_unavailable",
+                ticker=ticker,
+                interval="1mo",
+                period="10y",
+                error_type=exc.__class__.__name__,
+                error=str(exc),
+            )
+            monthly = None
         try:
             intraday = load_ohlcv(ticker, interval="1h", period="5d")
-        except Exception:
+            audit.info("data_loaded", **build_data_audit_payload(ticker, "1h", "5d", intraday))
+        except Exception as exc:
+            audit.warning(
+                "data_unavailable",
+                ticker=ticker,
+                interval="1h",
+                period="5d",
+                error_type=exc.__class__.__name__,
+                error=str(exc),
+            )
             intraday = None
         previous = latest_journal_entry(
             journal_rows,
             ticker,
             current_daily_date=daily.index[-1].strftime("%Y-%m-%d"),
         )
-        report = build_trade_plan(name, ticker, daily, weekly, previous, intraday=intraday)
+        report = build_trade_plan(
+            name,
+            ticker,
+            daily,
+            weekly,
+            previous,
+            intraday=intraday,
+            monthly=monthly,
+            config=config,
+        )
+        if llm_config is not None and llm_config.enabled:
+            commentary = naked_k_llm.safe_generate_llm_commentary(
+                report.ai_assistant,
+                config=llm_config,
+                post=llm_post,
+            )
+            report.ai_assistant["llm_commentary"] = commentary
+            audit_level = "info" if commentary.get("status") == "ok" else "warning"
+            audit.log(
+                "llm_commentary_generated",
+                level=audit_level,
+                ticker=ticker,
+                name=name,
+                status=commentary.get("status"),
+                provider=commentary.get("provider"),
+                model=commentary.get("model"),
+                error_type=commentary.get("error_type"),
+            )
         append_journal(journal_path, run_date, report)
         reports.append(report)
+        audit.info(
+            "plan_generated",
+            ticker=ticker,
+            name=name,
+            action=report.action,
+            signal_state=report.signal_state,
+            setup_key=(report.trade_setup or {}).get("key"),
+            risk_status=(report.risk_plan or {}).get("status"),
+            timeframe_alignment=(report.timeframe_context or {}).get("alignment"),
+            reward_to_risk=report.reward_to_risk,
+        )
 
-    return format_report(run_date, reports, journal_path), reports
+    portfolio_exposure = naked_k_portfolio.evaluate_portfolio_exposure(
+        reports,
+        config=config.portfolio if config is not None else None,
+    )
+    portfolio_level = "warning" if portfolio_exposure.get("status") == "over_limit" else "info"
+    audit.log("portfolio_exposure", level=portfolio_level, **portfolio_exposure)
+    audit.info("run_completed", report_count=len(reports), actions=[report.action for report in reports])
+    return format_report(run_date, reports, journal_path, config=config), reports
 
 
 def parse_args() -> argparse.Namespace:
@@ -885,6 +460,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--json", action="store_true", help="输出 JSON")
     parser.add_argument("--journal-path", default=str(DEFAULT_JOURNAL_PATH), help="复盘日志路径")
     parser.add_argument("--report-path", default=str(DEFAULT_REPORT_PATH), help="Markdown 报告输出路径")
+    parser.add_argument("--config-path", default="", help="JSON 参数配置路径")
+    parser.add_argument("--audit-path", default=str(DEFAULT_AUDIT_PATH), help="结构化运行审计 JSONL 路径")
+    parser.add_argument("--llm", action="store_true", help="启用 OpenAI-compatible LLM 复盘增强")
+    parser.add_argument("--llm-base-url", default="", help="OpenAI-compatible base URL；也可用 LLM_BASE_URL/NAKED_K_LLM_BASE_URL")
+    parser.add_argument("--llm-model", default="", help="LLM 模型名；也可用 LLM_MODEL/NAKED_K_LLM_MODEL")
     return parser.parse_args()
 
 
@@ -892,13 +472,34 @@ def main() -> int:
     args = parse_args()
     journal_path = Path(args.journal_path)
     report_path = Path(args.report_path)
-    report_text, reports = run_analysis(DEFAULT_TICKERS, journal_path)
+    audit_path = Path(args.audit_path) if args.audit_path else None
+    config = naked_k_config.load_trading_config(args.config_path or None)
+    llm_config = naked_k_llm.load_llm_config(
+        enabled=args.llm,
+        base_url=args.llm_base_url or None,
+        model=args.llm_model or None,
+    )
+    if args.llm:
+        naked_k_llm.validate_llm_config(llm_config)
+    report_text, reports = run_analysis(
+        DEFAULT_TICKERS,
+        journal_path,
+        config=config,
+        audit_path=audit_path,
+        llm_config=llm_config,
+    )
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(report_text, encoding="utf-8")
 
     if args.json:
-        payload = {"report": report_text, "items": [asdict(item) for item in reports], "report_path": str(report_path)}
+        payload = {
+            "report": report_text,
+            "items": [asdict(item) for item in reports],
+            "report_path": str(report_path),
+            "audit_path": str(audit_path) if audit_path is not None else None,
+            "llm": naked_k_llm.redact_llm_config(llm_config),
+        }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print(report_text)

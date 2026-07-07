@@ -1,0 +1,246 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+import pandas as pd
+
+import naked_k_ai
+import naked_k_config
+import naked_k_context
+import naked_k_interpreter
+import naked_k_risk
+import naked_k_setups
+import naked_k_structure
+import naked_k_trade
+import naked_k_timeframes
+import naked_k_zones
+
+
+BULLISH_ACTIONS = {"买入", "小仓试错"}
+BEARISH_ACTIONS = {"减仓", "回避"}
+
+
+@dataclass
+class InstrumentReport:
+    name: str
+    ticker: str
+    action: str
+    entry_trigger: float
+    stop_loss: float
+    target_price: float | None
+    risk_per_share: float
+    reward_to_risk: float | None
+    signal_state: str
+    resistance: float
+    support: float
+    position_size: str
+    rationale: str
+    daily_patterns: list[str]
+    weekly_patterns: list[str]
+    weekly_context: str
+    data_sources: dict[str, str]
+    latest_k_dates: dict[str, str]
+    latest_closes: dict[str, float]
+    review: dict[str, Any]
+    improvement: str
+    intraday_status: dict[str, Any] = field(default_factory=dict)
+    price_action: dict[str, Any] = field(default_factory=dict)
+    market_structure: dict[str, Any] = field(default_factory=dict)
+    market_regime: dict[str, Any] = field(default_factory=dict)
+    risk_plan: dict[str, Any] = field(default_factory=dict)
+    trade_setup: dict[str, Any] = field(default_factory=dict)
+    price_zones: dict[str, Any] = field(default_factory=dict)
+    timeframe_context: dict[str, Any] = field(default_factory=dict)
+    trader_brief: dict[str, Any] = field(default_factory=dict)
+    candle_context: list[dict[str, Any]] = field(default_factory=list)
+    ai_assistant: dict[str, Any] = field(default_factory=dict)
+
+
+def build_trade_plan(
+    name: str,
+    ticker: str,
+    daily: pd.DataFrame,
+    weekly: pd.DataFrame,
+    previous: dict[str, Any] | None,
+    intraday: pd.DataFrame | None = None,
+    monthly: pd.DataFrame | None = None,
+    config: naked_k_config.TradingConfig | None = None,
+) -> InstrumentReport:
+    daily_bar = daily.iloc[-1]
+    weekly_bar = weekly.iloc[-1]
+    daily_patterns = naked_k_trade.detect_price_action_patterns(daily)
+    weekly_patterns = naked_k_trade.detect_price_action_patterns(weekly)
+    price_action = naked_k_trade.analyze_price_action_context(daily)
+    market_structure = naked_k_structure.analyze_market_structure(daily, swing_window=1)
+    market_regime = naked_k_structure.classify_market_regime(daily, market_structure)
+    trade_setup = naked_k_setups.classify_trade_setup(
+        price_action=price_action,
+        market_structure=market_structure,
+        market_regime=market_regime,
+        daily_patterns=daily_patterns,
+    )
+    weekly_context = naked_k_trade.resolve_weekly_context(weekly, weekly_patterns)
+    fallback_support, fallback_resistance = naked_k_trade.find_price_levels(daily, float(daily_bar["Close"]))
+    price_zones = naked_k_zones.detect_price_zones(daily, close=float(daily_bar["Close"]), swing_window=1)
+    candle_context = naked_k_context.build_candle_behavior_context(
+        daily,
+        price_action=price_action,
+        market_structure=market_structure,
+        price_zones=price_zones,
+    )
+    nearest_support = price_zones.get("nearest_support")
+    nearest_resistance = price_zones.get("nearest_resistance")
+    support = round(float(nearest_support["midpoint"]), 2) if nearest_support else fallback_support
+    resistance = round(float(nearest_resistance["midpoint"]), 2) if nearest_resistance else fallback_resistance
+    buffer_ratio = naked_k_trade.build_volatility_buffer_ratio(daily)
+
+    daily_bias = naked_k_trade.classify_patterns(daily_patterns)
+    weekly_bias = naked_k_trade.classify_patterns(weekly_patterns)
+    structure_bias = str(price_action.get("bias", "neutral"))
+    structure_event = market_structure.get("latest_event") or {}
+    structure_event_bias = str(structure_event.get("direction", "neutral"))
+    setup_direction = str(trade_setup.get("direction", "watch"))
+
+    if daily_bias == "bullish":
+        action = "买入" if weekly_bias == "bullish" else "小仓试错"
+        entry_trigger = naked_k_trade.build_breakout_trigger(daily_bar, "bullish", buffer_ratio=buffer_ratio)
+        stop_loss = naked_k_trade.build_invalidation_level(daily_bar, "bullish", buffer_ratio=buffer_ratio)
+    elif daily_bias == "bearish":
+        action = "回避" if weekly_bias in {"bearish", "neutral"} else "减仓"
+        entry_trigger = naked_k_trade.build_breakout_trigger(daily_bar, "bearish", buffer_ratio=buffer_ratio)
+        stop_loss = naked_k_trade.build_invalidation_level(daily_bar, "bearish", buffer_ratio=buffer_ratio)
+    elif daily_bias == "watch":
+        action = "观望"
+        entry_trigger = naked_k_trade.build_breakout_trigger(daily_bar, "bullish", buffer_ratio=buffer_ratio)
+        stop_loss = naked_k_trade.build_invalidation_level(daily_bar, "bearish", buffer_ratio=buffer_ratio)
+    elif structure_bias == "bullish":
+        action = "买入" if weekly_bias == "bullish" else "小仓试错"
+        entry_trigger = naked_k_trade.build_breakout_trigger(daily_bar, "bullish", buffer_ratio=buffer_ratio)
+        stop_loss = naked_k_trade.build_invalidation_level(daily_bar, "bullish", buffer_ratio=buffer_ratio)
+    elif structure_bias == "bearish":
+        action = "回避" if weekly_bias in {"bearish", "neutral"} else "减仓"
+        entry_trigger = naked_k_trade.build_breakout_trigger(daily_bar, "bearish", buffer_ratio=buffer_ratio)
+        stop_loss = naked_k_trade.build_invalidation_level(daily_bar, "bearish", buffer_ratio=buffer_ratio)
+    elif setup_direction == "long":
+        action = "买入" if weekly_bias == "bullish" else "小仓试错"
+        entry_trigger = naked_k_trade.build_breakout_trigger(daily_bar, "bullish", buffer_ratio=buffer_ratio)
+        stop_loss = naked_k_trade.build_invalidation_level(daily_bar, "bullish", buffer_ratio=buffer_ratio)
+    elif setup_direction == "short":
+        action = "回避" if weekly_bias in {"bearish", "neutral"} else "减仓"
+        entry_trigger = naked_k_trade.build_breakout_trigger(daily_bar, "bearish", buffer_ratio=buffer_ratio)
+        stop_loss = naked_k_trade.build_invalidation_level(daily_bar, "bearish", buffer_ratio=buffer_ratio)
+    elif structure_event_bias == "bullish":
+        action = "买入" if weekly_bias == "bullish" else "小仓试错"
+        entry_trigger = naked_k_trade.build_breakout_trigger(daily_bar, "bullish", buffer_ratio=buffer_ratio)
+        stop_loss = naked_k_trade.build_invalidation_level(daily_bar, "bullish", buffer_ratio=buffer_ratio)
+    elif structure_event_bias == "bearish":
+        action = "回避" if weekly_bias in {"bearish", "neutral"} else "减仓"
+        entry_trigger = naked_k_trade.build_breakout_trigger(daily_bar, "bearish", buffer_ratio=buffer_ratio)
+        stop_loss = naked_k_trade.build_invalidation_level(daily_bar, "bearish", buffer_ratio=buffer_ratio)
+    else:
+        action = "观望"
+        entry_trigger = round(resistance * 1.002, 2)
+        stop_loss = round(support * 0.998, 2)
+
+    target_price, risk_per_share, reward_to_risk = naked_k_trade.build_trade_metrics(
+        action,
+        entry_trigger,
+        stop_loss,
+        resistance,
+        support,
+    )
+    action, target_price, reward_to_risk, reward_filter_note = naked_k_trade.downgrade_low_reward_setup(
+        action,
+        target_price,
+        reward_to_risk,
+    )
+    risk_plan = naked_k_risk.build_risk_plan(
+        action=action,
+        entry_trigger=entry_trigger,
+        stop_loss=stop_loss,
+        target_price=target_price,
+        config=config.risk if config is not None else None,
+    )
+    position_size = (
+        str(risk_plan["position_size"])
+        if action in BULLISH_ACTIONS
+        else naked_k_trade.build_position_guidance(action, entry_trigger, stop_loss)
+    )
+    signal_state = naked_k_trade.build_signal_state(action)
+    intraday_status = naked_k_trade.build_intraday_status(intraday, action, entry_trigger, stop_loss)
+    timeframe_context = naked_k_timeframes.build_timeframe_context(
+        monthly=monthly,
+        weekly=weekly,
+        daily=daily,
+        intraday_status=intraday_status,
+        daily_price_action=price_action,
+        daily_structure=market_structure,
+        daily_regime=market_regime,
+    )
+    review = naked_k_trade.review_previous_call(previous, daily_bar, float(daily_bar["Close"]))
+    rationale_parts = [
+        f"日线形态：{'、'.join(daily_patterns) if daily_patterns else '无明确信号'}",
+        f"周线背景：{'、'.join(weekly_patterns) if weekly_patterns else '无明确信号'}",
+        weekly_context,
+        f"多周期框架：{naked_k_timeframes.format_timeframe_context(timeframe_context)}",
+        f"裸K结构：{naked_k_trade.format_price_action_summary(price_action)}",
+        f"市场结构：{naked_k_trade.format_market_structure_summary(market_structure)}",
+        f"市场状态：{naked_k_trade.format_market_regime_summary(market_regime)}",
+        f"交易剧本：{naked_k_trade.format_trade_setup_summary(trade_setup)}",
+        f"关键价格区域：{naked_k_trade.format_price_zones_summary(price_zones)}",
+        f"行为上下文：{naked_k_context.format_candle_context_summary(candle_context)}",
+        f"风险计划：{naked_k_trade.format_risk_plan_summary(risk_plan)}",
+        f"ATR缓冲：{buffer_ratio * 100:.2f}%",
+        "改进：多头/空头都要求先突破信号K极值再触发，减少无确认追价。",
+    ]
+    if reward_filter_note:
+        rationale_parts.append(f"改进：{reward_filter_note}")
+
+    report = InstrumentReport(
+        name=name,
+        ticker=ticker,
+        action=action,
+        entry_trigger=entry_trigger,
+        stop_loss=stop_loss,
+        target_price=target_price,
+        risk_per_share=risk_per_share,
+        reward_to_risk=reward_to_risk,
+        signal_state=signal_state,
+        resistance=resistance,
+        support=support,
+        position_size=position_size,
+        rationale="；".join(rationale_parts),
+        daily_patterns=daily_patterns,
+        weekly_patterns=weekly_patterns,
+        weekly_context=weekly_context,
+        data_sources={
+            "daily": str(daily.attrs.get("source", "unknown")),
+            "weekly": str(weekly.attrs.get("source", "unknown")),
+            "monthly": str(monthly.attrs.get("source", "unknown")) if monthly is not None else "missing",
+        },
+        latest_k_dates={
+            "daily": daily.index[-1].strftime("%Y-%m-%d"),
+            "weekly": weekly.index[-1].strftime("%Y-%m-%d"),
+            "monthly": monthly.index[-1].strftime("%Y-%m-%d") if monthly is not None and not monthly.empty else "",
+        },
+        latest_closes={
+            "daily": round(float(daily_bar["Close"]), 2),
+            "weekly": round(float(weekly_bar["Close"]), 2),
+            "monthly": round(float(monthly["Close"].iloc[-1]), 2) if monthly is not None and not monthly.empty else 0.0,
+        },
+        review=review,
+        improvement="新增裸K增强读线：趋势结构、波动扩张/压缩、回撤深度、量价确认与假突破压力均纳入价格行为上下文。",
+        intraday_status=intraday_status,
+        price_action=price_action,
+        market_structure=market_structure,
+        market_regime=market_regime,
+        risk_plan=risk_plan,
+        trade_setup=trade_setup,
+        price_zones=price_zones,
+        timeframe_context=timeframe_context,
+        candle_context=candle_context,
+    )
+    report.trader_brief = naked_k_interpreter.build_trader_brief(report)
+    report.ai_assistant = naked_k_ai.build_ai_trading_assistant(report)
+    return report
