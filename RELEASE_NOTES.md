@@ -1,3 +1,35 @@
+# v3.0.0 - Professional Naked K + AI Trading Assistant
+
+## Summary
+
+This release upgrades the project from a rule-based naked K CLI into a professional trading-assistance system centered on price action, market structure, multi-timeframe context, risk planning, backtesting, and AI-assisted review. The deterministic engine remains the source of truth; AI can explain and challenge the plan, but it cannot change trading signals.
+
+## Added
+
+- Added a market structure engine for swing high/low detection, HH/HL and LH/LL sequences, BOS, CHoCH, and market regime classification.
+- Added a multi-timeframe framework: monthly direction, weekly structure, daily opportunity, and 1H trigger/invalidations.
+- Added context-aware candle behavior objects for Pin Bar, inside bar, engulfing, liquidity sweep, failed breakout, long-wick rejection, and compression behavior.
+- Added professional price zones: supply/demand zones, liquidity pools, volume profile POC/value area, high-volume nodes, and anchored VWAP.
+- Added trade setup playbooks for BOS continuation, CHoCH reversal, failed breakout reversal, and compression expansion watch states.
+- Added structured risk planning with account risk, position caps, 1R/2R/3R targets, maximum drawdown protection, consecutive-loss protection, and portfolio exposure guardrails.
+- Added an event-driven backtest base with next-bar execution, walk-forward windows, R-multiple metrics, Monte Carlo reshuffling, and market-cycle validation.
+- Added an AI trading assistant payload with strict signal boundaries, historical edge calibration, failure attribution, and trader-style journal notes.
+- Added an OpenAI-compatible LLM adapter for optional `/chat/completions` review output, including local `.env` loading, Markdown fenced JSON parsing, and nonfatal error handling.
+- Added structured JSONL audit events for data loading, plan generation, LLM commentary, portfolio exposure, and run completion.
+
+## Changed
+
+- Refactored the previous monolithic analysis flow into focused modules for planning, structure, zones, context, risk, portfolio, backtesting, auditing, LLM integration, and reporting.
+- Updated the report language from simple pattern labels to market-behavior explanations, including buyer/seller pressure, failed breakout context, liquidity behavior, and multi-path trade planning.
+- Expanded README documentation to cover the new architecture, CLI options, report fields, risk model, backtesting model, AI assistant, and LLM configuration.
+- Expanded unit coverage from the original naked K tests to the full V1/V2 workflow, including structure, multi-timeframe analysis, zones, risk, portfolio, backtest, AI, LLM, and audit behavior.
+
+## Security
+
+- API keys are read only from ignored local `.env` files or environment variables; no CLI flag accepts a key.
+- `.env` remains ignored by Git and is not part of the release.
+- LLM config redaction and error sanitization prevent API keys from appearing in JSON output, audit logs, or failure messages.
+
 # v2.1.0 - Naked K Context Enhancements
 
 ## Summary
