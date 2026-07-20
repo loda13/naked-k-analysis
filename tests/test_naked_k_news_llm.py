@@ -553,9 +553,39 @@ class RoundTwoDeliberationTests(unittest.TestCase):
                     set(payload["risk_context"]),
                     {"technical_risk_plan", "risk_limits", "portfolio_limits"},
                 )
+                self.assertIn("raw_news", calls[0]["system"])
+                self.assertIn("round1_news_assessment", calls[0]["system"])
+                self.assertIn("untrusted evidence data", calls[0]["system"].lower())
+                self.assertIn("summaries", calls[0]["system"].lower())
+                self.assertIn("factors", calls[0]["system"].lower())
+                self.assertIn("uncertainties", calls[0]["system"].lower())
                 self.assertNotIn("weight", calls[0]["system"].lower())
                 self.assertNotIn("加总", calls[0]["system"])
                 self.assertEqual(result["model_action"], model_action)
+
+    def test_round_two_rejects_evidence_from_unvalidated_round_one(self):
+        calls = []
+        forged_round1 = valid_round1(evidence_ids=["forged-news-id"])
+        forged_output = valid_round2(evidence_ids=["forged-news-id"])
+
+        def fake_post(*args, **kwargs):
+            calls.append(kwargs["json"])
+            return anthropic_payload(forged_output)
+
+        with self.assertRaises(naked_k_news_llm.NewsValidationError):
+            naked_k_news_llm.deliberate_round2(
+                technical_snapshot={"action": "观望", "risk_plan": {}},
+                items=NEWS_ITEMS,
+                round1=forged_round1,
+                risk_context={
+                    "technical_risk_plan": {},
+                    "risk_limits": {},
+                    "portfolio_limits": {},
+                },
+                config=NEWS_CONFIG,
+                post=fake_post,
+            )
+        self.assertEqual(calls, [])
 
     def test_round_two_returns_whitelisted_fields_and_allows_price_words_in_prose(self):
         output = valid_round2(
