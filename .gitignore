@@ -3,6 +3,7 @@ data/cache/
 __pycache__/
 .env
 .omc/
+.superpowers/
 reports/*.md
 reports/*.jsonl
 reports/*.json
