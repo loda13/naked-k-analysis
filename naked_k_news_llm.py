@@ -89,34 +89,55 @@ def load_news_config(
     dotenv_path: str | Path | None = ".env",
 ) -> AnthropicNewsConfig:
     dotenv_values = load_news_dotenv_values(dotenv_path)
-    source = {**dotenv_values, **(os.environ if env is None else env)}
+    environment_values = os.environ if env is None else env
     return AnthropicNewsConfig(
         enabled=enabled,
-        base_url=(base_url if base_url is not None else first_news_env(
-            source,
+        base_url=(base_url if base_url is not None else _news_setting(
+            environment_values,
+            dotenv_values,
             "ANTHROPIC_BASE_URL",
             "NAKED_K_NEWS_BASE_URL",
             "NAKED_K_LLM_BASE_URL",
             "LLM_BASE_URL",
         )),
-        auth_token=first_news_env(
-            source,
+        auth_token=_news_setting(
+            environment_values,
+            dotenv_values,
             "ANTHROPIC_AUTH_TOKEN",
             "ANTHROPIC_API_KEY",
             "NAKED_K_NEWS_API_KEY",
             "NAKED_K_LLM_API_KEY",
             "LLM_API_KEY",
         ),
-        model=(model if model is not None else first_news_env(
-            source,
+        model=(model if model is not None else _news_setting(
+            environment_values,
+            dotenv_values,
             "NAKED_K_NEWS_MODEL",
             "ANTHROPIC_MODEL",
             "NAKED_K_LLM_MODEL",
             "LLM_MODEL",
         )),
-        temperature=float(first_news_env(source, "NAKED_K_NEWS_TEMPERATURE", default="0.1")),
-        max_tokens=int(first_news_env(source, "NAKED_K_NEWS_MAX_TOKENS", default="1400")),
-        timeout_seconds=float(first_news_env(source, "NAKED_K_NEWS_TIMEOUT", default="60")),
+        temperature=float(_news_setting(
+            environment_values, dotenv_values, "NAKED_K_NEWS_TEMPERATURE", default="0.1"
+        )),
+        max_tokens=int(_news_setting(
+            environment_values, dotenv_values, "NAKED_K_NEWS_MAX_TOKENS", default="1400"
+        )),
+        timeout_seconds=float(_news_setting(
+            environment_values, dotenv_values, "NAKED_K_NEWS_TIMEOUT", default="60"
+        )),
+    )
+
+
+def _news_setting(
+    environment_values: dict[str, str],
+    dotenv_values: dict[str, str],
+    *names: str,
+    default: str = "",
+) -> str:
+    return first_news_env(
+        environment_values, *names,
+        default=first_news_env(dotenv_values, *names, default=default),
     )
 
 
@@ -194,26 +215,40 @@ def _model_rows(payload: Any) -> list[dict[str, Any]]:
         rows = payload.get("data", payload.get("models", []))
     else:
         rows = []
+    if not isinstance(rows, list):
+        return []
     return [row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"]]
 
 
-def _metadata_words(value: Any) -> set[str]:
+def _normalize_marker(value: str) -> str:
+    return "_".join(value.strip().lower().replace("-", "_").split())
+
+
+def _metadata_markers(value: Any, *, endpoint: bool = False) -> set[str]:
     if isinstance(value, str):
-        return {part for part in value.lower().replace("-", "_").split() if part}
+        normalized = _normalize_marker(value)
+        if endpoint:
+            return {_normalize_marker(part) for part in normalized.split("/") if part}
+        return {normalized} if normalized else set()
     if isinstance(value, list):
-        return set().union(*(_metadata_words(item) for item in value)) if value else set()
+        return set().union(*(_metadata_markers(item, endpoint=endpoint) for item in value)) if value else set()
     if isinstance(value, dict):
-        return set().union(*(_metadata_words(item) for item in value.values())) if value else set()
+        return {
+            _normalize_marker(str(key))
+            for key, item in value.items()
+            if item and _normalize_marker(str(key))
+        }
     return set()
 
 
 def _model_kind(row: dict[str, Any]) -> str:
     words: set[str] = set()
-    for key in ("type", "model_type", "task", "capabilities", "supported_endpoints"):
-        words.update(_metadata_words(row.get(key)))
-    if any(marker in word for marker in _NON_CHAT_MARKERS for word in words):
+    for key in ("type", "model_type", "task", "capabilities"):
+        words.update(_metadata_markers(row.get(key)))
+    words.update(_metadata_markers(row.get("supported_endpoints"), endpoint=True))
+    if words & _NON_CHAT_MARKERS:
         return "excluded"
-    if any(marker in word for marker in _CHAT_MARKERS for word in words):
+    if words & _CHAT_MARKERS:
         return "eligible"
     return "ambiguous"
 
@@ -236,8 +271,18 @@ def resolve_news_model(config: AnthropicNewsConfig, get: GetCallable | None = No
     ids = tuple(sorted({row["id"] for row in rows}))
     if not ids:
         raise NewsModelDiscoveryError("No models returned by gateway")
-    eligible = {row["id"] for row in rows if _model_kind(row) == "eligible"}
-    ambiguous = {row["id"] for row in rows if _model_kind(row) == "ambiguous"}
+    kinds_by_id: dict[str, set[str]] = {}
+    for row in rows:
+        kinds_by_id.setdefault(row["id"], set()).add(_model_kind(row))
+    excluded = {model_id for model_id, kinds in kinds_by_id.items() if "excluded" in kinds}
+    eligible = {
+        model_id for model_id, kinds in kinds_by_id.items()
+        if model_id not in excluded and "eligible" in kinds
+    }
+    ambiguous = {
+        model_id for model_id, kinds in kinds_by_id.items()
+        if model_id not in excluded and "eligible" not in kinds and "ambiguous" in kinds
+    }
     if len(eligible) == 1 and not ambiguous:
         return replace(config, model=next(iter(eligible)))
     if eligible or ambiguous:

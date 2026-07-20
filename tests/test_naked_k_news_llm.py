@@ -77,6 +77,27 @@ class AnthropicNewsConfigTests(unittest.TestCase):
         self.assertEqual(redacted["auth_token"], "***")
         self.assertNotIn("fake-secret-token", json.dumps(redacted))
 
+    def test_environment_aliases_outrank_dotenv_higher_priority_aliases(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dotenv_path = Path(tmpdir) / ".env"
+            dotenv_path.write_text(
+                "ANTHROPIC_BASE_URL=https://dotenv.example/high-priority\n"
+                "ANTHROPIC_AUTH_TOKEN=dotenv-token\n"
+                "NAKED_K_NEWS_MODEL=dotenv-model\n",
+                encoding="utf-8",
+            )
+            config = naked_k_news_llm.load_news_config(
+                env={
+                    "NAKED_K_NEWS_BASE_URL": "https://env.example/news",
+                    "NAKED_K_NEWS_API_KEY": "env-token",
+                    "ANTHROPIC_MODEL": "env-model",
+                },
+                dotenv_path=dotenv_path,
+            )
+        self.assertEqual(config.base_url, "https://env.example/news")
+        self.assertEqual(config.auth_token, "env-token")
+        self.assertEqual(config.model, "env-model")
+
     def test_validation_requires_fields_without_leaking_credentials(self):
         config = naked_k_news_llm.AnthropicNewsConfig(
             enabled=True, base_url="", auth_token="fake-secret-token", model=""
@@ -190,6 +211,71 @@ class AnthropicModelDiscoveryTests(unittest.TestCase):
             with self.assertRaises(naked_k_news_llm.NewsModelDiscoveryError) as raised:
                 naked_k_news_llm.resolve_news_model(config, get=lambda url, **kwargs: response)
             self.assertNotIn("fake-token", str(raised.exception))
+
+    def test_discovery_handles_only_exact_chat_markers_and_capability_dict_keys(self):
+        config = naked_k_news_llm.AnthropicNewsConfig(
+            base_url="https://gateway.example", auth_token="fake-token"
+        )
+        for row in (
+            {"id": "llm", "type": "llm"},
+            {"id": "messages", "model_type": "messages"},
+            {"id": "text-generation", "task": "text-generation"},
+            {"id": "capability-dict", "capabilities": {"chat": True}},
+            {"id": "endpoint", "supported_endpoints": ["messages"]},
+        ):
+            with self.subTest(row=row):
+                resolved = naked_k_news_llm.resolve_news_model(
+                    config, get=lambda url, **kwargs: FakeResponse({"data": [row]})
+                )
+                self.assertEqual(resolved.model, row["id"])
+
+    def test_discovery_keeps_contextual_metadata_ambiguous(self):
+        config = naked_k_news_llm.AnthropicNewsConfig(
+            base_url="https://gateway.example", auth_token="fake-token"
+        )
+        with self.assertRaises(naked_k_news_llm.NewsModelSelectionRequired) as raised:
+            naked_k_news_llm.resolve_news_model(
+                config,
+                get=lambda url, **kwargs: FakeResponse(
+                    {"data": [{"id": "contextual", "type": "contextual"}]}
+                ),
+            )
+        self.assertEqual(raised.exception.model_ids, ("contextual",))
+
+    def test_discovery_excludes_exact_non_chat_markers_and_vetoes_conflicting_duplicates(self):
+        config = naked_k_news_llm.AnthropicNewsConfig(
+            base_url="https://gateway.example", auth_token="fake-token"
+        )
+        for marker in ("rerank", "audio", "moderation"):
+            with self.subTest(marker=marker):
+                with self.assertRaises(naked_k_news_llm.NewsModelDiscoveryError):
+                    naked_k_news_llm.resolve_news_model(
+                        config,
+                        get=lambda url, **kwargs: FakeResponse(
+                            {"data": [{"id": marker, "type": marker}]}
+                        ),
+                    )
+        resolved = naked_k_news_llm.resolve_news_model(
+            config,
+            get=lambda url, **kwargs: FakeResponse({"data": [
+                {"id": "conflicting", "type": "chat"},
+                {"id": "conflicting", "task": "embedding"},
+                {"id": "selected", "capabilities": {"text": True}},
+            ]}),
+        )
+        self.assertEqual(resolved.model, "selected")
+
+    def test_discovery_normalizes_null_and_non_list_catalogs_to_discovery_errors(self):
+        config = naked_k_news_llm.AnthropicNewsConfig(
+            base_url="https://gateway.example", auth_token="fake-token"
+        )
+        for catalog in (None, "not-a-list", {"unexpected": []}):
+            with self.subTest(catalog=catalog):
+                with self.assertRaises(naked_k_news_llm.NewsModelDiscoveryError):
+                    naked_k_news_llm.resolve_news_model(
+                        config,
+                        get=lambda url, **kwargs: FakeResponse({"data": catalog}),
+                    )
 
 
 class AnthropicMessagesTransportTests(unittest.TestCase):
