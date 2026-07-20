@@ -175,6 +175,7 @@ def _build_candidate(
         risk_plan["status"] = "flat"
         risk_plan["suggested_gross_pct"] = 0.0
         risk_plan["effective_account_risk_pct"] = 0.0
+        risk_plan["position_size"] = "0%（无新仓计划）"
     if action == "观望":
         target_price = None
         reward_to_risk = None

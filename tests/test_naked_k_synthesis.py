@@ -389,6 +389,29 @@ class NakedKSynthesisTests(unittest.TestCase):
         self.assertEqual(report.risk_plan["suggested_gross_pct"], 0.0)
         self.assertEqual(report.risk_plan["effective_account_risk_pct"], 0.0)
 
+    def test_custom_avoid_cap_still_has_zero_no_new_position_risk_guidance(self):
+        daily = self._daily()
+        report = self._report(action="买入", entry_trigger=112.0, stop_loss=94.0)
+        config = naked_k_config.build_trading_config(
+            {"risk": {"action_gross_caps": {"回避": 25.0}}}
+        )
+
+        naked_k_synthesis.apply_deliberation(
+            report,
+            daily,
+            self._deliberation(technical_action="买入", model_action="回避"),
+            config=config,
+        )
+
+        self.assertEqual(report.action, "回避")
+        self.assertEqual(report.position_size, "0%-5%")
+        self.assertEqual(report.risk_plan["status"], "flat")
+        self.assertEqual(report.risk_plan["suggested_gross_pct"], 0.0)
+        self.assertEqual(report.risk_plan["effective_account_risk_pct"], 0.0)
+        self.assertEqual(report.risk_plan["position_size"], "0%（无新仓计划）")
+        self.assertEqual(report.risk_plan["position_intent"], "reduce_or_avoid_long_exposure")
+        self.assertNotIn("做空", report.risk_plan["position_size"])
+
     def test_synthesis_failure_restores_snapshot_and_retains_validated_deliberation(self):
         daily = self._daily()
         report = self._report(action="观望")
@@ -416,6 +439,38 @@ class NakedKSynthesisTests(unittest.TestCase):
         self.assertIn("price rebuild failed", combined["risk_override_reason"])
         self.assertEqual(combined["price_plan_source"], "deterministic_naked_k")
         self.assertEqual(report.combined_conclusion, combined)
+
+    def test_partial_report_mutation_is_deeply_rolled_back_on_apply_failure(self):
+        daily = self._daily()
+        report = self._report(action="观望")
+        stored_snapshot = copy.deepcopy(report.technical_conclusion)
+        deliberation = self._deliberation(model_action="买入")
+
+        def mutate_then_fail(live_report, candidate):
+            live_report.action = candidate["action"]
+            live_report.entry_trigger = candidate["entry_trigger"]
+            live_report.risk_plan["guardrails"].append("partial mutation")
+            live_report.intraday_status["nested"]["seen"] = False
+            raise RuntimeError("apply failed after partial mutation")
+
+        with patch(
+            "naked_k_synthesis._apply_candidate",
+            side_effect=mutate_then_fail,
+        ):
+            combined = naked_k_synthesis.apply_deliberation(report, daily, deliberation)
+
+        for field in TECHNICAL_FIELDS:
+            self.assertEqual(getattr(report, field), stored_snapshot[field], field)
+        self.assertEqual(combined["status"], "technical_fallback")
+        self.assertEqual(combined["model_action"], deliberation["model_action"])
+        self.assertEqual(combined["final_action"], stored_snapshot["action"])
+        self.assertEqual(combined["technical_view"], deliberation["technical_view"])
+        self.assertEqual(combined["news_view"], deliberation["news_view"])
+        self.assertEqual(combined["conflict_analysis"], deliberation["conflict_analysis"])
+        self.assertEqual(combined["decision_reasons"], deliberation["decision_reasons"])
+        self.assertEqual(combined["risk_flags"], deliberation["risk_flags"])
+        self.assertEqual(combined["evidence_ids"], deliberation["evidence_ids"])
+        self.assertIn("apply failed after partial mutation", combined["risk_override_reason"])
 
 
 if __name__ == "__main__":
