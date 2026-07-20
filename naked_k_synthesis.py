@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import asdict
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import pandas as pd
@@ -60,6 +61,16 @@ def side_for_action(action: str) -> str:
         return ACTION_SIDE_MAP[action]
     except KeyError as exc:
         raise ValueError(f"unsupported synthesis action: {action}") from exc
+
+
+def _normalized_confidence(value: Any) -> float:
+    try:
+        confidence = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return 0.0
+    if not confidence.is_finite():
+        return 0.0
+    return float(min(Decimal(100), max(Decimal(0), confidence)))
 
 
 def _stored_technical_snapshot(report: Any) -> dict[str, Any]:
@@ -380,7 +391,7 @@ def apply_portfolio_guardrails(
             if gross_pct <= 0.0 and account_risk_pct <= 0.0:
                 continue
             ticker = str(getattr(report, "ticker", ""))
-            confidence = float(combined["confidence"])
+            confidence = _normalized_confidence(combined.get("confidence"))
             candidates.append((confidence, -gross_pct, ticker, report, combined))
 
         if not candidates:

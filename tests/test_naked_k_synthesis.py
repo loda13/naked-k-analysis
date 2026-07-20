@@ -634,6 +634,86 @@ class NakedKSynthesisTests(unittest.TestCase):
         self.assertEqual(first_override["protected_final_action"], "回避")
         self.assertIn("总仓位暴露超限", first_override["guardrail_reason"])
 
+    def test_portfolio_guard_treats_invalid_confidence_as_zero_independent_of_input_order(self):
+        invalid_cases = (
+            ("missing", None, "AAA", "AAA"),
+            ("none", None, "AAA", "AAA"),
+            ("text", "not-a-number", "AAA", "AAA"),
+            ("nan", float("nan"), "AAA", "AAA"),
+            ("positive infinity", float("inf"), "AAA", "AAA"),
+            ("negative infinity", float("-inf"), "ZZZ", "AAA"),
+        )
+
+        for label, confidence, invalid_ticker, expected_ticker in invalid_cases:
+            for reverse_input in (False, True):
+                with self.subTest(case=label, reverse_input=reverse_input):
+                    invalid = self._synthesized_report(
+                        ticker=invalid_ticker,
+                        action="买入",
+                        confidence=50,
+                        gross_pct=10.0,
+                    )
+                    if label == "missing":
+                        invalid.combined_conclusion.pop("confidence")
+                    else:
+                        invalid.combined_conclusion["confidence"] = confidence
+                    baseline_ticker = "ZZZ" if invalid_ticker == "AAA" else "AAA"
+                    baseline = self._synthesized_report(
+                        ticker=baseline_ticker,
+                        action="买入",
+                        confidence=0.0,
+                        gross_pct=10.0,
+                    )
+                    reports = [invalid, baseline]
+                    if reverse_input:
+                        reports.reverse()
+
+                    result = naked_k_synthesis.apply_portfolio_guardrails(
+                        reports,
+                        {report.ticker: self._daily() for report in reports},
+                        config=self._portfolio_config(max_total_gross_pct=10.0),
+                    )
+
+                    self.assertEqual(
+                        [item["ticker"] for item in result["overrides"]],
+                        [expected_ticker],
+                    )
+
+    def test_portfolio_guard_clamps_finite_confidence_to_validated_domain(self):
+        scenarios = (
+            (-20.0, "ZZZ", 0.0, "AAA", "AAA"),
+            (120.0, "AAA", 100.0, "ZZZ", "AAA"),
+            (10**400, "ZZZ", 100.0, "AAA", "AAA"),
+        )
+
+        for candidate_confidence, candidate_ticker, baseline_confidence, baseline_ticker, expected in scenarios:
+            with self.subTest(candidate_confidence=candidate_confidence):
+                reports = [
+                    self._synthesized_report(
+                        ticker=candidate_ticker,
+                        action="买入",
+                        confidence=candidate_confidence,
+                        gross_pct=10.0,
+                    ),
+                    self._synthesized_report(
+                        ticker=baseline_ticker,
+                        action="买入",
+                        confidence=baseline_confidence,
+                        gross_pct=10.0,
+                    ),
+                ]
+
+                result = naked_k_synthesis.apply_portfolio_guardrails(
+                    reports,
+                    {report.ticker: self._daily() for report in reports},
+                    config=self._portfolio_config(max_total_gross_pct=10.0),
+                )
+
+                self.assertEqual(
+                    [item["ticker"] for item in result["overrides"]],
+                    [expected],
+                )
+
     def test_portfolio_guard_resolves_account_risk_only_limit(self):
         reports = [
             self._synthesized_report(
