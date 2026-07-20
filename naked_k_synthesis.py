@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 
 import naked_k_config
+import naked_k_portfolio
 import naked_k_risk
 import naked_k_trade
 
@@ -339,3 +340,90 @@ def apply_deliberation(
 
     report.combined_conclusion = combined
     return combined
+
+
+def apply_portfolio_guardrails(
+    reports: list[Any],
+    daily_by_ticker: dict[str, pd.DataFrame],
+    *,
+    intraday_by_ticker: dict[str, pd.DataFrame | None] | None = None,
+    config: naked_k_config.TradingConfig | None = None,
+) -> dict[str, Any]:
+    """Return final exposure and deterministic override metadata."""
+    active_config = config or naked_k_config.TradingConfig()
+    intraday_frames = intraday_by_ticker or {}
+    overridden_report_ids: set[int] = set()
+    overrides: list[dict[str, Any]] = []
+    exposure = naked_k_portfolio.evaluate_portfolio_exposure(
+        reports,
+        active_config.portfolio,
+    )
+
+    while exposure["status"] == "over_limit":
+        candidates: list[tuple[float, float, str, Any, dict[str, Any]]] = []
+        for report in reports:
+            combined = getattr(report, "combined_conclusion", None)
+            if not isinstance(combined, dict) or combined.get("status") != "ok":
+                continue
+            if id(report) in overridden_report_ids:
+                continue
+            action = str(getattr(report, "action", ""))
+            if action not in {"买入", "小仓试错", "减仓"}:
+                continue
+            risk_plan = getattr(report, "risk_plan", {})
+            if not isinstance(risk_plan, dict):
+                continue
+            gross_pct = float(risk_plan.get("suggested_gross_pct", 0.0) or 0.0)
+            account_risk_pct = float(
+                risk_plan.get("effective_account_risk_pct", 0.0) or 0.0
+            )
+            if gross_pct <= 0.0 and account_risk_pct <= 0.0:
+                continue
+            ticker = str(getattr(report, "ticker", ""))
+            confidence = float(combined["confidence"])
+            candidates.append((confidence, -gross_pct, ticker, report, combined))
+
+        if not candidates:
+            break
+
+        _, _, ticker, report, combined = min(candidates, key=lambda item: item[:3])
+        prior_final_action = str(getattr(report, "action", ""))
+        protected_final_action = "回避" if prior_final_action == "减仓" else "观望"
+        guardrail_reason = "组合风险保护：" + "；".join(
+            str(reason) for reason in exposure["guardrails"]
+        )
+        synchronize_final_action(
+            report,
+            daily_by_ticker[ticker],
+            protected_final_action,
+            reason=guardrail_reason,
+            intraday=intraday_frames.get(ticker),
+            config=active_config,
+        )
+        combined["final_action"] = protected_final_action
+        combined["execution_side"] = side_for_action(protected_final_action)
+        combined["risk_override_reason"] = guardrail_reason
+        overridden_report_ids.add(id(report))
+        overrides.append(
+            {
+                "ticker": ticker,
+                "model_action": str(combined.get("model_action", "")),
+                "prior_final_action": prior_final_action,
+                "protected_final_action": protected_final_action,
+                "guardrail_reason": guardrail_reason,
+            }
+        )
+        exposure = naked_k_portfolio.evaluate_portfolio_exposure(
+            reports,
+            active_config.portfolio,
+        )
+
+    return {
+        **exposure,
+        "overrides": overrides,
+        "unresolved_guardrails": (
+            list(exposure["guardrails"])
+            if exposure["status"] == "over_limit"
+            else []
+        ),
+    }

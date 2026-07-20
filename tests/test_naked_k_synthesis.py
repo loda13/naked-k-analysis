@@ -60,6 +60,7 @@ class NakedKSynthesisTests(unittest.TestCase):
     def _report(
         self,
         *,
+        ticker="TEST",
         action="观望",
         entry_trigger=120.0,
         stop_loss=80.0,
@@ -69,7 +70,7 @@ class NakedKSynthesisTests(unittest.TestCase):
     ):
         report = naked_k_planner.InstrumentReport(
             name="测试",
-            ticker="TEST",
+            ticker=ticker,
             action=action,
             entry_trigger=entry_trigger,
             stop_loss=stop_loss,
@@ -101,6 +102,62 @@ class NakedKSynthesisTests(unittest.TestCase):
         )
         report.technical_conclusion = naked_k_synthesis.snapshot_technical_conclusion(report)
         return report
+
+    def _synthesized_report(
+        self,
+        *,
+        ticker,
+        action,
+        confidence,
+        gross_pct,
+        account_risk_pct=1.0,
+        status="ok",
+        model_action=None,
+    ):
+        entry_trigger, stop_loss = (
+            (89.0, 111.0) if action in {"减仓", "回避"} else (112.0, 94.0)
+        )
+        report = self._report(
+            ticker=ticker,
+            action=action,
+            entry_trigger=entry_trigger,
+            stop_loss=stop_loss,
+        )
+        report.risk_plan.update(
+            {
+                "status": "active" if gross_pct or account_risk_pct else "flat",
+                "direction": "short" if action == "减仓" else "long",
+                "suggested_gross_pct": gross_pct,
+                "effective_account_risk_pct": account_risk_pct,
+            }
+        )
+        report.technical_conclusion = naked_k_synthesis.snapshot_technical_conclusion(report)
+        report.combined_conclusion = self._deliberation(
+            technical_action=action,
+            model_action=model_action or action,
+            status=status,
+            confidence=confidence,
+        )
+        report.combined_conclusion.update(
+            {
+                "final_action": action,
+                "execution_side": naked_k_synthesis.side_for_action(action),
+                "risk_override_reason": "",
+                "price_plan_source": "deterministic_naked_k",
+            }
+        )
+        return report
+
+    def _portfolio_config(self, **portfolio_overrides):
+        limits = {
+            "max_total_gross_pct": 100.0,
+            "max_direction_gross_pct": 100.0,
+            "max_market_gross_pct": 100.0,
+            "max_single_name_gross_pct": 100.0,
+            "max_total_account_risk_pct": 100.0,
+        }
+        limits.update(portfolio_overrides)
+        return naked_k_config.build_trading_config({"portfolio": limits})
 
     def _deliberation(self, *, technical_action="观望", model_action="买入", **overrides):
         payload = {
@@ -471,6 +528,216 @@ class NakedKSynthesisTests(unittest.TestCase):
         self.assertEqual(combined["risk_flags"], deliberation["risk_flags"])
         self.assertEqual(combined["evidence_ids"], deliberation["evidence_ids"])
         self.assertIn("apply failed after partial mutation", combined["risk_override_reason"])
+
+    def test_portfolio_guard_leaves_within_limit_proposals_untouched(self):
+        reports = [
+            self._synthesized_report(
+                ticker="AAA", action="买入", confidence=60, gross_pct=10.0
+            ),
+            self._synthesized_report(
+                ticker="BBB", action="减仓", confidence=40, gross_pct=5.0
+            ),
+        ]
+        before = copy.deepcopy(reports)
+
+        result = naked_k_synthesis.apply_portfolio_guardrails(
+            reports,
+            {report.ticker: self._daily() for report in reports},
+            config=self._portfolio_config(max_total_gross_pct=20.0),
+        )
+
+        self.assertEqual(result["status"], "within_limits")
+        self.assertEqual(result["overrides"], [])
+        self.assertEqual(result["unresolved_guardrails"], [])
+        self.assertEqual(reports, before)
+
+    def test_portfolio_guard_uses_confidence_gross_and_ticker_priority(self):
+        reports = [
+            self._synthesized_report(
+                ticker="HIGH", action="买入", confidence=90, gross_pct=20.0
+            ),
+            self._synthesized_report(
+                ticker="SMALL", action="买入", confidence=40, gross_pct=10.0
+            ),
+            self._synthesized_report(
+                ticker="BIG-B", action="小仓试错", confidence=40, gross_pct=20.0
+            ),
+            self._synthesized_report(
+                ticker="BIG-A", action="减仓", confidence=40, gross_pct=20.0
+            ),
+            self._synthesized_report(
+                ticker="FLAT-WATCH", action="观望", confidence=1, gross_pct=0.0,
+                account_risk_pct=0.0,
+            ),
+            self._synthesized_report(
+                ticker="FLAT-AVOID", action="回避", confidence=1, gross_pct=0.0,
+                account_risk_pct=0.0,
+            ),
+        ]
+
+        with patch(
+            "naked_k_news_llm.requests.post",
+            side_effect=AssertionError("portfolio guard must not call a model"),
+        ), patch(
+            "naked_k_synthesis.synchronize_final_action",
+            wraps=naked_k_synthesis.synchronize_final_action,
+        ) as synchronize:
+            result = naked_k_synthesis.apply_portfolio_guardrails(
+                reports,
+                {report.ticker: self._daily() for report in reports},
+                config=self._portfolio_config(max_total_gross_pct=30.0),
+            )
+
+        self.assertEqual(result["status"], "within_limits")
+        self.assertEqual(
+            [override["ticker"] for override in result["overrides"]],
+            ["BIG-A", "BIG-B"],
+        )
+        self.assertEqual(synchronize.call_count, 2)
+        self.assertEqual(
+            [call.args[0].ticker for call in synchronize.call_args_list],
+            ["BIG-A", "BIG-B"],
+        )
+        by_ticker = {report.ticker: report for report in reports}
+        self.assertEqual(by_ticker["BIG-A"].action, "回避")
+        self.assertEqual(by_ticker["BIG-B"].action, "观望")
+        self.assertEqual(by_ticker["SMALL"].action, "买入")
+        self.assertEqual(by_ticker["HIGH"].action, "买入")
+        self.assertEqual(by_ticker["FLAT-WATCH"].action, "观望")
+        self.assertEqual(by_ticker["FLAT-AVOID"].action, "回避")
+        for ticker in ("BIG-A", "BIG-B"):
+            report = by_ticker[ticker]
+            self.assertEqual(report.risk_plan["suggested_gross_pct"], 0.0)
+            self.assertEqual(report.risk_plan["effective_account_risk_pct"], 0.0)
+            self.assertEqual(
+                report.combined_conclusion["final_action"], report.action
+            )
+            self.assertEqual(
+                report.combined_conclusion["execution_side"],
+                naked_k_synthesis.side_for_action(report.action),
+            )
+            self.assertTrue(report.combined_conclusion["risk_override_reason"])
+
+        first_override = result["overrides"][0]
+        self.assertEqual(
+            set(first_override),
+            {
+                "ticker",
+                "model_action",
+                "prior_final_action",
+                "protected_final_action",
+                "guardrail_reason",
+            },
+        )
+        self.assertEqual(first_override["model_action"], "减仓")
+        self.assertEqual(first_override["prior_final_action"], "减仓")
+        self.assertEqual(first_override["protected_final_action"], "回避")
+        self.assertIn("总仓位暴露超限", first_override["guardrail_reason"])
+
+    def test_portfolio_guard_resolves_account_risk_only_limit(self):
+        reports = [
+            self._synthesized_report(
+                ticker="LOW", action="买入", confidence=30, gross_pct=5.0,
+                account_risk_pct=1.0,
+            ),
+            self._synthesized_report(
+                ticker="HIGH", action="小仓试错", confidence=80, gross_pct=5.0,
+                account_risk_pct=1.0,
+            ),
+        ]
+
+        result = naked_k_synthesis.apply_portfolio_guardrails(
+            reports,
+            {report.ticker: self._daily() for report in reports},
+            config=self._portfolio_config(max_total_account_risk_pct=1.0),
+        )
+
+        self.assertEqual(result["status"], "within_limits")
+        self.assertEqual(result["total_account_risk_pct"], 1.0)
+        self.assertEqual([item["ticker"] for item in result["overrides"]], ["LOW"])
+        self.assertEqual(reports[0].action, "观望")
+        self.assertEqual(reports[0].risk_plan["suggested_gross_pct"], 0.0)
+        self.assertEqual(reports[0].risk_plan["effective_account_risk_pct"], 0.0)
+
+    def test_portfolio_guard_reports_unresolved_fallback_exposure_without_mutation(self):
+        fallback = self._synthesized_report(
+            ticker="FALLBACK",
+            action="买入",
+            confidence=10,
+            gross_pct=50.0,
+            status="technical_fallback",
+        )
+        before = copy.deepcopy(fallback)
+
+        result = naked_k_synthesis.apply_portfolio_guardrails(
+            [fallback],
+            {fallback.ticker: self._daily()},
+            config=self._portfolio_config(max_total_gross_pct=10.0),
+        )
+
+        self.assertEqual(result["status"], "over_limit")
+        self.assertEqual(result["overrides"], [])
+        self.assertIn("总仓位暴露超限", result["unresolved_guardrails"])
+        self.assertEqual(fallback, before)
+
+    def test_portfolio_guard_never_overrides_a_report_twice(self):
+        reports = [
+            self._synthesized_report(
+                ticker="AAA", action="买入", confidence=10, gross_pct=20.0
+            ),
+            self._synthesized_report(
+                ticker="BBB", action="减仓", confidence=20, gross_pct=20.0
+            ),
+        ]
+
+        with patch(
+            "naked_k_synthesis.synchronize_final_action",
+            wraps=naked_k_synthesis.synchronize_final_action,
+        ) as synchronize:
+            result = naked_k_synthesis.apply_portfolio_guardrails(
+                reports,
+                {report.ticker: self._daily() for report in reports},
+                config=self._portfolio_config(max_total_gross_pct=0.0),
+            )
+
+        synchronized_reports = [call.args[0] for call in synchronize.call_args_list]
+        self.assertEqual(len(synchronized_reports), len({id(item) for item in synchronized_reports}))
+        self.assertEqual(len(result["overrides"]), 2)
+
+    def test_portfolio_guard_failure_can_be_transactionally_restored_by_caller(self):
+        reports = [
+            self._synthesized_report(
+                ticker="AAA", action="买入", confidence=10, gross_pct=20.0
+            ),
+            self._synthesized_report(
+                ticker="BBB", action="买入", confidence=20, gross_pct=20.0
+            ),
+        ]
+        pre_guard = copy.deepcopy(reports)
+        real_synchronize = naked_k_synthesis.synchronize_final_action
+        calls = 0
+
+        def synchronize_one_then_raise(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return real_synchronize(*args, **kwargs)
+            raise RuntimeError("guard sync failed")
+
+        with patch(
+            "naked_k_synthesis.synchronize_final_action",
+            side_effect=synchronize_one_then_raise,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "guard sync failed"):
+                naked_k_synthesis.apply_portfolio_guardrails(
+                    reports,
+                    {report.ticker: self._daily() for report in reports},
+                    config=self._portfolio_config(max_total_gross_pct=0.0),
+                )
+
+        self.assertNotEqual(reports, pre_guard)
+        reports[:] = pre_guard
+        self.assertEqual(reports, pre_guard)
 
 
 if __name__ == "__main__":
