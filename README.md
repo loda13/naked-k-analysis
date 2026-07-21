@@ -106,7 +106,9 @@ python naked_k_analysis.py --news --news-model your-selected-model-id \
 - `综合结论`
 - `消息来源`
 
-JSON 与 journal 同时保存 `technical_conclusion`、`news_analysis` 和 `combined_conclusion`。如果任一新闻来源、第一轮、第二轮、结果验证、确定性价格重建或组合保护失败，程序仍会生成报告：保留可用的消息说明和安全的错误类型，并回退到原有技术动作。新闻不足时，第一轮会标记为不足并跳过第二轮；不会把缺失消息伪装成模型判断。
+JSON 与 journal 同时保存 `technical_conclusion`、`news_analysis` 和 `combined_conclusion`。单个公开新闻来源失败时，采集器仍会使用另一个来源，并保留来源错误状态；只有两者都不可用或没有可用新闻时，才跳过后续消息判断。对某个标的，如果新闻采集不可用、两轮请求或校验失败，或者确定性价格重建失败，该标的会保留安全状态/错误类型并回退到原有技术动作；新闻不足时会标记为不足并跳过第二轮，不会把缺失消息伪装成模型判断。
+
+组合保护异常使用不同的事务边界：程序会恢复整个列表在组合保护开始前的报告快照，然后继续持久化。因此，保护前已经有效的 `combined_conclusion`、模型动作和综合动作会被保留，不一定全部回退为原始技术动作；只有本次组合保护产生的部分改写会被撤销。
 
 ### Anthropic-compatible 本地配置
 
@@ -120,9 +122,15 @@ NAKED_K_NEWS_MODEL="replace-me-with-one-model-id"
 
 Base URL 的完整路径前缀会被保留，而不是裁剪到站点根路径：上例的消息端点是 `https://one.iflytek.com/api/llm/console/chat/v1/messages`，模型端点是 `https://one.iflytek.com/api/llm/console/chat/v1/models`。这保证了带路径前缀的兼容网关能正确路由请求。
 
-明确设置 `NAKED_K_NEWS_MODEL`（或用 `--news-model`）时会直接使用该模型。未设置时，程序会从上述完整前缀的 `/v1/models` 发现模型；只有一个被元数据明确标为文本/聊天能力的模型时才会自动选择。若返回多个 ID 或能力信息含糊，程序不会猜测“最佳”模型，而会列出可选 ID 并要求用环境变量或 `--news-model` 显式选择。
+明确设置模型时会直接使用。未设置时，程序会从上述完整前缀的 `/v1/models` 发现模型：先排除元数据明确标为 embedding、rerank、图像、音频或审核用途的 ID；如果剩余候选中恰好只有一个被元数据明确标为文本/聊天能力，且没有能力含糊的候选，就会自动选择，即使网关还返回了其他已排除的非聊天 ID。若存在多个合格候选或任何能力含糊的候选，程序不会猜测“最佳”模型，而会列出候选 ID 并要求显式选择。
 
-`ANTHROPIC_AUTH_TOKEN` 优先于 `ANTHROPIC_API_KEY`；也兼容现有 `NAKED_K_NEWS_*`、`NAKED_K_LLM_*` 和 `LLM_*` 本地变量。认证信息没有 CLI 参数，避免进入 shell history；日志、audit、JSON 和异常也只记录脱敏后的 provider、model、状态或错误类型。任何曾粘贴到聊天、日志或其他文本，或提交到仓库任何位置的真实 token，都必须先轮换，再进行真实网络 smoke test。不要读取、打印、提交或分享 `.env`。
+配置先按来源决定优先级：进程环境整体覆盖 `.env`，也就是进程环境中任一兼容别名存在时，都不会再从 `.env` 为该项取值；然后在同一来源内按以下顺序选择：
+
+- Base URL：`ANTHROPIC_BASE_URL` → `NAKED_K_NEWS_BASE_URL` → `NAKED_K_LLM_BASE_URL` → `LLM_BASE_URL`
+- 认证：`ANTHROPIC_AUTH_TOKEN` → `ANTHROPIC_API_KEY` → `NAKED_K_NEWS_API_KEY` → `NAKED_K_LLM_API_KEY` → `LLM_API_KEY`
+- 模型：CLI `--news-model` 覆盖所有环境来源；否则依次为 `NAKED_K_NEWS_MODEL` → `ANTHROPIC_MODEL` → `NAKED_K_LLM_MODEL` → `LLM_MODEL`
+
+认证信息没有 CLI 参数，避免进入 shell history；日志、audit、JSON 和异常也只记录脱敏后的 provider、model、状态或错误类型。任何曾粘贴到聊天、日志或其他文本，或提交到仓库任何位置的真实 token，都必须先轮换，再进行真实网络 smoke test。不要读取、打印、提交或分享 `.env`。
 
 ## 报告字段
 
