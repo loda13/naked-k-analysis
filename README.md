@@ -66,7 +66,63 @@ python naked_k_analysis.py --report-path reports/today.md --journal-path reports
 python naked_k_analysis.py --config-path config/naked_k.json
 python naked_k_analysis.py --audit-path reports/audit.jsonl
 python naked_k_analysis.py --llm
+python naked_k_analysis.py --news
 ```
+
+## 消息面两轮斟酌（可选）
+
+`--news` 默认关闭。启用后，程序在原有纯裸 K 计划之外，收集公开新闻并生成可追溯的消息面和综合结论；未启用时不会发起新闻或消息模型请求，既有 Markdown、JSON、journal 和交易计划保持原样。
+
+```bash
+# 只启用公开新闻和两轮综合斟酌
+python naked_k_analysis.py --news
+
+# 可选地覆盖模型、主窗口和每个标的的去重新闻上限
+python naked_k_analysis.py --news --news-model your-selected-model-id \
+  --news-lookback-days 7 --news-max-items 12
+```
+
+`--news` 与现有 `--llm` 相互独立：`--llm` 仍是 OpenAI-compatible 的交易复盘文本增强，写入 `ai_assistant.llm_commentary`；`--news` 使用 Anthropic-compatible 的两轮消息面流程，写入独立的 `news_analysis` 和 `combined_conclusion`。两者可以单独使用或同时使用，彼此不覆盖。
+
+### 两轮与价格边界
+
+第一轮是独立的消息面审查：它只接收公司、ticker、运行时间和规范化新闻，**不接收**技术动作、触发价、止损、目标或仓位。第二轮才会同时审阅不可变的技术结论快照、原始新闻、第一轮结论和风险上下文，并给出动作建议、技术/消息的一致或冲突解释及引用的证据 ID。
+
+这里没有“技术分数 + 新闻分数”的固定权重、加总公式或动作矩阵。模型可以建议把动作升级或降级，但不能提供或改写任何价格字段。最终 `entry_trigger`、`stop_loss`、`target_price`、仓位、R/R、风险计划和组合保护仍由确定性的裸 K 代码生成和同步；报告会分别保留模型建议的 `model_action` 与风控后的 `final_action`。
+
+### 公开来源、时效与证据
+
+新闻不需要额外的新闻 API key，来源为 yfinance Search 新闻和 Google News RSS；任何一个来源不可用时会尝试另一个来源。默认优先使用最近 **7 个自然日**内、归一化去重后的新闻（每个标的最多 12 条）。只有在主窗口没有有效新闻时，才回看最近 **30 日**并标注 `low_freshness`；超过 30 日或未来时间的新闻不会进入当前判断。
+
+每条进入模型的新闻都带稳定的 `news-01`、`news-02` 等证据 ID，以及标题、媒体、时间、URL、摘要、来源和新鲜度。第一轮和第二轮只能引用本次输入中存在的证据 ID，因此报告中的消息判断可以回溯到对应公开来源，而不会让模型凭训练记忆补造新闻。
+
+### 报告与安全降级
+
+当 `--news` 成功运行时，每个标的的 Markdown 会连续显示：
+
+- `技术面结论`
+- `消息面结论`
+- `技术与消息冲突/一致性`
+- `综合结论`
+- `消息来源`
+
+JSON 与 journal 同时保存 `technical_conclusion`、`news_analysis` 和 `combined_conclusion`。如果任一新闻来源、第一轮、第二轮、结果验证、确定性价格重建或组合保护失败，程序仍会生成报告：保留可用的消息说明和安全的错误类型，并回退到原有技术动作。新闻不足时，第一轮会标记为不足并跳过第二轮；不会把缺失消息伪装成模型判断。
+
+### Anthropic-compatible 本地配置
+
+只在本地、被 `.gitignore` 忽略的 `.env` 或系统环境变量中保存配置。以下是安全占位示例，不能直接用于真实请求：
+
+```dotenv
+ANTHROPIC_BASE_URL="https://one.iflytek.com/api/llm/console/chat"
+ANTHROPIC_AUTH_TOKEN="replace-me-with-a-rotated-local-token"
+NAKED_K_NEWS_MODEL="replace-me-with-one-model-id"
+```
+
+Base URL 的完整路径前缀会被保留，而不是裁剪到站点根路径：上例的消息端点是 `https://one.iflytek.com/api/llm/console/chat/v1/messages`，模型端点是 `https://one.iflytek.com/api/llm/console/chat/v1/models`。这保证了带路径前缀的兼容网关能正确路由请求。
+
+明确设置 `NAKED_K_NEWS_MODEL`（或用 `--news-model`）时会直接使用该模型。未设置时，程序会从上述完整前缀的 `/v1/models` 发现模型；只有一个被元数据明确标为文本/聊天能力的模型时才会自动选择。若返回多个 ID 或能力信息含糊，程序不会猜测“最佳”模型，而会列出可选 ID 并要求用环境变量或 `--news-model` 显式选择。
+
+`ANTHROPIC_AUTH_TOKEN` 优先于 `ANTHROPIC_API_KEY`；也兼容现有 `NAKED_K_NEWS_*`、`NAKED_K_LLM_*` 和 `LLM_*` 本地变量。认证信息没有 CLI 参数，避免进入 shell history；日志、audit、JSON 和异常也只记录脱敏后的 provider、model、状态或错误类型。任何曾粘贴到聊天、日志或其他文本，或提交到仓库任何位置的真实 token，都必须先轮换，再进行真实网络 smoke test。不要读取、打印、提交或分享 `.env`。
 
 ## 报告字段
 
@@ -89,6 +145,9 @@ python naked_k_analysis.py --llm
 - `risk_plan`：结构化风险计划，包括单笔风险、账户风险、建议仓位、R 目标、风控保护状态
 - `trader_brief`：交易员式复盘，包括市场状态、多空力量、关键区域、可能路径、交易计划和风险点
 - `ai_assistant`：AI 助手输入和输出边界，包括确定性引擎计划、市场上下文、历史样本校准、失败归因和禁止 AI 改写信号的规则
+- `technical_conclusion`：启用 `--news` 时保存的不可变纯技术计划快照
+- `news_analysis`：公开新闻采集状态、第一轮消息面结论、证据和安全调用状态
+- `combined_conclusion`：第二轮模型建议、冲突分析、模型动作、风控后的最终动作和覆盖原因
 - `review`：上一条计划在当前 K 线中的触发、失效和错误类型
 
 ## 裸 K 逻辑
