@@ -88,13 +88,15 @@ python naked_k_analysis.py --news --news-model your-selected-model-id \
 
 第一轮是独立的消息面审查：它只接收公司、ticker、运行时间和规范化新闻，**不接收**技术动作、触发价、止损、目标或仓位。第二轮才会同时审阅不可变的技术结论快照、原始新闻、第一轮结论和风险上下文，并给出动作建议、技术/消息的一致或冲突解释及引用的证据 ID。
 
-这里没有“技术分数 + 新闻分数”的固定权重、加总公式或动作矩阵。模型可以建议把动作升级或降级，但不能提供或改写任何价格字段。最终 `entry_trigger`、`stop_loss`、`target_price`、仓位、R/R、风险计划和组合保护仍由确定性的裸 K 代码生成和同步；报告会分别保留模型建议的 `model_action` 与风控后的 `final_action`。
+这里没有“技术分数 + 新闻分数”的固定权重、加总公式或动作矩阵。模型可以建议把动作升级或降级，但不能提供或改写任何价格字段。每次动作变化都必须同时给出非空的 `evidence_ids` 和逐项 `evidence_claims`；每条 claim 只绑定一个本次输入的新闻 ID，并携带从该来源标题或摘要逐字复制的 `supporting_excerpt`。引用不存在的 ID、无关或矛盾断言、在真实文字上追加未获支持的事实，以及任何指令式提示词，都不能改变动作。
+
+任何提高实际总敞口上限的动作变化还有一道确定性安全门，包括 `回避` / `观望` 进入有仓位动作、`回避` 变为保留残余仓位的 `减仓`，以及进一步提高仓位上限。引用证据必须至少来自两个规范化后不同的发布方、且注册主域名也不同的新闻项目；媒体别名和同一主域名的子域不会重复计数。满足条件时仍由模型自动判断，不使用固定融合分数；不满足时完整保留技术动作，并在 `override_reason_code` / `evidence_gate` 中记录机器可读的覆盖原因。最终 `entry_trigger`、`stop_loss`、`target_price`、仓位、R/R、风险计划和组合保护仍由确定性的裸 K 代码生成和同步；报告会分别保留模型建议的 `model_action` 与风控后的 `final_action`。
 
 ### 公开来源、时效与证据
 
 新闻不需要额外的新闻 API key，来源为 yfinance Search 新闻和 Google News RSS；任何一个来源不可用时会尝试另一个来源。默认优先使用最近 **7 个自然日**内、归一化去重后的新闻（每个标的最多 12 条）。只有在主窗口没有有效新闻时，才回看最近 **30 日**并标注 `low_freshness`；超过 30 日或未来时间的新闻不会进入当前判断。
 
-每条进入模型的新闻都带稳定的 `news-01`、`news-02` 等证据 ID，以及标题、媒体、时间、URL、摘要、来源和新鲜度。第一轮和第二轮只能引用本次输入中存在的证据 ID，因此报告中的消息判断可以回溯到对应公开来源，而不会让模型凭训练记忆补造新闻。
+每条进入模型的新闻都带稳定的 `news-01`、`news-02` 等证据 ID，以及标题、媒体、时间、URL、摘要、来源和新鲜度。第一轮和第二轮只能引用本次输入中存在的证据 ID；第二轮的结构化 claim-to-evidence 映射还必须通过逐字摘录、词项覆盖和否定语义一致性检查，因此报告中的消息判断可以回溯到对应公开来源，而不会让模型凭训练记忆补造新闻。
 
 ### 报告与安全降级
 
@@ -120,9 +122,11 @@ ANTHROPIC_AUTH_TOKEN="replace-me-with-a-rotated-local-token"
 NAKED_K_NEWS_MODEL="replace-me-with-one-model-id"
 ```
 
-Base URL 的完整路径前缀会被保留，而不是裁剪到站点根路径：上例的消息端点是 `https://one.iflytek.com/api/llm/console/chat/v1/messages`，模型端点是 `https://one.iflytek.com/api/llm/console/chat/v1/models`。这保证了带路径前缀的兼容网关能正确路由请求。
+Base URL 的完整路径前缀会在内存中的实际请求里保留，而不是裁剪到站点根路径：上例的消息端点是 `https://one.iflytek.com/api/llm/console/chat/v1/messages`，模型端点是 `https://one.iflytek.com/api/llm/console/chat/v1/models`。远程主机必须使用 HTTPS；HTTP 只允许显式的 `localhost` / loopback 开发地址。Base URL 不接受用户名密码、query 或 fragment。
 
-明确设置模型时会直接使用。未设置时，程序会从上述完整前缀的 `/v1/models` 发现模型：先排除元数据明确标为 embedding、rerank、图像、音频或审核用途的 ID；如果剩余候选中恰好只有一个被元数据明确标为文本/聊天能力，且没有能力含糊的候选，就会自动选择，即使网关还返回了其他已排除的非聊天 ID。若存在多个合格候选或任何能力含糊的候选，程序不会猜测“最佳”模型，而会列出候选 ID 并要求显式选择。
+可打印配置和 `--json` 只显示安全的 endpoint origin（例如 `https://one.iflytek.com`），不显示完整租户路径。成功响应、错误、模型 ID、Markdown、journal、audit 和 CLI JSON 在持久化前都会递归脱敏认证 token、敏感 Base URL 和常见 credential-like 字符串；请求仍在内存中使用原始已选模型 ID。
+
+明确设置模型时会直接使用。未设置时，程序会从上述完整前缀的 `/v1/models` 发现模型：只排除元数据纯粹、明确标为 embedding、rerank、图像、音频或审核用途的 ID；`type=chat` 且同时支持 text/image 的多模态聊天模型不会仅因 image capability 被排除。真正互相冲突或能力含糊的元数据会要求显式选择。若存在多个合格候选或任何能力含糊的候选，程序不会猜测“最佳”模型，而会列出经脱敏的候选 ID。
 
 配置先按来源决定优先级：进程环境整体覆盖 `.env`，也就是进程环境中任一兼容别名存在时，都不会再从 `.env` 为该项取值；然后在同一来源内按以下顺序选择：
 
@@ -130,7 +134,7 @@ Base URL 的完整路径前缀会被保留，而不是裁剪到站点根路径�
 - 认证：`ANTHROPIC_AUTH_TOKEN` → `ANTHROPIC_API_KEY` → `NAKED_K_NEWS_API_KEY` → `NAKED_K_LLM_API_KEY` → `LLM_API_KEY`
 - 模型：CLI `--news-model` 覆盖所有环境来源；否则依次为 `NAKED_K_NEWS_MODEL` → `ANTHROPIC_MODEL` → `NAKED_K_LLM_MODEL` → `LLM_MODEL`
 
-认证信息没有 CLI 参数，避免进入 shell history；日志、audit、JSON 和异常也只记录脱敏后的 provider、model、状态或错误类型。任何曾粘贴到聊天、日志或其他文本，或提交到仓库任何位置的真实 token，都必须先轮换，再进行真实网络 smoke test。不要读取、打印、提交或分享 `.env`。
+认证信息没有 CLI 参数，避免进入 shell history；日志、audit、JSON 和异常只记录脱敏后的 provider、model、安全 endpoint origin、状态或错误类型。任何曾粘贴到聊天、日志或其他文本，或提交到仓库任何位置的真实 token，都必须先轮换，再进行真实网络 smoke test。不要读取、打印、提交或分享 `.env`。
 
 ## 报告字段
 
@@ -155,7 +159,7 @@ Base URL 的完整路径前缀会被保留，而不是裁剪到站点根路径�
 - `ai_assistant`：AI 助手输入和输出边界，包括确定性引擎计划、市场上下文、历史样本校准、失败归因和禁止 AI 改写信号的规则
 - `technical_conclusion`：启用 `--news` 时保存的不可变纯技术计划快照
 - `news_analysis`：公开新闻采集状态、第一轮消息面结论、证据和安全调用状态
-- `combined_conclusion`：第二轮模型建议、冲突分析、模型动作、风控后的最终动作和覆盖原因
+- `combined_conclusion`：第二轮模型建议、结构化证据 claims、冲突分析、模型动作、证据安全门、风控后的最终动作和机器可读覆盖原因
 - `review`：上一条计划在当前 K 线中的触发、失效和错误类型
 
 ## 裸 K 逻辑
