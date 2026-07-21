@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import copy
+import ipaddress
+import re
+import unicodedata
 from dataclasses import asdict
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import urlsplit
 
 import pandas as pd
 
 import naked_k_config
+import naked_k_news_llm
 import naked_k_portfolio
 import naked_k_risk
 import naked_k_trade
@@ -35,6 +40,37 @@ ACTION_SIDE_MAP = {
     "观望": "neutral",
     "减仓": "bearish_defensive",
     "回避": "bearish_defensive",
+}
+
+_GROUNDING_OVERRIDE_CODE = "news_action_change_grounding_required"
+_CORROBORATION_OVERRIDE_CODE = "news_upgrade_independent_corroboration_required"
+_GROUNDING_OVERRIDE_REASON = "消息动作变更缺少有效的结构化证据，已保留技术动作"
+_CORROBORATION_OVERRIDE_REASON = "消息增仓建议未获至少两个独立来源交叉佐证，已保留技术动作"
+_MULTI_LABEL_PUBLIC_SUFFIXES = {
+    "co.uk", "org.uk", "gov.uk", "ac.uk",
+    "com.cn", "net.cn", "org.cn", "gov.cn",
+    "com.hk", "net.hk", "org.hk",
+    "co.jp", "ne.jp", "or.jp",
+    "co.kr", "or.kr", "go.kr",
+    "com.au", "net.au", "org.au",
+    "co.nz", "org.nz",
+    "com.sg", "com.tw", "com.br", "com.mx", "co.in",
+}
+_PUBLISHER_ALIASES = {
+    "reuters": "reuters",
+    "thomsonreuters": "reuters",
+    "路透": "reuters",
+    "路透社": "reuters",
+    "bloomberg": "bloomberg",
+    "bloombergnews": "bloomberg",
+    "彭博": "bloomberg",
+    "彭博社": "bloomberg",
+    "associatedpress": "associated-press",
+    "ap": "associated-press",
+    "美联社": "associated-press",
+    "xinhua": "xinhua",
+    "xinhuanews": "xinhua",
+    "新华社": "xinhua",
 }
 
 
@@ -78,6 +114,144 @@ def _stored_technical_snapshot(report: Any) -> dict[str, Any]:
     if isinstance(stored, dict) and all(field in stored for field in TECHNICAL_SNAPSHOT_FIELDS):
         return copy.deepcopy(stored)
     return snapshot_technical_conclusion(report)
+
+
+def _normalized_publisher(value: Any) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    words = " ".join(re.sub(r"[^\w\u3400-\u4dbf\u4e00-\u9fff]+", " ", normalized).split())
+    alias_key = words.replace(" ", "").replace("_", "")
+    if (
+        alias_key.startswith("reuters")
+        or alias_key.startswith("thomsonreuters")
+        or alias_key.startswith("路透")
+    ):
+        return "reuters"
+    return _PUBLISHER_ALIASES.get(alias_key, words)
+
+
+def _source_domain(value: Any) -> str:
+    try:
+        hostname = urlsplit(str(value or "")).hostname or ""
+    except ValueError:
+        return ""
+    normalized = hostname.rstrip(".").casefold()
+    if not normalized:
+        return ""
+    try:
+        return str(ipaddress.ip_address(normalized))
+    except ValueError:
+        pass
+    labels = [label for label in normalized.split(".") if label]
+    if len(labels) <= 2:
+        return ".".join(labels)
+    suffix = ".".join(labels[-2:])
+    return ".".join(labels[-3:]) if suffix in _MULTI_LABEL_PUBLIC_SUFFIXES else suffix
+
+
+def _action_exposure_cap(
+    action: str,
+    config: naked_k_config.TradingConfig,
+) -> float:
+    if action in {"回避", "观望"}:
+        return 0.0
+    try:
+        return max(0.0, float(config.risk.action_gross_caps.get(action, 0.0)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _evidence_safety_gate(
+    report: Any,
+    deliberation: dict[str, Any],
+    *,
+    technical_action: str,
+    config: naked_k_config.TradingConfig | None = None,
+) -> dict[str, Any]:
+    active_config = config or naked_k_config.TradingConfig()
+    model_action = str(deliberation.get("model_action", ""))
+    action_changed = model_action != technical_action
+    exposure_increase = (
+        _action_exposure_cap(model_action, active_config)
+        > _action_exposure_cap(technical_action, active_config)
+    )
+    evidence_ids_value = deliberation.get("evidence_ids")
+    evidence_ids = (
+        list(dict.fromkeys(
+            item
+            for item in evidence_ids_value
+            if isinstance(item, str) and item
+        ))
+        if isinstance(evidence_ids_value, list)
+        else []
+    )
+    claims_value = deliberation.get("evidence_claims")
+
+    news_analysis = getattr(report, "news_analysis", {})
+    collection = (
+        news_analysis.get("collection")
+        if isinstance(news_analysis, dict)
+        else {}
+    )
+    items = collection.get("items") if isinstance(collection, dict) else []
+    items_by_id = (
+        {
+            item["id"]: item
+            for item in items
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        if isinstance(items, list)
+        else {}
+    )
+    cited_items = [items_by_id[item] for item in evidence_ids if item in items_by_id]
+    all_ids_resolve = len(cited_items) == len(evidence_ids)
+    try:
+        validated_claims = naked_k_news_llm.validate_evidence_claims(
+            claims_value,
+            items=items if isinstance(items, list) else [],
+            evidence_ids=evidence_ids,
+        )
+    except naked_k_news_llm.NewsValidationError:
+        validated_claims = []
+    structured_grounding_passed = (
+        bool(evidence_ids)
+        and bool(validated_claims)
+        and all_ids_resolve
+    )
+
+    publishers = sorted({
+        publisher
+        for item in cited_items
+        if (publisher := _normalized_publisher(item.get("publisher")))
+    })
+    domains = sorted({
+        domain
+        for item in cited_items
+        if (domain := _source_domain(item.get("url")))
+    })
+    independent_corroboration = len(publishers) >= 2 and len(domains) >= 2
+
+    reason_code = ""
+    reason = ""
+    passed = True
+    if action_changed and not structured_grounding_passed:
+        passed = False
+        reason_code = _GROUNDING_OVERRIDE_CODE
+        reason = _GROUNDING_OVERRIDE_REASON
+    elif exposure_increase and not independent_corroboration:
+        passed = False
+        reason_code = _CORROBORATION_OVERRIDE_CODE
+        reason = _CORROBORATION_OVERRIDE_REASON
+    return {
+        "required": action_changed,
+        "exposure_increase": exposure_increase,
+        "passed": passed,
+        "reason_code": reason_code,
+        "reason": reason,
+        "cited_evidence_ids": evidence_ids,
+        "independent_publisher_count": len(publishers),
+        "independent_domain_count": len(domains),
+        "required_independent_sources": 2 if exposure_increase else 0,
+    }
 
 
 def _deterministic_prices(
@@ -285,6 +459,8 @@ def _combined_conclusion(
     status: str,
     final_action: str,
     risk_override_reason: str,
+    override_reason_code: str,
+    evidence_gate: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "status": status,
@@ -297,9 +473,12 @@ def _combined_conclusion(
         "decision_reasons": copy.deepcopy(deliberation["decision_reasons"]),
         "risk_flags": copy.deepcopy(deliberation["risk_flags"]),
         "evidence_ids": copy.deepcopy(deliberation["evidence_ids"]),
+        "evidence_claims": copy.deepcopy(deliberation.get("evidence_claims", [])),
         "execution_note": str(deliberation["execution_note"]),
         "execution_side": side_for_action(final_action),
         "risk_override_reason": risk_override_reason,
+        "override_reason_code": override_reason_code,
+        "evidence_gate": copy.deepcopy(evidence_gate),
         "price_plan_source": "deterministic_naked_k",
     }
 
@@ -315,24 +494,52 @@ def apply_deliberation(
     technical_snapshot = _stored_technical_snapshot(report)
     model_action = str(deliberation["model_action"])
     decision_reason = "；".join(str(item) for item in deliberation["decision_reasons"])
+    evidence_gate = _evidence_safety_gate(
+        report,
+        deliberation,
+        technical_action=str(technical_snapshot["action"]),
+        config=config,
+    )
+    if not evidence_gate["passed"]:
+        for field in TECHNICAL_SNAPSHOT_FIELDS:
+            setattr(report, field, copy.deepcopy(technical_snapshot[field]))
+        combined = _combined_conclusion(
+            deliberation,
+            status="ok",
+            final_action=str(technical_snapshot["action"]),
+            risk_override_reason=str(evidence_gate["reason"]),
+            override_reason_code=str(evidence_gate["reason_code"]),
+            evidence_gate=evidence_gate,
+        )
+        report.combined_conclusion = combined
+        return combined
+
+    gated_action = model_action
+    candidate_reason = decision_reason
 
     try:
         candidate, protection_reason = _synchronized_candidate(
             technical_snapshot,
             daily,
-            model_action,
-            reason=decision_reason,
+            gated_action,
+            reason=candidate_reason,
             intraday=intraday,
             config=config,
         )
         final_action = str(candidate["action"])
         _apply_candidate(report, candidate)
-        risk_override_reason = protection_reason if final_action != model_action else ""
+        override_reasons = []
+        if protection_reason and final_action != gated_action:
+            override_reasons.append(protection_reason)
+        risk_override_reason = "；".join(dict.fromkeys(override_reasons))
+        override_reason_code = str(evidence_gate["reason_code"])
         combined = _combined_conclusion(
             deliberation,
             status="ok",
             final_action=final_action,
             risk_override_reason=risk_override_reason,
+            override_reason_code=override_reason_code,
+            evidence_gate=evidence_gate,
         )
     except Exception as exc:
         for field in TECHNICAL_SNAPSHOT_FIELDS:
@@ -347,6 +554,8 @@ def apply_deliberation(
             status="technical_fallback",
             final_action=final_action,
             risk_override_reason=fallback_reason,
+            override_reason_code="deterministic_synthesis_failure",
+            evidence_gate=evidence_gate,
         )
 
     report.combined_conclusion = combined

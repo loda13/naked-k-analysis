@@ -381,6 +381,9 @@ def _technical_fallback_combined(
             "decision_reasons": copy.deepcopy(deliberation["decision_reasons"]),
             "risk_flags": copy.deepcopy(deliberation["risk_flags"]),
             "evidence_ids": copy.deepcopy(deliberation["evidence_ids"]),
+            "evidence_claims": copy.deepcopy(
+                deliberation.get("evidence_claims", [])
+            ),
             "execution_note": _single_line(deliberation["execution_note"]),
         }
     else:
@@ -400,6 +403,7 @@ def _technical_fallback_combined(
             "decision_reasons": ["消息面流程未形成有效综合动作，保留技术动作"],
             "risk_flags": [],
             "evidence_ids": copy.deepcopy(round1.get("evidence_ids", [])),
+            "evidence_claims": [],
             "execution_note": "沿用原始裸K执行计划",
         }
     combined.update(
@@ -428,7 +432,9 @@ def _news_fallback_result(
             "collection": copy.deepcopy(collection),
             "round1": {"error_type": error_type, "message": message},
             "provider": news_config.provider,
-            "model": news_config.model,
+            "model": naked_k_news_llm.printable_model_id(
+                news_config.model, news_config
+            ),
         },
         "deliberation": {},
         "fallback_reason": error_type,
@@ -666,6 +672,9 @@ def _recover_news_branch(
     audit: naked_k_audit.AuditLogger,
     emitted_events: set[str],
 ) -> None:
+    safe_model = naked_k_news_llm.printable_model_id(
+        news_config.model, news_config
+    )
     report.technical_conclusion = copy.deepcopy(technical_snapshot)
     _restore_technical_conclusion(report)
     collection = _unavailable_news_collection(
@@ -712,7 +721,7 @@ def _recover_news_branch(
             ticker=report.ticker,
             name=report.name,
             provider=news_config.provider,
-            model=news_config.model,
+            model=safe_model,
             **payload,
         )
         emitted_events.add(event_type)
@@ -734,6 +743,9 @@ def _run_news_for_report(
     audit: naked_k_audit.AuditLogger,
     emitted_events: set[str],
 ) -> None:
+    safe_model = naked_k_news_llm.printable_model_id(
+        news_config.model, news_config
+    )
     report.technical_conclusion = naked_k_synthesis.snapshot_technical_conclusion(report)
     bootstrap_error_type = _news_error_type(news_bootstrap_error)
     collection_error_type = bootstrap_error_type
@@ -757,6 +769,9 @@ def _run_news_for_report(
             )
             if not isinstance(collection, dict):
                 raise TypeError("news collection must be a dictionary")
+            collection = naked_k_news_llm.sanitize_provider_value(
+                collection, news_config
+            )
             source_errors = collection.get("source_errors")
             if collection.get("status") == "unavailable" and isinstance(source_errors, list) and source_errors:
                 collection_error_type = _single_line(source_errors[0])
@@ -778,7 +793,7 @@ def _run_news_for_report(
         ticker=report.ticker,
         name=report.name,
         provider=news_config.provider,
-        model=news_config.model,
+        model=safe_model,
         status=collection.get("status"),
         item_count=item_count,
         error_type=collection_error_type,
@@ -834,12 +849,16 @@ def _run_news_for_report(
             )
 
     news_analysis = result.get("news_analysis")
+    if isinstance(news_analysis, dict):
+        news_analysis = naked_k_news_llm.sanitize_provider_value(
+            news_analysis, news_config
+        )
     report.news_analysis = copy.deepcopy(news_analysis) if isinstance(news_analysis, dict) else {
         "status": "error",
         "collection": copy.deepcopy(collection),
         "round1": {"error_type": "InvalidNewsResult", "message": "News analysis unavailable"},
         "provider": news_config.provider,
-        "model": news_config.model,
+        "model": safe_model,
     }
     if isinstance(report.news_analysis.get("round1"), dict):
         report.news_analysis["round1"] = _sanitize_model_text(
@@ -853,7 +872,7 @@ def _run_news_for_report(
         ticker=report.ticker,
         name=report.name,
         provider=news_config.provider,
-        model=news_config.model,
+        model=safe_model,
         status=report.news_analysis.get("status"),
         item_count=item_count,
         error_type=assessment_error_type,
@@ -862,7 +881,9 @@ def _run_news_for_report(
 
     deliberation = result.get("deliberation")
     if isinstance(deliberation, dict):
-        deliberation = _sanitize_model_text(deliberation)
+        deliberation = _sanitize_model_text(
+            naked_k_news_llm.sanitize_provider_value(deliberation, news_config)
+        )
     valid_deliberation = result.get("status") == "ok" and isinstance(deliberation, dict) and bool(deliberation)
     decision_error_type = ""
     if valid_deliberation:
@@ -908,7 +929,7 @@ def _run_news_for_report(
         ticker=report.ticker,
         name=report.name,
         provider=news_config.provider,
-        model=news_config.model,
+        model=safe_model,
         status=combined.get("status"),
         item_count=item_count,
         model_action=combined.get("model_action"),
@@ -933,6 +954,8 @@ def run_analysis(
     news_max_items: int = 12,
     news_bootstrap_error: dict[str, str] | None = None,
 ) -> tuple[str, list[InstrumentReport]]:
+    if news_lookback_days <= 0 or news_max_items <= 0:
+        raise ValueError("news lookback days and max items must be positive")
     audit = naked_k_audit.AuditLogger(audit_path)
     journal_rows = load_journal(journal_path)
     reports: list[InstrumentReport] = []
@@ -1091,7 +1114,9 @@ def run_analysis(
                 ticker=report.ticker,
                 name=report.name,
                 provider=news_config.provider,
-                model=news_config.model,
+                model=naked_k_news_llm.printable_model_id(
+                    news_config.model, news_config
+                ),
                 status=combined.get("status"),
                 model_action=combined.get("model_action"),
                 final_action=report.action,

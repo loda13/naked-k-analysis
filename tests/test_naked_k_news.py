@@ -240,8 +240,10 @@ class CollectNewsFreshnessTests(unittest.TestCase):
 
         for kwargs in (
             {"lookback_days": 0},
+            {"lookback_days": -1},
             {"fallback_days": 6},
             {"max_items": 0},
+            {"max_items": -1},
         ):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 collect_news("测试公司", "TEST", search_factory=should_not_run, get=should_not_run, **kwargs)

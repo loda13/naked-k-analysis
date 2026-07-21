@@ -103,6 +103,16 @@ class NakedKAnalysisTests(unittest.TestCase):
                     "summary": "订单已公开披露",
                     "source_provider": "yahoo",
                     "freshness": "primary",
+                },
+                {
+                    "id": "news-02",
+                    "title": "公司确认上调年度指引",
+                    "publisher": "独立媒体",
+                    "published_at": "2026-07-19T04:00:00+00:00",
+                    "url": "https://independent.example/item-2",
+                    "summary": "管理层在公告中确认最新指引",
+                    "source_provider": "google_news_rss",
+                    "freshness": "primary",
                 }
             ],
             "source_errors": [],
@@ -119,7 +129,7 @@ class NakedKAnalysisTests(unittest.TestCase):
             "summary": "消息面偏积极",
             "positive_factors": ["新增订单"],
             "negative_factors": ["兑现仍有不确定性"],
-            "evidence_ids": ["news-01"],
+            "evidence_ids": ["news-01", "news-02"],
             "uncertainties": ["合同执行进度未知"],
             "data_quality": "sufficient",
         }
@@ -136,7 +146,19 @@ class NakedKAnalysisTests(unittest.TestCase):
             "confidence": 78,
             "decision_reasons": ["消息具有较高重要性"],
             "risk_flags": ["兑现仍待验证"],
-            "evidence_ids": ["news-01"],
+            "evidence_ids": ["news-01", "news-02"],
+            "evidence_claims": [
+                {
+                    "claim": "订单已公开披露",
+                    "evidence_id": "news-01",
+                    "supporting_excerpt": "订单已公开披露",
+                },
+                {
+                    "claim": "公司确认上调年度指引",
+                    "evidence_id": "news-02",
+                    "supporting_excerpt": "公司确认上调年度指引",
+                },
+            ],
             "execution_note": "由裸K规则生成执行价格",
         }
         payload.update(overrides)
@@ -452,6 +474,96 @@ class NakedKAnalysisTests(unittest.TestCase):
         self.assertEqual(by_ticker["PASS"].action, "买入")
         self.assertEqual(by_ticker["PASS"].combined_conclusion["final_action"], "买入")
 
+    def test_successful_provider_echoes_are_redacted_from_every_persisted_output(self):
+        token = "test-provider-secret-token"
+        base_url = "https://gateway.example/private/tenant"
+        credential = "token-live-abcdefghijklmnopqrstuvwxyz123456"
+        quoted_key = "opaque-api-key-value-12345"
+        quoted_password = "opaque-password-value-12345"
+        basic = "QWxhZGRpbjpvcGVuIHNlc2FtZQ=="
+        github = "ghp_EXAMPLEfixture000000000000"
+        slack = "xoxb-EXAMPLE00000-EXAMPLE00000-EXAMPLEfixture"
+        aws = "AKIAEXAMPLEFIXTURE00"
+        google = "AIzaEXAMPLEfixture0000000000000000000000"
+        config = naked_k_news_llm.AnthropicNewsConfig(
+            enabled=True,
+            base_url=base_url,
+            auth_token=token,
+            model=f"chat-{token}-/private/tenant",
+        )
+        round1 = self._round1(
+            summary=(
+                f"echo {token} {base_url} Bearer {credential}; "
+                f"api_key: \"{quoted_key}\"; Authorization: Basic {basic}; "
+                f"{github}; {slack}; {aws}; {google}"
+            ),
+            positive_factors=[f"password='{quoted_password}'"],
+            negative_factors=["the password policy changed"],
+            uncertainties=["gateway path /private/tenant"],
+        )
+        round2 = self._round2(
+            conflict_analysis=f"echo {token} {base_url} {github} {slack}",
+            decision_reasons=[
+                f"Authorization: Bearer {credential}",
+                f"password: \"{quoted_password}\"",
+            ],
+            risk_flags=[f"Authorization: Basic {basic}; {aws}; {google}"],
+            execution_note=f"secret={token}; api_key='{quoted_key}'",
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            journal_path = Path(tmpdir) / "journal.jsonl"
+            audit_path = Path(tmpdir) / "audit.jsonl"
+            with (
+                patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
+                patch.object(
+                    naked_k_analysis,
+                    "build_trade_plan",
+                    return_value=self._integration_report(),
+                ),
+                patch.object(
+                    naked_k_news,
+                    "collect_news",
+                    return_value=self._news_collection(),
+                ),
+            ):
+                markdown, reports = naked_k_analysis.run_analysis(
+                    [("测试", "TEST")],
+                    journal_path,
+                    audit_path=audit_path,
+                    news_config=config,
+                    news_post=self._sequential_news_post([round1, round2]),
+                )
+
+            persisted = "\n".join(
+                (
+                    markdown,
+                    journal_path.read_text(encoding="utf-8"),
+                    audit_path.read_text(encoding="utf-8"),
+                    json.dumps(
+                        naked_k_analysis.serialize_report(reports[0]),
+                        ensure_ascii=False,
+                    ),
+                )
+            )
+
+        for secret in (
+            token,
+            base_url,
+            "/private/tenant",
+            credential,
+            quoted_key,
+            quoted_password,
+            basic,
+            github,
+            slack,
+            aws,
+            google,
+        ):
+            self.assertNotIn(secret, persisted)
+        self.assertIn("the password policy changed", persisted)
+        self.assertNotIn("/private/tenant", reports[0].news_analysis["model"])
+
     def test_news_two_pass_failures_always_keep_the_technical_plan(self):
         scenarios = {
             "round one request": [RuntimeError("request failed")],
@@ -518,6 +630,10 @@ class NakedKAnalysisTests(unittest.TestCase):
         self.assertEqual(report.combined_conclusion["model_action"], "买入")
         self.assertEqual(report.combined_conclusion["final_action"], "观望")
         self.assertEqual(report.combined_conclusion["decision_reasons"], ["消息具有较高重要性"])
+        self.assertEqual(
+            report.combined_conclusion["evidence_claims"],
+            self._round2()["evidence_claims"],
+        )
         self.assertIn("RuntimeError", report.combined_conclusion["risk_override_reason"])
         self.assertNotIn("FULL_PROMPT_SENTINEL", audit_text + journal_text)
         self.assertNotIn("fake-news-secret", audit_text + journal_text)
@@ -860,20 +976,44 @@ class NakedKAnalysisTests(unittest.TestCase):
 
     def test_main_rejects_nonpositive_news_limits_before_running(self):
         for flag in ("--news-lookback-days", "--news-max-items"):
-            with self.subTest(flag=flag), TemporaryDirectory() as tmpdir:
-                exit_code, output, run, _ = self._invoke_main(
-                    [
-                        "--news",
-                        flag,
-                        "0",
-                        "--report-path",
-                        str(Path(tmpdir) / "report.md"),
-                    ]
-                )
+            for value in ("0", "-1"):
+                with self.subTest(flag=flag, value=value), TemporaryDirectory() as tmpdir:
+                    exit_code, output, run, _ = self._invoke_main(
+                        [
+                            "--news",
+                            flag,
+                            value,
+                            "--report-path",
+                            str(Path(tmpdir) / "report.md"),
+                        ]
+                    )
 
-                self.assertEqual(exit_code, 2)
-                run.assert_not_called()
-                self.assertIn("positive", output)
+                    self.assertEqual(exit_code, 2)
+                    run.assert_not_called()
+                    self.assertIn("positive", output)
+
+    def test_run_analysis_rejects_negative_news_limits_before_any_work(self):
+        for limits in (
+            {"news_lookback_days": -1, "news_max_items": 12},
+            {"news_lookback_days": 7, "news_max_items": -1},
+        ):
+            with (
+                self.subTest(limits=limits),
+                TemporaryDirectory() as tmpdir,
+                patch.object(naked_k_analysis, "load_ohlcv") as load,
+                patch.object(naked_k_news, "collect_news") as collect,
+                patch.object(naked_k_news_llm, "run_two_pass_deliberation") as deliberate,
+            ):
+                with self.assertRaisesRegex(ValueError, "positive"):
+                    naked_k_analysis.run_analysis(
+                        [("测试", "TEST")],
+                        Path(tmpdir) / "journal.jsonl",
+                        news_config=self._news_config(),
+                        **limits,
+                    )
+                load.assert_not_called()
+                collect.assert_not_called()
+                deliberate.assert_not_called()
 
     def test_main_news_json_uses_redacted_config_and_conditional_report_fields(self):
         report = self._integration_report()
@@ -904,6 +1044,9 @@ class NakedKAnalysisTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         load_news.assert_called_once_with(enabled=True, model="model-a")
         self.assertEqual(payload["news"]["auth_token"], "***")
+        self.assertNotIn("base_url", payload["news"])
+        self.assertEqual(payload["news"]["endpoint_origin"], "https://gateway.example")
+        self.assertNotIn("/anthropic", output)
         self.assertNotIn("fake-news-secret", output)
         self.assertEqual(payload["items"][0]["technical_conclusion"], {"action": "观望"})
         self.assertIn("news_analysis", payload["items"][0])
