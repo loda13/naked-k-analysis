@@ -5,16 +5,18 @@ from __future__ import annotations
 import base64
 import binascii
 import copy
+import hashlib
 import ipaddress
 import json
 import os
+import posixpath
 import re
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
-from urllib.parse import SplitResult, urlsplit
+from urllib.parse import SplitResult, unquote, urlsplit
 
 import requests
 
@@ -39,22 +41,28 @@ _NEWS_ITEM_FIELDS = (
 
 _AUTH_HEADER_CREDENTIAL_RE = re.compile(
     r"(?i)\b((?:proxy[_ -]?)?authorization)(\s*[:=]\s*)"
-    r"(Bearer|Basic)(\s+)([A-Za-z0-9._~+/=-]{8,})"
+    r"(Bearer|Basic)(\s+)([A-Za-z0-9._~+/=-]+)"
 )
 _STANDALONE_AUTH_CREDENTIAL_RE = re.compile(
-    r"(?i)\b(Bearer|Basic)(\s+)([A-Za-z0-9._~+/=-]{8,})"
+    r"(?i)\b(Bearer|Basic)(\s+)([A-Za-z0-9._~+/=-]{4,})"
+)
+_NAMED_CREDENTIAL_KEY_PATTERN = (
+    r"(?:api[_ -]?key|x[_ -]?api[_ -]?key|authorization|"
+    r"proxy[_ -]?authorization|auth(?:orization)?[_ -]?token|"
+    r"access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|"
+    r"access[_ -]?key(?:[_ -]?id)?|aws[_ -]?access[_ -]?key[_ -]?id|"
+    r"(?:aws[_ -]?)?session[_ -]?token|security[_ -]?token|id[_ -]?token|"
+    r"secret[_ -]?access[_ -]?key|aws[_ -]?secret[_ -]?access[_ -]?key|"
+    r"(?:aws[_ -]?)?secret[_ -]?key|private[_ -]?key|"
+    r"set[_ -]?cookie|cookie|token|secret|password|passwd)"
 )
 _QUOTED_NAMED_CREDENTIAL_RE = re.compile(
-    r"(?i)\b(api[_ -]?key|authorization|proxy[_ -]?authorization|"
-    r"auth(?:orization)?[_ -]?token|auth[_ -]?token|access[_ -]?token|"
-    r"refresh[_ -]?token|client[_ -]?secret|secret|password|passwd)"
-    r"(\s*[:=]\s*)([\"'])([^\"']{4,})([\"'])"
+    rf"(?i)\b({_NAMED_CREDENTIAL_KEY_PATTERN})"
+    r"([\"']?)(\s*[:=]\s*)([\"'])([^\"']+)([\"'])"
 )
 _UNQUOTED_NAMED_CREDENTIAL_RE = re.compile(
-    r"(?i)\b(api[_ -]?key|authorization|proxy[_ -]?authorization|"
-    r"auth(?:orization)?[_ -]?token|auth[_ -]?token|access[_ -]?token|"
-    r"refresh[_ -]?token|client[_ -]?secret|secret|password|passwd)"
-    r"(\s*[:=]\s*)([^\s,;\"'\]\}]{4,})"
+    rf"(?i)\b({_NAMED_CREDENTIAL_KEY_PATTERN})"
+    r"([\"']?)(\s*[:=]\s*)([^\s,;\"'\]\}]+)"
 )
 _PREFIXED_CREDENTIAL_RE = re.compile(
     r"(?i)\b(?:sk|token|key)-[A-Za-z0-9_-]{12,}\b"
@@ -71,6 +79,7 @@ _COMMON_CREDENTIAL_RE = re.compile(
 _JWT_CREDENTIAL_RE = re.compile(
     r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"
 )
+_PROVIDER_URL_RE = re.compile(r"(?i)https?://[^\s<>\"']+")
 _SENSITIVE_PROVIDER_KEYS = {
     "api_key",
     "apikey",
@@ -80,12 +89,24 @@ _SENSITIVE_PROVIDER_KEYS = {
     "auth_token",
     "authorization_token",
     "access_token",
+    "access_key",
+    "access_key_id",
+    "aws_access_key_id",
     "refresh_token",
+    "session_token",
+    "aws_session_token",
+    "security_token",
+    "id_token",
     "token",
     "password",
     "passwd",
     "secret",
     "client_secret",
+    "secret_access_key",
+    "aws_secret_access_key",
+    "secret_key",
+    "aws_secret_key",
+    "private_key",
     "cookie",
     "set_cookie",
 }
@@ -127,13 +148,34 @@ _INSTRUCTION_LIKE_PATTERNS = (
     re.compile(r"(?:视为|当作|作为).{0,16}(?:命令|指令)"),
     re.compile(r"(?:选择|建议|设为|改为).{0,24}(?:买入|小仓试错|观望|减仓|回避)"),
 )
-_ENGLISH_NEGATIONS = {"no", "not", "never", "without", "deny", "denies", "denied", "false"}
-_CHINESE_NEGATIONS = ("不", "未", "没有", "并无", "无", "不会", "否认", "虚假")
+_ENGLISH_NEGATIONS = {
+    "no", "not", "never", "cannot", "without", "deny", "denies", "denied", "denying",
+    "fail", "fails", "failed", "failing", "lack", "lacks", "lacked", "lacking",
+    "unable", "reject", "rejects", "rejected", "rejecting", "false",
+}
+_CHINESE_NEGATIONS = (
+    "不", "未", "没有", "并无", "无", "不会", "否认", "虚假", "缺乏", "未能", "拒绝",
+)
+_ENGLISH_UNCERTAINTY = {
+    "may", "might", "could", "possible", "possibly", "reportedly", "allegedly",
+    "seek", "seeks", "seeking", "expect", "expects", "expected", "plan", "plans",
+    "planned", "likely", "unlikely", "uncertain", "uncertainty", "doubtful",
+    "potential", "potentially", "pending", "conditional", "rumor", "rumour",
+    "rumored", "rumoured",
+}
+_CHINESE_UNCERTAINTY = (
+    "可能", "或将", "拟", "计划", "寻求", "据称", "传闻", "预计", "有望",
+)
 _SEMANTIC_STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has",
     "in", "is", "it", "of", "on", "or", "that", "the", "to", "was", "were",
     "will", "with",
 }
+_CLAUSE_BOUNDARY_RE = re.compile(
+    r"[.!?;。！？；\n]+|\b(?:but|however|nevertheless|yet)\b|"
+    r"(?:但是|但|然而|不过)",
+    flags=re.IGNORECASE,
+)
 
 FORBIDDEN_MODEL_PRICE_KEYS = {
     "entry",
@@ -217,6 +259,15 @@ class NewsResponseError(RuntimeError):
 
 class NewsValidationError(ValueError):
     """A model response did not match the required news schema."""
+
+
+class NewsInstructionQuarantineError(NewsValidationError):
+    """A model response contained instruction-like text that must not be reused."""
+
+    def __init__(self, *, count: int, evidence_ids: list[str]):
+        self.count = max(1, int(count))
+        self.evidence_ids = tuple(evidence_ids)
+        super().__init__("Round-one model output was quarantined")
 
 
 def first_news_env(env: dict[str, str], *names: str, default: str = "") -> str:
@@ -366,9 +417,71 @@ def _endpoint_origin(base_url: str) -> str:
     return f"{parsed.scheme.lower()}://{host}"
 
 
+def _canonical_url_identity(value: str) -> tuple[str, str, int, str] | None:
+    try:
+        parsed = urlsplit(value)
+        scheme = parsed.scheme.casefold()
+        if scheme not in {"http", "https"} or not parsed.hostname:
+            return None
+        port = parsed.port
+    except (TypeError, ValueError):
+        return None
+    effective_port = port if port is not None else (443 if scheme == "https" else 80)
+    decoded_path = unquote(parsed.path or "/")
+    normalized_path = posixpath.normpath(decoded_path)
+    if not normalized_path.startswith("/"):
+        normalized_path = f"/{normalized_path}"
+    if normalized_path != "/":
+        normalized_path = normalized_path.rstrip("/")
+    return (
+        scheme,
+        parsed.hostname.rstrip(".").casefold(),
+        effective_port,
+        normalized_path,
+    )
+
+
+def _sensitive_url_identities(config: AnthropicNewsConfig) -> set[tuple[str, str, int, str]]:
+    if not config.base_url:
+        return set()
+    normalized = config.base_url.rstrip("/")
+    values = {
+        config.base_url,
+        normalized,
+        f"{normalized}/v1/messages",
+        f"{normalized}/v1/models",
+    }
+    return {
+        identity
+        for value in values
+        if (identity := _canonical_url_identity(value)) is not None
+    }
+
+
+def _redact_canonical_sensitive_urls(
+    text: str,
+    config: AnthropicNewsConfig,
+) -> str:
+    sensitive_identities = _sensitive_url_identities(config)
+    if not sensitive_identities:
+        return text
+
+    def replace(match: re.Match[str]) -> str:
+        candidate = match.group(0)
+        suffix = ""
+        while candidate and candidate[-1] in ".,;!?)]}":
+            suffix = candidate[-1] + suffix
+            candidate = candidate[:-1]
+        if _canonical_url_identity(candidate) in sensitive_identities:
+            return f"***{suffix}"
+        return match.group(0)
+
+    return _PROVIDER_URL_RE.sub(replace, text)
+
+
 def _sanitize_provider_string(value: str, config: AnthropicNewsConfig) -> str:
     text = value
-    base_path = ""
+    base_paths: set[str] = set()
     sensitive_values = {
         config.auth_token,
         config.base_url,
@@ -380,16 +493,22 @@ def _sanitize_provider_string(value: str, config: AnthropicNewsConfig) -> str:
             {f"{normalized}/v1/messages", f"{normalized}/v1/models"}
         )
         try:
-            base_path = urlsplit(config.base_url).path.rstrip("/")
+            raw_base_path = urlsplit(config.base_url).path.rstrip("/")
+            if raw_base_path and raw_base_path != "/":
+                base_paths.add(raw_base_path)
+                decoded_path = posixpath.normpath(unquote(raw_base_path)).rstrip("/")
+                if decoded_path and decoded_path != "/":
+                    base_paths.add(decoded_path)
         except ValueError:
-            base_path = ""
+            base_paths = set()
     for sensitive in sorted(
         (item for item in sensitive_values if item),
         key=len,
         reverse=True,
     ):
         text = text.replace(sensitive, "***")
-    if base_path and base_path != "/":
+    text = _redact_canonical_sensitive_urls(text, config)
+    for base_path in sorted(base_paths, key=len, reverse=True):
         text = re.sub(
             rf"(?<![A-Za-z0-9_]){re.escape(base_path)}(?![A-Za-z0-9_])",
             "***",
@@ -408,15 +527,18 @@ def _sanitize_provider_string(value: str, config: AnthropicNewsConfig) -> str:
     )
     text = _QUOTED_NAMED_CREDENTIAL_RE.sub(
         lambda match: (
-            f"{match.group(1)}{match.group(2)}{match.group(3)}***{match.group(5)}"
+            f"{match.group(1)}{match.group(2)}{match.group(3)}"
+            f"{match.group(4)}***{match.group(6)}"
         ),
         text,
     )
     text = _UNQUOTED_NAMED_CREDENTIAL_RE.sub(
-        lambda match: f"{match.group(1)}{match.group(2)}***",
+        lambda match: (
+            f"{match.group(1)}{match.group(2)}{match.group(3)}***"
+        ),
         text,
     )
-    text = _PREFIXED_CREDENTIAL_RE.sub("***", text)
+    text = _PREFIXED_CREDENTIAL_RE.sub(_redact_prefixed_credential, text)
     text = _COMMON_CREDENTIAL_RE.sub("***", text)
     text = _JWT_CREDENTIAL_RE.sub("***", text)
     return text
@@ -424,15 +546,27 @@ def _sanitize_provider_string(value: str, config: AnthropicNewsConfig) -> str:
 
 def _redact_standalone_auth_credential(match: re.Match[str]) -> str:
     credential = match.group(3)
-    looks_credential_like = (
-        _is_basic_auth_credential(match.group(1), credential)
-        or len(credential) >= 20
-        or any(character.isdigit() for character in credential)
-        or any(character in "._~+/=-" for character in credential)
-    )
+    scheme = match.group(1).casefold()
+    looks_credential_like = _is_basic_auth_credential(scheme, credential)
+    if scheme == "bearer" and len(credential) >= 20:
+        looks_credential_like = (
+            any(character.isalpha() for character in credential)
+            and any(character.isdigit() for character in credential)
+            and any(character in "._~+/=-" for character in credential)
+        )
     if not looks_credential_like:
         return match.group(0)
     return f"{match.group(1)}{match.group(2)}***"
+
+
+def _redact_prefixed_credential(match: re.Match[str]) -> str:
+    value = match.group(0)
+    prefix, _, suffix = value.partition("-")
+    if prefix.casefold() == "sk":
+        return "***"
+    if len(suffix) >= 16 and any(character.isdigit() for character in suffix):
+        return "***"
+    return value
 
 
 def _is_basic_auth_credential(scheme: str, credential: str) -> bool:
@@ -447,7 +581,9 @@ def _is_basic_auth_credential(scheme: str, credential: str) -> bool:
 
 
 def _normalized_provider_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
+    separated = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", value)
+    separated = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", separated)
+    return re.sub(r"[^a-z0-9]+", "_", separated.casefold()).strip("_")
 
 
 def sanitize_provider_value(value: Any, config: AnthropicNewsConfig) -> Any:
@@ -785,6 +921,27 @@ def _validate_round1(payload: Any, items: list[dict[str, Any]]) -> dict[str, Any
     if data_quality == "sufficient" and not evidence_ids:
         raise NewsValidationError("sufficient round one data requires evidence_ids")
 
+    instruction_like_outputs = [
+        value
+        for value in (
+            summary,
+            *positive_factors,
+            *negative_factors,
+            *uncertainties,
+        )
+        if is_instruction_like_evidence(value)
+    ]
+    if instruction_like_outputs:
+        safe_evidence_ids = [
+            evidence_id
+            for evidence_id in evidence_ids
+            if is_safe_quarantine_evidence_id(evidence_id)
+        ]
+        raise NewsInstructionQuarantineError(
+            count=len(instruction_like_outputs),
+            evidence_ids=list(dict.fromkeys(safe_evidence_ids)),
+        )
+
     return {
         "status": status,
         "direction": direction,
@@ -847,6 +1004,13 @@ def _semantic_units(value: str) -> set[str]:
 
 
 def _has_negation(value: str) -> bool:
+    raw_normalized = unicodedata.normalize("NFKC", value).casefold()
+    if re.search(
+        r"\b(?:isn|aren|wasn|weren|don|doesn|didn|hasn|haven|hadn|"
+        r"can|couldn|won|wouldn|shouldn|mustn)[\u2019']t\b",
+        raw_normalized,
+    ):
+        return True
     normalized = _normalized_evidence_text(value)
     english_words = set(re.findall(r"[a-z]+", normalized))
     return bool(english_words & _ENGLISH_NEGATIONS) or any(
@@ -854,13 +1018,254 @@ def _has_negation(value: str) -> bool:
     )
 
 
-def is_instruction_like_evidence(value: Any) -> bool:
-    if not isinstance(value, str) or not value.strip():
-        return False
-    normalized = unicodedata.normalize("NFKC", value).casefold()
+def _is_interrogative(value: str) -> bool:
+    raw_normalized = unicodedata.normalize("NFKC", value)
+    folded = raw_normalized.casefold().strip()
+    if "?" in folded:
+        return True
+    if re.match(
+        r"^(?:am|are|is|was|were|do|does|did|has|have|had|can|could|"
+        r"will|would|shall|should|must|who|what|when|where|why|how|which)\b",
+        folded,
+    ):
+        return True
+    if re.search(r"\bwhether\b", folded):
+        return True
+    if any(marker in raw_normalized for marker in ("是否", "能否", "可否", "会否", "是不是", "有没有")):
+        return True
+    return bool(re.search(r"(?:吗|么|呢)\s*[。.!！？?]*$", raw_normalized))
+
+
+def _has_uncertainty(value: str) -> bool:
+    if _is_interrogative(value):
+        return True
+    normalized = _normalized_evidence_text(value)
+    english_words = set(re.findall(r"[a-z]+", normalized))
+    return bool(english_words & _ENGLISH_UNCERTAINTY) or any(
+        marker in normalized for marker in _CHINESE_UNCERTAINTY
+    )
+
+
+def _claim_source_clauses(excerpt: str, claim: str) -> list[str]:
+    clauses: list[str] = []
+    start = 0
+    while True:
+        claim_start = excerpt.find(claim, start)
+        if claim_start < 0:
+            break
+        claim_end = claim_start + len(claim)
+        left_text = excerpt[:claim_start]
+        right_text = excerpt[claim_end:]
+        left_boundaries = [
+            match.end()
+            for match in _CLAUSE_BOUNDARY_RE.finditer(left_text)
+        ]
+        right_boundary = _CLAUSE_BOUNDARY_RE.search(right_text)
+        clause_start = left_boundaries[-1] if left_boundaries else 0
+        clause_end = claim_end + (right_boundary.start() if right_boundary else len(right_text))
+        clauses.append(excerpt[clause_start:clause_end].strip())
+        start = claim_end
+    return clauses
+
+
+def _complete_source_clauses(value: str) -> list[str]:
+    clauses: list[str] = []
+    start = 0
+    for boundary in _CLAUSE_BOUNDARY_RE.finditer(value):
+        boundary_text = boundary.group(0)
+        clause_end = (
+            boundary.end()
+            if re.fullmatch(r"[.!?;。！？；]+", boundary_text)
+            else boundary.start()
+        )
+        clause = value[start:clause_end].strip()
+        if clause:
+            clauses.append(clause)
+        start = boundary.end()
+    tail = value[start:].strip()
+    if tail:
+        clauses.append(tail)
+    return clauses
+
+
+def material_proposition_fingerprint(value: str) -> str:
+    """Return a deterministic fingerprint for one normalized factual proposition."""
+    normalized = _normalized_evidence_text(value)
+    if not normalized or len(_semantic_units(value)) < 3:
+        return ""
+    polarity = "negative" if _has_negation(value) else "positive"
+    payload = f"{polarity}\n{normalized}".encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _split_identifier_word_boundaries(value: str) -> str:
+    separated = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", value)
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", separated)
+
+
+def _strip_invisible_characters(value: str) -> str:
+    # Zero-width spaces/joiners, the BOM, soft hyphen, bidi controls, and other
+    # Unicode "format" (Cf) code points are invisible but split instruction
+    # keywords so NFKC alone can't rejoin them. Drop them, plus any other
+    # non-whitespace control characters, before canonicalizing.
+    return "".join(
+        char
+        for char in value
+        if not (
+            unicodedata.category(char) == "Cf"
+            or (unicodedata.category(char) == "Cc" and not char.isspace())
+        )
+    )
+
+
+# Cyrillic and Greek letters that render identically (or near-identically) to
+# ASCII Latin letters. NFKC/NFKD leave these untouched, so an attacker can
+# spell "іgnore" / "sуstem" / "ignΟre" with look-alikes to slip an instruction
+# past keyword matching. Fold them to their Latin skeleton before matching.
+# Fold to LOWERCASE Latin: a look-alike capital sitting inside a word (e.g.
+# "ignΟre") must not fabricate a camelCase boundary in the later word-splitter,
+# and instruction matching is case-insensitive anyway.
+_CONFUSABLE_FOLD = str.maketrans({
+    # Cyrillic lowercase
+    "а": "a", "в": "b", "с": "c", "ԁ": "d", "е": "e", "һ": "h", "і": "i",
+    "ј": "j", "к": "k", "м": "m", "н": "h", "о": "o", "р": "p", "ԛ": "q",
+    "ѕ": "s", "т": "t", "у": "y", "ԝ": "w", "х": "x", "ё": "e",
+    # Cyrillic uppercase
+    "А": "a", "В": "b", "С": "c", "Е": "e", "Н": "h", "І": "i", "Ј": "j",
+    "К": "k", "М": "m", "О": "o", "Р": "p", "Ѕ": "s", "Т": "t", "У": "y",
+    "Х": "x",
+    # Greek lowercase
+    "α": "a", "β": "b", "ε": "e", "ι": "i", "κ": "k", "μ": "m", "ν": "v",
+    "ο": "o", "ρ": "p", "τ": "t", "υ": "u", "χ": "x", "ζ": "z", "η": "n",
+    # Greek uppercase
+    "Α": "a", "Β": "b", "Ε": "e", "Ζ": "z", "Η": "h", "Ι": "i", "Κ": "k",
+    "Μ": "m", "Ν": "n", "Ο": "o", "Ρ": "p", "Τ": "t", "Υ": "y", "Χ": "x",
+})
+
+
+def _fold_confusables(value: str) -> str:
+    # NFKD splits accented/combined letters into base + combining marks; drop
+    # the marks (category "Mn") so "ignóre" folds to "ignore". Then map the
+    # remaining Cyrillic/Greek look-alikes onto their Latin skeleton.
+    decomposed = unicodedata.normalize("NFKD", value)
+    without_marks = "".join(
+        char for char in decomposed if unicodedata.category(char) != "Mn"
+    )
+    return without_marks.translate(_CONFUSABLE_FOLD)
+
+
+def _canonical_instruction_text(value: str) -> str:
+    canonical = _fold_confusables(
+        unicodedata.normalize("NFKC", _strip_invisible_characters(value))
+    )
+    for _ in range(4):
+        # Re-strip and re-fold after each decode: percent-encoding can smuggle
+        # invisible code points (e.g. %E2%80%8B -> zero-width space) or
+        # look-alike letters that only appear once unquoted.
+        decoded = _fold_confusables(
+            unicodedata.normalize(
+                "NFKC", _strip_invisible_characters(unquote(canonical))
+            )
+        )
+        if decoded == canonical:
+            break
+        canonical = decoded
+    canonical = _split_identifier_word_boundaries(canonical)
+    canonical = re.sub(r"[-_/\\?:=&.%+]+", " ", canonical)
+    return " ".join(canonical.split()).casefold()
+
+
+# Unambiguous leetspeak digit substitutions. "2", "6", "8", "9" are excluded
+# on purpose: they appear in legitimate finance tokens (B2B, H2O, Q2, G8) far
+# more often than as letter stand-ins.
+_LEET_FOLD = str.maketrans({"0": "o", "1": "l", "3": "e", "4": "a", "5": "s", "7": "t"})
+
+
+def _is_cjk(char: str) -> bool:
+    codepoint = ord(char)
+    return (
+        0x4E00 <= codepoint <= 0x9FFF      # CJK unified ideographs
+        or 0x3400 <= codepoint <= 0x4DBF   # CJK extension A
+        or 0xF900 <= codepoint <= 0xFAFF   # CJK compatibility ideographs
+        or 0x3040 <= codepoint <= 0x30FF   # Hiragana + Katakana
+        or 0xAC00 <= codepoint <= 0xD7A3   # Hangul syllables
+    )
+
+
+def _has_mixed_script_obfuscation(text: str) -> bool:
+    # The confusable table can never be exhaustive. After folding, any token
+    # that still mixes Latin letters with non-Latin, non-CJK letters is a
+    # look-alike the table missed (Armenian, rare Cyrillic, etc.). Treat the
+    # whole source as suspect and fail closed.
+    for token in re.findall(r"[^\s]+", text):
+        has_latin = False
+        has_foreign = False
+        for char in token:
+            if not char.isalpha():
+                continue
+            if _is_cjk(char):
+                continue
+            if unicodedata.name(char, "").startswith("LATIN"):
+                has_latin = True
+            else:
+                has_foreign = True
+        if has_latin and has_foreign:
+            return True
+    return False
+
+
+def _matches_instruction_patterns(normalized: str) -> bool:
     if any(action in normalized for action in _MODEL_ACTIONS):
         return True
     return any(pattern.search(normalized) for pattern in _INSTRUCTION_LIKE_PATTERNS)
+
+
+def is_instruction_like_evidence(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    normalized = _canonical_instruction_text(value)
+    if _matches_instruction_patterns(normalized):
+        return True
+    # Second pass: fold leetspeak digits back to letters ("ign0re" -> "ignore")
+    # and re-check, so digit substitution can't hide a keyword.
+    leet_folded = normalized.translate(_LEET_FOLD)
+    if leet_folded != normalized and _matches_instruction_patterns(leet_folded):
+        return True
+    # Structural catch-all for look-alikes outside the confusable table.
+    return _has_mixed_script_obfuscation(normalized)
+
+
+def is_safe_quarantine_evidence_id(value: Any) -> bool:
+    """Return whether an evidence ID is safe to retain in quarantine metadata."""
+    return bool(
+        isinstance(value, str)
+        and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", value)
+        and not is_instruction_like_evidence(value)
+    )
+
+
+def news_item_contains_instruction(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+
+    def serialized_strings(value: Any):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for key, nested in value.items():
+                if isinstance(key, str):
+                    yield key
+                yield from serialized_strings(nested)
+        elif isinstance(value, (list, tuple)):
+            for nested in value:
+                yield from serialized_strings(nested)
+
+    for field in _NEWS_ITEM_FIELDS:
+        value = item.get(field)
+        for serialized in serialized_strings(value):
+            if is_instruction_like_evidence(serialized):
+                return True
+    return False
 
 
 def _excerpt_is_source_bound(excerpt: str, source: dict[str, Any]) -> bool:
@@ -872,6 +1277,12 @@ def _excerpt_is_source_bound(excerpt: str, source: dict[str, Any]) -> bool:
         if (
             isinstance(source_text, str)
             and excerpt in source_text
+            and any(
+                _normalized_evidence_text(excerpt)
+                == _normalized_evidence_text(source_clause)
+                and not _is_interrogative(source_clause)
+                for source_clause in _complete_source_clauses(source_text)
+            )
         ):
             return True
     return False
@@ -880,14 +1291,58 @@ def _excerpt_is_source_bound(excerpt: str, source: dict[str, Any]) -> bool:
 def _claim_is_supported(claim: str, excerpt: str) -> bool:
     if not claim or claim not in excerpt:
         return False
+    if _is_interrogative(excerpt):
+        return False
     claim_units = _semantic_units(claim)
     excerpt_units = _semantic_units(excerpt)
-    if not claim_units or not excerpt_units:
+    if len(claim_units) < 3 or not excerpt_units:
         return False
-    if _has_negation(claim) != _has_negation(excerpt):
+    source_clauses = _claim_source_clauses(excerpt, claim)
+    if not source_clauses or not all(
+        _normalized_evidence_text(claim) == _normalized_evidence_text(clause)
+        and
+        _has_negation(claim) == _has_negation(clause)
+        and _has_uncertainty(claim) == _has_uncertainty(clause)
+        for clause in source_clauses
+    ):
         return False
     supported = len(claim_units & excerpt_units) / len(claim_units)
     return supported == 1.0
+
+
+def _partition_instruction_like_news(
+    items: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    active_items: list[dict[str, Any]] = []
+    quarantined_ids: list[str] = []
+    quarantined_count = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        instruction_like = news_item_contains_instruction(item)
+        if not instruction_like:
+            active_items.append(copy.deepcopy(item))
+            continue
+        quarantined_count += 1
+        evidence_id = item.get("id")
+        if is_safe_quarantine_evidence_id(evidence_id):
+            quarantined_ids.append(evidence_id)
+    return active_items, {
+        "status": "quarantined" if quarantined_count else "clear",
+        "count": quarantined_count,
+        "evidence_ids": list(dict.fromkeys(quarantined_ids)),
+    }
+
+
+def _prompt_news_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            key: copy.deepcopy(item.get(key))
+            for key in _NEWS_ITEM_FIELDS
+        }
+        for item in items
+        if isinstance(item, dict)
+    ]
 
 
 def validate_evidence_claims(
@@ -1015,13 +1470,14 @@ def assess_news_round1(
     config: AnthropicNewsConfig,
     post: PostCallable | None = None,
 ) -> dict[str, Any]:
+    safe_items, _ = _partition_instruction_like_news(items)
+    if not safe_items:
+        raise NewsValidationError("no safe news items remain after quarantine")
+    prompt_items = _prompt_news_items(safe_items)
     user_payload = {
         "company": {"name": name, "ticker": ticker},
         "as_of": as_of,
-        "news": [
-            {key: item.get(key) for key in _NEWS_ITEM_FIELDS}
-            for item in items
-        ],
+        "news": prompt_items,
     }
     response = request_anthropic_json(
         system_prompt=_ROUND1_SYSTEM_PROMPT,
@@ -1029,7 +1485,7 @@ def assess_news_round1(
         config=config,
         post=post,
     )
-    return _validate_round1(response["parsed"], items)
+    return _validate_round1(response["parsed"], prompt_items)
 
 
 def deliberate_round2(
@@ -1041,10 +1497,14 @@ def deliberate_round2(
     config: AnthropicNewsConfig,
     post: PostCallable | None = None,
 ) -> dict[str, Any]:
-    validated_round1 = _validate_round1(round1, items)
+    safe_items, _ = _partition_instruction_like_news(items)
+    if not safe_items:
+        raise NewsValidationError("no safe news items remain after quarantine")
+    prompt_items = _prompt_news_items(safe_items)
+    validated_round1 = _validate_round1(round1, prompt_items)
     user_payload = {
         "technical_snapshot": copy.deepcopy(technical_snapshot),
-        "raw_news": copy.deepcopy(items),
+        "raw_news": copy.deepcopy(prompt_items),
         "round1_news_assessment": copy.deepcopy(validated_round1),
         "risk_context": copy.deepcopy(risk_context),
     }
@@ -1057,7 +1517,7 @@ def deliberate_round2(
     return _validate_round2(
         response["parsed"],
         technical_snapshot=technical_snapshot,
-        items=items,
+        items=prompt_items,
         round1=validated_round1,
     )
 
@@ -1086,12 +1546,16 @@ def run_two_pass_deliberation(
     items = safe_collection.get("items")
     if not isinstance(items, list):
         items = []
+    items, quarantine = _partition_instruction_like_news(items)
+    items = _prompt_news_items(items)
+    safe_collection["items"] = copy.deepcopy(items)
     news_analysis: dict[str, Any] = {
         "status": "ok",
         "collection": copy.deepcopy(safe_collection),
         "round1": {},
         "provider": _sanitize_provider_string(config.provider, config),
         "model": printable_model_id(config.model, config),
+        "quarantine": quarantine,
     }
     result: dict[str, Any] = {
         "status": "technical_fallback",
@@ -1100,10 +1564,14 @@ def run_two_pass_deliberation(
         "fallback_reason": "",
     }
     if not items:
-        news_analysis["status"] = (
-            "unavailable" if safe_collection.get("status") == "unavailable" else "insufficient"
-        )
-        result["fallback_reason"] = "No collected news items"
+        if quarantine["count"]:
+            news_analysis["status"] = "quarantined"
+            result["fallback_reason"] = "All collected news items were quarantined"
+        else:
+            news_analysis["status"] = (
+                "unavailable" if safe_collection.get("status") == "unavailable" else "insufficient"
+            )
+            result["fallback_reason"] = "No collected news items"
         return result
 
     try:
@@ -1119,6 +1587,17 @@ def run_two_pass_deliberation(
             config=config,
             post=post,
         )
+    except NewsInstructionQuarantineError as exc:
+        quarantine["status"] = "quarantined"
+        quarantine["count"] = int(quarantine["count"]) + exc.count
+        quarantine["evidence_ids"] = list(dict.fromkeys(
+            [*quarantine["evidence_ids"], *exc.evidence_ids]
+        ))
+        news_analysis["status"] = "quarantined"
+        error = _safe_stage_error(exc, config)
+        news_analysis["round1"] = error
+        result["fallback_reason"] = f'{error["error_type"]}: {error["message"]}'
+        return result
     except Exception as exc:
         error = _safe_stage_error(exc, config)
         news_analysis["status"] = "error"
