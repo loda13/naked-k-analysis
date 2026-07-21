@@ -96,21 +96,21 @@ class NakedKAnalysisTests(unittest.TestCase):
             "items": [
                 {
                     "id": "news-01",
-                    "title": "新增订单\n落地",
+                    "title": "公司获得重大订单\n落地",
                     "publisher": "测试媒体",
                     "published_at": "2026-07-19T03:00:00+00:00",
                     "url": "https://news.example/item-1",
-                    "summary": "订单已公开披露",
+                    "summary": "公司获得重大订单",
                     "source_provider": "yahoo",
                     "freshness": "primary",
                 },
                 {
                     "id": "news-02",
-                    "title": "公司确认上调年度指引",
+                    "title": "公司获得重大订单",
                     "publisher": "独立媒体",
                     "published_at": "2026-07-19T04:00:00+00:00",
                     "url": "https://independent.example/item-2",
-                    "summary": "管理层在公告中确认最新指引",
+                    "summary": "公司获得重大订单",
                     "source_provider": "google_news_rss",
                     "freshness": "primary",
                 }
@@ -149,14 +149,14 @@ class NakedKAnalysisTests(unittest.TestCase):
             "evidence_ids": ["news-01", "news-02"],
             "evidence_claims": [
                 {
-                    "claim": "订单已公开披露",
+                    "claim": "公司获得重大订单",
                     "evidence_id": "news-01",
-                    "supporting_excerpt": "订单已公开披露",
+                    "supporting_excerpt": "公司获得重大订单",
                 },
                 {
-                    "claim": "公司确认上调年度指引",
+                    "claim": "公司获得重大订单",
                     "evidence_id": "news-02",
-                    "supporting_excerpt": "公司确认上调年度指引",
+                    "supporting_excerpt": "公司获得重大订单",
                 },
             ],
             "execution_note": "由裸K规则生成执行价格",
@@ -476,10 +476,16 @@ class NakedKAnalysisTests(unittest.TestCase):
 
     def test_successful_provider_echoes_are_redacted_from_every_persisted_output(self):
         token = "test-provider-secret-token"
-        base_url = "https://gateway.example/private/tenant"
+        base_url = "https://Gateway.Example:443/private/%74enant/"
+        equivalent_base_urls = (
+            "HTTPS://gateway.example/private/tenant",
+            "https://GATEWAY.EXAMPLE:443/private/x/../tenant/",
+        )
         credential = "token-live-abcdefghijklmnopqrstuvwxyz123456"
         quoted_key = "opaque-api-key-value-12345"
         quoted_password = "opaque-password-value-12345"
+        camel_access = "persisted-short-access-id"
+        camel_secret = "persisted-short-secret"
         basic = "QWxhZGRpbjpvcGVuIHNlc2FtZQ=="
         github = "ghp_EXAMPLEfixture000000000000"
         slack = "xoxb-EXAMPLE00000-EXAMPLE00000-EXAMPLEfixture"
@@ -489,17 +495,32 @@ class NakedKAnalysisTests(unittest.TestCase):
             enabled=True,
             base_url=base_url,
             auth_token=token,
-            model=f"chat-{token}-/private/tenant",
+            model=(
+                f"chat-{token}-{equivalent_base_urls[0]} "
+                f"accessKeyId={camel_access} secretAccessKey={camel_secret}"
+            ),
         )
         round1 = self._round1(
             summary=(
                 f"echo {token} {base_url} Bearer {credential}; "
                 f"api_key: \"{quoted_key}\"; Authorization: Basic {basic}; "
-                f"{github}; {slack}; {aws}; {google}"
+                f"Authorization: Bearer abc; {equivalent_base_urls[0]}; "
+                f"{github}; {slack}; {aws}; {google}; "
+                f"{{'accessKeyId':'{camel_access}',"
+                f"'secretAccessKey':'{camel_secret}'}}"
             ),
             positive_factors=[f"password='{quoted_password}'"],
-            negative_factors=["the password policy changed"],
-            uncertainties=["gateway path /private/tenant"],
+            negative_factors=[
+                "the password policy changed",
+                "token-based-authentication",
+                "key-performance-indicator",
+                "Basic earnings-per-share",
+                "Bearer 10-year-bonds",
+            ],
+            uncertainties=[
+                "Proxy-Authorization: Basic dTpw",
+                equivalent_base_urls[1],
+            ],
         )
         round2 = self._round2(
             conflict_analysis=f"echo {token} {base_url} {github} {slack}",
@@ -559,9 +580,21 @@ class NakedKAnalysisTests(unittest.TestCase):
             slack,
             aws,
             google,
+            camel_access,
+            camel_secret,
+            "Bearer abc",
+            "Basic dTpw",
+            *equivalent_base_urls,
         ):
             self.assertNotIn(secret, persisted)
         self.assertIn("the password policy changed", persisted)
+        for ordinary in (
+            "token-based-authentication",
+            "key-performance-indicator",
+            "Basic earnings-per-share",
+            "Bearer 10-year-bonds",
+        ):
+            self.assertIn(ordinary, persisted)
         self.assertNotIn("/private/tenant", reports[0].news_analysis["model"])
 
     def test_news_two_pass_failures_always_keep_the_technical_plan(self):
@@ -1401,7 +1434,7 @@ class NakedKAnalysisTests(unittest.TestCase):
         self.assertIn("模型动作：买入", markdown)
         self.assertIn("风险保护后最终动作：观望", markdown)
         self.assertIn("覆盖原因：组合风险保护", markdown)
-        self.assertIn("1. [新增订单 落地](https://news.example/item-1) — 测试媒体；2026-07-19", markdown)
+        self.assertIn("1. [公司获得重大订单 落地](https://news.example/item-1) — 测试媒体；2026-07-19", markdown)
         today = markdown.split("## 今日结论", 1)[1]
         self.assertIn("最值得试错：暂无", today)
         self.assertIn("继续观察：公司-TEST", today)
@@ -1520,6 +1553,30 @@ class NakedKAnalysisTests(unittest.TestCase):
         self.assertIn("证据：无", markdown)
         self.assertIn("风险保护后最终动作：观望", markdown)
         self.assertNotIn("news-99", markdown)
+
+    def test_korean_market_trims_unclosed_daily_bar_in_seoul_timezone(self):
+        frame = pd.DataFrame(
+            {
+                "Open": [210000.0, 220000.0],
+                "High": [215000.0, 225000.0],
+                "Low": [205000.0, 218000.0],
+                "Close": [212000.0, 219000.0],
+                "Volume": [1000, 1200],
+            },
+            index=pd.to_datetime(["2026-07-08", "2026-07-09"]),
+        )
+
+        market = naked_k_analysis.classify_market("000660.KS")
+        trimmed = naked_k_analysis.trim_to_closed_bars(
+            frame,
+            market=market,
+            interval="1d",
+            now=pd.Timestamp("2026-07-09 11:30:00", tz=ZoneInfo("Asia/Seoul")),
+        )
+
+        self.assertEqual(market, "kr")
+        self.assertEqual(naked_k_analysis.market_timezone(market), ZoneInfo("Asia/Seoul"))
+        self.assertEqual(trimmed.index[-1].strftime("%Y-%m-%d"), "2026-07-08")
 
     def test_build_breakout_trigger_uses_signal_bar_extreme_with_buffer(self):
         bar = pd.Series({"High": 100.0, "Low": 95.0})

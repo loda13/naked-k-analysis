@@ -6,6 +6,9 @@ import naked_k_portfolio
 
 
 class NakedKPortfolioTests(unittest.TestCase):
+    def test_classifies_korean_exchange_ticker_as_kr_market(self):
+        self.assertEqual(naked_k_portfolio.classify_market("000660.KS"), "kr")
+
     def test_evaluates_total_direction_market_and_account_risk_exposure(self):
         config = naked_k_config.PortfolioConfig(
             max_total_gross_pct=45.0,

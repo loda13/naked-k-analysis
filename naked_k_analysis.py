@@ -81,11 +81,17 @@ def classify_market(ticker: str) -> str:
         return "hk"
     if symbol.endswith((".SS", ".SZ")):
         return "cn"
+    if symbol.endswith((".KS", ".KQ")):
+        return "kr"
     return "us"
 
 
 def market_timezone(market: str) -> ZoneInfo:
-    return ZoneInfo("America/New_York") if market == "us" else ZoneInfo("Asia/Shanghai")
+    if market == "us":
+        return ZoneInfo("America/New_York")
+    if market == "kr":
+        return ZoneInfo("Asia/Seoul")
+    return ZoneInfo("Asia/Shanghai")
 
 
 def market_close_hour(market: str) -> int:

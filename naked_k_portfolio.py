@@ -11,6 +11,8 @@ def classify_market(ticker: str) -> str:
         return "hk"
     if symbol.endswith((".SS", ".SZ", ".BJ")):
         return "cn"
+    if symbol.endswith((".KS", ".KQ")):
+        return "kr"
     if symbol.startswith(("BTC", "ETH", "SOL")) or "-" in symbol:
         return "crypto"
     return "us"

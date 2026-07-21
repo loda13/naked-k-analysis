@@ -40,6 +40,8 @@ def normalize_provider_ticker(ticker):
         return f"sz{symbol[:-3]}"
     if symbol.endswith(".BJ"):
         return f"bj{symbol[:-3]}"
+    if symbol.endswith((".KS", ".KQ")):
+        return f"kr{symbol[:-3].zfill(6)}"
     return f"us{symbol}"
 
 

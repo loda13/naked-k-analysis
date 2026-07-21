@@ -20,6 +20,7 @@ class WestockWrapperTests(unittest.TestCase):
         self.assertEqual(westock_wrapper.convert_ticker("0700.HK"), "hk00700")
         self.assertEqual(westock_wrapper.convert_ticker("600703.SS"), "sh600703")
         self.assertEqual(westock_wrapper.convert_ticker("001391.SZ"), "sz001391")
+        self.assertEqual(westock_wrapper.convert_ticker("000660.KS"), "kr000660")
         self.assertEqual(westock_wrapper.convert_ticker("NVDA"), "usNVDA")
 
     def test_uses_env_script_path(self):

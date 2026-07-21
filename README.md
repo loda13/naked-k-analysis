@@ -2,7 +2,7 @@
 
 裸 K 分析 CLI。项目只专注于 K 线本身：实体、影线、收盘位置、前高/前低、结构性突破/假突破、孕线、吞没、Pin Bar、十字星、确认 K、止损触发和复盘日志。
 
-当前版本：[v3.0.0](https://github.com/loda13/naked-k-analysis/releases/tag/v3.0.0)
+当前版本：[v3.1.0](https://github.com/loda13/naked-k-analysis/releases/tag/v3.1.0)
 
 ## 核心能力
 
@@ -30,6 +30,8 @@
 - **复盘日志**：每次运行写入 `reports/naked_k_journal.jsonl`，下一次会复盘上一根 K 的触发和失效情况。
 - **结构化运行审计**：每次 CLI 运行写入 JSONL 审计事件，记录数据加载、计划生成、组合风险、运行完成和失败原因。
 - **多数据源兜底**：优先 `westock-data`，再走腾讯 K 线、Yahoo chart JSON，最后用 yfinance。
+- **多市场支持**：港股 `.HK`、A 股 `.SS`/`.SZ`、美股和韩股 `.KS`/`.KQ`（KOSPI / KOSDAQ，Asia/Seoul 时区）。
+- **消息面两轮斟酌（可选）**：第一轮独立审查新闻（不见技术动作和价格），第二轮综合审阅并给出建议；零宽/形近字/leetspeak 混淆检测隔离指令注入，交叉佐证门、规范化命题指纹和实际敞口比较防止未经量化支持的动作变化。
 
 ## 安装
 
@@ -340,6 +342,9 @@ python naked_k_analysis.py --llm
 - `naked_k_analysis.py`：CLI、报告、复盘日志和运行审计入口
 - `naked_k_ai.py`：AI 交易助手边界、结构化 payload、历史样本校准和失败归因
 - `naked_k_llm.py`：OpenAI-compatible LLM adapter、环境变量配置、请求构造、响应解析和密钥脱敏
+- `naked_k_news.py`：公开新闻采集（yfinance Search / Google News RSS）、归一化去重和时效窗口
+- `naked_k_news_llm.py`：两轮消息面斟酌、Anthropic Messages adapter、零宽/形近字/leetspeak 混淆检测、指令注入隔离和结构化证据引用校验
+- `naked_k_synthesis.py`：消息与技术综合、交叉佐证门、规范化命题指纹、实际敞口比较和价格字段边界保护
 - `naked_k_audit.py`：结构化 JSONL 审计日志，用于追踪数据加载、计划生成、组合风险和运行异常
 - `naked_k_planner.py`：交易计划编排，把价格行为、结构、剧本、区域和风险计划组合成 `InstrumentReport`
 - `naked_k_config.py`：交易参数配置，包含风险参数、动作仓位上限和组合暴露限制
@@ -358,6 +363,9 @@ python naked_k_analysis.py --llm
 - `tests/test_naked_k_analysis.py`：裸 K 计划和报告测试
 - `tests/test_naked_k_ai.py`：AI 助手信号边界、样本校准和失败归因测试
 - `tests/test_naked_k_llm.py`：OpenAI-compatible LLM adapter、密钥脱敏和请求解析测试
+- `tests/test_naked_k_news.py`：公开新闻采集、归一化去重和时效窗口测试
+- `tests/test_naked_k_news_llm.py`：两轮消息面斟酌、零宽/形近字/leetspeak 混淆检测、指令注入隔离和证据引用校验测试
+- `tests/test_naked_k_synthesis.py`：消息与技术综合、交叉佐证门、规范化命题指纹和实际敞口门测试
 - `tests/test_naked_k_audit.py`：结构化运行审计 JSONL 测试
 - `tests/test_naked_k_config.py`：JSON 参数配置测试
 - `tests/test_naked_k_context.py`：上下文化 K 线行为测试
@@ -387,6 +395,7 @@ python naked_k_analysis.py --llm
 - 港股：`0700.HK` -> `hk00700`
 - A 股：`600703.SS` -> `sh600703`、`001391.SZ` -> `sz001391`
 - 美股：`NVDA` -> `usNVDA`
+- 韩股：`005930.KS` -> `kr005930`、`035720.KQ` -> `kr035720`
 
 ## 测试
 
@@ -417,6 +426,10 @@ python -m unittest discover -v
 - 未收盘日线 / 周线过滤
 - 复盘日志去重和上一计划复盘
 - 腾讯 / Yahoo / yfinance 数据源 fallback
+- 韩国市场 ticker 转换和 Asia/Seoul 时区处理
+- 消息面两轮斟酌、新闻采集、证据引用校验和安全降级
+- 零宽字符 / 形近字 / leetspeak 混淆检测与指令注入隔离
+- 交叉佐证门、规范化命题指纹和实际敞口门
 
 ## 免责声明
 
