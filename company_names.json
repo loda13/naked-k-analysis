@@ -1,0 +1,26 @@
+{
+  "0700.HK": {
+    "zh": ["腾讯", "腾讯控股"],
+    "en": ["Tencent", "Tencent Holdings"],
+    "keywords": ["WeChat", "QQ", "微信"],
+    "finnhub_ticker": "TCEHY"
+  },
+  "1810.HK": {
+    "zh": ["小米", "小米集团"],
+    "en": ["Xiaomi", "Xiaomi Corporation"],
+    "keywords": ["Mi", "Redmi", "Lei Jun", "雷军", "小米汽车", "Xiaomi EV"],
+    "finnhub_ticker": "XIACF"
+  },
+  "9992.HK": {
+    "zh": ["泡泡玛特", "POP MART"],
+    "en": ["Pop Mart", "POP MART"],
+    "keywords": ["Molly", "盲盒", "blind box"],
+    "finnhub_ticker": null
+  },
+  "PDD": {
+    "zh": ["拼多多"],
+    "en": ["Pinduoduo", "PDD Holdings"],
+    "keywords": ["Temu", "拼多多"],
+    "finnhub_ticker": "PDD"
+  }
+}

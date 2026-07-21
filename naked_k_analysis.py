@@ -22,6 +22,7 @@ import naked_k_context
 import naked_k_interpreter
 import naked_k_llm
 import naked_k_news
+import naked_k_news_enhanced
 import naked_k_news_llm
 import naked_k_planner
 import naked_k_portfolio
@@ -765,7 +766,7 @@ def _run_news_for_report(
         )
     else:
         try:
-            collection = naked_k_news.collect_news(
+            collection = naked_k_news_enhanced.collect_news_enhanced(
                 report.name,
                 report.ticker,
                 lookback_days=news_lookback_days,

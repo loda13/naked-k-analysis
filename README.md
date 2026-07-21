@@ -2,7 +2,7 @@
 
 裸 K 分析 CLI。项目只专注于 K 线本身：实体、影线、收盘位置、前高/前低、结构性突破/假突破、孕线、吞没、Pin Bar、十字星、确认 K、止损触发和复盘日志。
 
-当前版本：[v3.1.0](https://github.com/loda13/naked-k-analysis/releases/tag/v3.1.0)
+当前版本：[v3.2.0](https://github.com/loda13/naked-k-analysis/releases/tag/v3.2.0)
 
 ## 核心能力
 
@@ -96,7 +96,36 @@ python naked_k_analysis.py --news --news-model your-selected-model-id \
 
 ### 公开来源、时效与证据
 
-新闻不需要额外的新闻 API key，来源为 yfinance Search 新闻和 Google News RSS；任何一个来源不可用时会尝试另一个来源。默认优先使用最近 **7 个自然日**内、归一化去重后的新闻（每个标的最多 12 条）。只有在主窗口没有有效新闻时，才回看最近 **30 日**并标注 `low_freshness`；超过 30 日或未来时间的新闻不会进入当前判断。
+新闻来源包括：
+- **Yahoo Finance Search** + **Google News RSS**（无需配置，默认启用）
+- **Finnhub 专业财经新闻**（可选，推荐，v3.2.0 新增）
+
+Finnhub 提供 SeekingAlpha、Benzinga 等专业财经来源，配合智能相关性过滤和数据源优先级系统，相关新闻比例从 0% 提升至 71%。详见上文"Finnhub 集成"章节。
+
+#### Finnhub 集成（可选，强烈推荐）✨ 新增
+
+Finnhub 提供专业财经新闻聚合（SeekingAlpha, Benzinga 等），显著改善消息面质量：
+
+**优化效果**（小米 1810.HK 实测）：
+- 优化前: 0条相关新闻，置信度 0
+- 优化后: 5条相关新闻（71%），置信度 45 (+450%)
+- 数据源: Finnhub 57% + Google 43%（Yahoo 噪音已过滤）
+
+**设置步骤**（5分钟）：
+1. 注册免费账号: https://finnhub.io/register
+2. 获取 API Key
+3. 添加到 `.env`: `FINNHUB_API_KEY=your_api_key_here`
+
+**详细文档**: 
+- 快速开始: `FINNHUB_QUICKSTART.md`
+- 完整指南: `FINNHUB_SETUP.md`
+- 技术细节: `NEWS_OPTIMIZATION_SUMMARY.md`
+
+**免费额度**: 60 calls/分钟（本项目每天仅4次调用，完全在免费额度内）
+
+**无 API Key 时**: 系统自动降级到 Yahoo + Google，不会报错
+
+默认优先使用最近 **7 个自然日**内、归一化去重后的新闻（每个标的最多 12 条）。只有在主窗口没有有效新闻时，才回看最近 **30 日**并标注 `low_freshness`；超过 30 日或未来时间的新闻不会进入当前判断。
 
 每条进入模型的新闻都带稳定的 `news-01`、`news-02` 等证据 ID，以及标题、媒体、时间、URL、摘要、来源和新鲜度。第一轮和第二轮只能引用本次输入中存在的证据 ID；第二轮的结构化 claim-to-evidence 映射还必须通过逐字摘录、词项覆盖、子句级否定/不确定性一致性和规范化命题指纹检查，因此报告中的消息判断可以回溯到对应公开来源，而不会让模型凭训练记忆补造新闻。
 
@@ -343,6 +372,8 @@ python naked_k_analysis.py --llm
 - `naked_k_ai.py`：AI 交易助手边界、结构化 payload、历史样本校准和失败归因
 - `naked_k_llm.py`：OpenAI-compatible LLM adapter、环境变量配置、请求构造、响应解析和密钥脱敏
 - `naked_k_news.py`：公开新闻采集（yfinance Search / Google News RSS）、归一化去重和时效窗口
+- `naked_k_news_finnhub.py`：Finnhub 专业财经新闻采集器（v3.2.0 新增）
+- `naked_k_news_enhanced.py`：多数据源智能合并、相关性评分、质量权重系统（v3.2.0 新增）
 - `naked_k_news_llm.py`：两轮消息面斟酌、Anthropic Messages adapter、零宽/形近字/leetspeak 混淆检测、指令注入隔离和结构化证据引用校验
 - `naked_k_synthesis.py`：消息与技术综合、交叉佐证门、规范化命题指纹、实际敞口比较和价格字段边界保护
 - `naked_k_audit.py`：结构化 JSONL 审计日志，用于追踪数据加载、计划生成、组合风险和运行异常
@@ -364,6 +395,8 @@ python naked_k_analysis.py --llm
 - `tests/test_naked_k_ai.py`：AI 助手信号边界、样本校准和失败归因测试
 - `tests/test_naked_k_llm.py`：OpenAI-compatible LLM adapter、密钥脱敏和请求解析测试
 - `tests/test_naked_k_news.py`：公开新闻采集、归一化去重和时效窗口测试
+- `tests/test_naked_k_news_finnhub.py`：Finnhub API 连接、数据格式和降级测试（v3.2.0 新增）
+- `tests/test_naked_k_news_enhanced.py`：多源合并、相关性评分、质量权重和单词边界匹配测试（v3.2.0 新增）
 - `tests/test_naked_k_news_llm.py`：两轮消息面斟酌、零宽/形近字/leetspeak 混淆检测、指令注入隔离和证据引用校验测试
 - `tests/test_naked_k_synthesis.py`：消息与技术综合、交叉佐证门、规范化命题指纹和实际敞口门测试
 - `tests/test_naked_k_audit.py`：结构化运行审计 JSONL 测试
