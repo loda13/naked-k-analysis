@@ -686,6 +686,90 @@ class NakedKAnalysisTests(unittest.TestCase):
         self.assertNotIn("FULL_PROMPT_SENTINEL", persisted)
         self.assertNotIn("fake-news-secret", persisted)
 
+    def test_outer_boundary_recovers_when_baseline_capture_raises(self):
+        original_capture = naked_k_analysis._capture_technical_fields
+        capture_calls = 0
+        expected_technical = {}
+
+        def capture(report):
+            nonlocal capture_calls
+            capture_calls += 1
+            if capture_calls == 1:
+                raise RuntimeError("FULL_PROMPT_SENTINEL fake-news-secret")
+            return original_capture(report)
+
+        def build(name, ticker, *_args, **_kwargs):
+            report = self._integration_report(ticker=ticker)
+            report.name = name
+            expected_technical[ticker] = {
+                field: copy.deepcopy(getattr(report, field))
+                for field in naked_k_analysis.naked_k_synthesis.TECHNICAL_SNAPSHOT_FIELDS
+            }
+            return report
+
+        def collect(name, ticker, **_kwargs):
+            collection = self._news_collection(ticker)
+            collection["name"] = name
+            return collection
+
+        with TemporaryDirectory() as tmpdir:
+            journal_path = Path(tmpdir) / "journal.jsonl"
+            audit_path = Path(tmpdir) / "audit.jsonl"
+            with (
+                patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
+                patch.object(naked_k_analysis, "build_trade_plan", side_effect=build),
+                patch.object(naked_k_analysis, "_capture_technical_fields", side_effect=capture),
+                patch.object(naked_k_news, "collect_news", side_effect=collect),
+            ):
+                _, reports = naked_k_analysis.run_analysis(
+                    [("捕获失败", "FAIL"), ("后续成功", "PASS")],
+                    journal_path,
+                    audit_path=audit_path,
+                    news_config=self._news_config(),
+                    news_post=self._sequential_news_post([self._round1(), self._round2()]),
+                )
+            audit_events = [
+                json.loads(line)
+                for line in audit_path.read_text(encoding="utf-8").splitlines()
+            ]
+            persisted = (
+                journal_path.read_text(encoding="utf-8")
+                + audit_path.read_text(encoding="utf-8")
+            )
+
+        self.assertEqual([report.ticker for report in reports], ["FAIL", "PASS"])
+        for field, expected in expected_technical["FAIL"].items():
+            self.assertEqual(getattr(reports[0], field), expected)
+        self.assertEqual(reports[0].technical_conclusion["action"], "观望")
+        self.assertEqual(reports[0].combined_conclusion["status"], "technical_fallback")
+        self.assertEqual(reports[1].action, "买入")
+        safe_event_types = {
+            "news_collected",
+            "news_assessed",
+            "decision_deliberated",
+            "signal_synthesized",
+        }
+        first_ticker_events = [
+            event
+            for event in audit_events
+            if event["payload"].get("ticker") == "FAIL"
+            and event["event_type"] in safe_event_types
+        ]
+        self.assertEqual(
+            [event["event_type"] for event in first_ticker_events],
+            [
+                "news_collected",
+                "news_assessed",
+                "decision_deliberated",
+                "signal_synthesized",
+            ],
+        )
+        self.assertTrue(
+            all("FULL_PROMPT_SENTINEL" not in json.dumps(event) for event in first_ticker_events)
+        )
+        self.assertNotIn("FULL_PROMPT_SENTINEL", persisted)
+        self.assertNotIn("fake-news-secret", persisted)
+
     def test_synthesis_internal_fallback_sanitizes_raw_exception_before_journaling(self):
         news_post = self._sequential_news_post([self._round1(), self._round2()])
 
@@ -970,6 +1054,151 @@ class NakedKAnalysisTests(unittest.TestCase):
             if event["event_type"] in {"decision_deliberated", "signal_synthesized"}
         ]
         self.assertEqual(synthesized, ["decision_deliberated", "signal_synthesized"])
+
+    def test_bootstrap_error_type_is_strictly_sanitized(self):
+        self.assertEqual(
+            naked_k_analysis._news_error_type("GatewayTimeoutError"),
+            "GatewayTimeoutError",
+        )
+        self.assertEqual(
+            naked_k_analysis._news_error_type("GatewayTimeoutException"),
+            "GatewayTimeoutException",
+        )
+        self.assertEqual(
+            naked_k_analysis._news_error_type("A" * 59 + "Error"),
+            "A" * 59 + "Error",
+        )
+        for invalid in (
+            "fake_news_secret",
+            "ValueError trailing text",
+            "Not-An-Error",
+            "A" * 60 + "Error",
+        ):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(
+                    naked_k_analysis._news_error_type(invalid),
+                    "NewsIntegrationError",
+                )
+
+        unsafe_type = "fake_news_secret"
+        with TemporaryDirectory() as tmpdir:
+            journal_path = Path(tmpdir) / "journal.jsonl"
+            audit_path = Path(tmpdir) / "audit.jsonl"
+            with (
+                patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
+                patch.object(
+                    naked_k_analysis,
+                    "build_trade_plan",
+                    return_value=self._integration_report(),
+                ),
+                patch.object(
+                    naked_k_news,
+                    "collect_news",
+                    side_effect=AssertionError("collection called"),
+                ),
+                patch.object(
+                    naked_k_news_llm,
+                    "run_two_pass_deliberation",
+                    side_effect=AssertionError("model called"),
+                ),
+            ):
+                markdown, reports = naked_k_analysis.run_analysis(
+                    [("测试", "TEST")],
+                    journal_path,
+                    audit_path=audit_path,
+                    news_config=self._news_config(model=""),
+                    news_bootstrap_error={"error_type": unsafe_type, "message": "ignored"},
+                )
+            journal_text = journal_path.read_text(encoding="utf-8")
+            audit_text = audit_path.read_text(encoding="utf-8")
+
+        report = reports[0]
+        self.assertEqual(
+            report.news_analysis["collection"]["source_errors"],
+            ["NewsIntegrationError"],
+        )
+        self.assertEqual(
+            report.news_analysis["round1"]["error_type"],
+            "NewsIntegrationError",
+        )
+        self.assertEqual(
+            report.combined_conclusion["risk_override_reason"],
+            "NewsIntegrationError",
+        )
+        persisted = markdown + journal_text + audit_text + json.dumps(
+            asdict(report), ensure_ascii=False
+        )
+        self.assertNotIn(unsafe_type, persisted)
+        self.assertIn("NewsIntegrationError", persisted)
+
+    def test_news_model_text_cannot_inject_markdown_or_unsafe_links(self):
+        malicious = (
+            "保留中文可读性\n### injected <script>alert(1)</script> "
+            "[x](javascript:alert(1))"
+        )
+        round1 = self._round1(
+            summary=malicious,
+            positive_factors=[malicious],
+            negative_factors=[malicious],
+            uncertainties=[malicious],
+        )
+        round2 = self._round2(
+            technical_view={"action": "观望", "summary": malicious},
+            news_view={"direction": "strong_bullish", "summary": malicious},
+            conflict_analysis=malicious,
+            decision_reasons=[malicious],
+            risk_flags=[malicious],
+            execution_note=malicious,
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            journal_path = Path(tmpdir) / "journal.jsonl"
+            with (
+                patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
+                patch.object(
+                    naked_k_analysis,
+                    "build_trade_plan",
+                    return_value=self._integration_report(),
+                ),
+                patch.object(
+                    naked_k_news,
+                    "collect_news",
+                    return_value=self._news_collection(),
+                ),
+            ):
+                markdown, reports = naked_k_analysis.run_analysis(
+                    [("测试", "TEST")],
+                    journal_path,
+                    news_config=self._news_config(),
+                    news_post=self._sequential_news_post([round1, round2]),
+                )
+            journal_text = journal_path.read_text(encoding="utf-8")
+
+        report = reports[0]
+
+        def strings(value):
+            if isinstance(value, str):
+                return [value]
+            if isinstance(value, dict):
+                return [text for item in value.values() for text in strings(item)]
+            if isinstance(value, list):
+                return [text for item in value for text in strings(item)]
+            return []
+
+        model_derived = strings(report.news_analysis["round1"]) + strings(
+            report.combined_conclusion
+        )
+        for text in [*model_derived, report.rationale]:
+            self.assertNotIn("\n###", text)
+            self.assertNotIn("<script>", text)
+            self.assertNotIn("[x](javascript:", text)
+        self.assertIn("保留中文可读性", report.rationale)
+        self.assertTrue(report.rationale.startswith("原始技术结论；综合结论："))
+        self.assertIn("&lt;script&gt;", report.combined_conclusion["decision_reasons"][0])
+        self.assertIn(r"\[x\]\(javascript:alert\(1\)\)", report.rationale)
+        self.assertNotIn("\n### injected", markdown + journal_text)
+        self.assertNotIn("<script>", markdown + journal_text)
+        self.assertNotIn("[x](javascript:", markdown + journal_text)
 
     def test_format_report_renders_five_ordered_news_blocks_from_final_action(self):
         report = self._integration_report()

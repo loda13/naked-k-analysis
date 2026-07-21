@@ -285,6 +285,23 @@ def _single_line(value: Any) -> str:
     return " ".join(str("" if value is None else value).split())
 
 
+def _sanitize_model_text(value: Any) -> Any:
+    if isinstance(value, str):
+        text = escape(_single_line(value), quote=False)
+        return (
+            text.replace("\\", "\\\\")
+            .replace("[", "\\[")
+            .replace("]", "\\]")
+            .replace("(", "\\(")
+            .replace(")", "\\)")
+        )
+    if isinstance(value, dict):
+        return {key: _sanitize_model_text(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_model_text(item) for item in value]
+    return copy.deepcopy(value)
+
+
 def _markdown_label(value: Any) -> str:
     text = escape(_single_line(value), quote=False)
     return (
@@ -312,11 +329,13 @@ def _news_error_type(value: Any) -> str:
         error_type = value.get("error_type")
         return _news_error_type(error_type) if error_type else ""
     text = _single_line(value)
-    exception_names = re.findall(r"[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)", text)
-    if exception_names:
-        return exception_names[0]
-    prefix = text.split(":", 1)[0]
-    return prefix if prefix.replace("_", "").isalnum() and " " not in prefix else ""
+    if not text:
+        return ""
+    if len(text) <= 64 and re.fullmatch(
+        r"[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)", text
+    ):
+        return text
+    return "NewsIntegrationError"
 
 
 def _unavailable_news_collection(
@@ -822,6 +841,10 @@ def _run_news_for_report(
         "provider": news_config.provider,
         "model": news_config.model,
     }
+    if isinstance(report.news_analysis.get("round1"), dict):
+        report.news_analysis["round1"] = _sanitize_model_text(
+            report.news_analysis["round1"]
+        )
     assessment_error_type = _news_error_type(report.news_analysis.get("round1"))
     _log_news_audit(
         audit,
@@ -838,6 +861,8 @@ def _run_news_for_report(
     emitted_events.add("news_assessed")
 
     deliberation = result.get("deliberation")
+    if isinstance(deliberation, dict):
+        deliberation = _sanitize_model_text(deliberation)
     valid_deliberation = result.get("status") == "ok" and isinstance(deliberation, dict) and bool(deliberation)
     decision_error_type = ""
     if valid_deliberation:
@@ -850,10 +875,14 @@ def _run_news_for_report(
                 config=config,
             )
             if combined.get("status") != "ok":
-                decision_error_type = (
-                    _news_error_type(combined.get("risk_override_reason"))
-                    or "SynthesisError"
+                synthesis_reason = _single_line(combined.get("risk_override_reason"))
+                synthesis_prefix = "确定性价格计划重建失败，已安全回退技术结论："
+                synthesis_error = (
+                    synthesis_reason.removeprefix(synthesis_prefix).split(":", 1)[0]
+                    if synthesis_reason.startswith(synthesis_prefix)
+                    else synthesis_reason
                 )
+                decision_error_type = _news_error_type(synthesis_error)
                 combined["risk_override_reason"] = (
                     "确定性价格计划重建失败，已安全回退技术结论"
                     f"（{decision_error_type}）"
@@ -971,9 +1000,10 @@ def run_analysis(
             config=config,
         )
         if news_enabled and news_config is not None:
-            technical_snapshot = _capture_technical_fields(report)
             emitted_news_events: set[str] = set()
+            technical_snapshot: dict[str, Any] | None = None
             try:
+                technical_snapshot = _capture_technical_fields(report)
                 _run_news_for_report(
                     report,
                     daily,
@@ -990,6 +1020,11 @@ def run_analysis(
                     emitted_events=emitted_news_events,
                 )
             except Exception as exc:
+                if technical_snapshot is None:
+                    technical_snapshot = {
+                        field: report.__dict__[field]
+                        for field in naked_k_synthesis.TECHNICAL_SNAPSHOT_FIELDS
+                    }
                 _recover_news_branch(
                     report,
                     technical_snapshot,
