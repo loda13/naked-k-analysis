@@ -33,6 +33,9 @@ class NakedKPlannerTests(unittest.TestCase):
         self.assertEqual(report.ticker, "TEST")
         self.assertIn(report.action, {"买入", "小仓试错", "观望", "减仓", "回避"})
         self.assertIn("裸K结构", report.rationale)
+        self.assertEqual(report.technical_conclusion, {})
+        self.assertEqual(report.news_analysis, {})
+        self.assertEqual(report.combined_conclusion, {})
 
     def test_planner_attaches_contextual_candle_behavior(self):
         daily = pd.DataFrame(

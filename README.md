@@ -2,7 +2,7 @@
 
 裸 K 分析 CLI。项目只专注于 K 线本身：实体、影线、收盘位置、前高/前低、结构性突破/假突破、孕线、吞没、Pin Bar、十字星、确认 K、止损触发和复盘日志。
 
-当前版本：[v3.0.0](https://github.com/loda13/naked-k-analysis/releases/tag/v3.0.0)
+当前版本：[v3.1.0](https://github.com/loda13/naked-k-analysis/releases/tag/v3.1.0)
 
 ## 核心能力
 
@@ -30,6 +30,8 @@
 - **复盘日志**：每次运行写入 `reports/naked_k_journal.jsonl`，下一次会复盘上一根 K 的触发和失效情况。
 - **结构化运行审计**：每次 CLI 运行写入 JSONL 审计事件，记录数据加载、计划生成、组合风险、运行完成和失败原因。
 - **多数据源兜底**：优先 `westock-data`，再走腾讯 K 线、Yahoo chart JSON，最后用 yfinance。
+- **多市场支持**：港股 `.HK`、A 股 `.SS`/`.SZ`、美股和韩股 `.KS`/`.KQ`（KOSPI / KOSDAQ，Asia/Seoul 时区）。
+- **消息面两轮斟酌（可选）**：第一轮独立审查新闻（不见技术动作和价格），第二轮综合审阅并给出建议；零宽/形近字/leetspeak 混淆检测隔离指令注入，交叉佐证门、规范化命题指纹和实际敞口比较防止未经量化支持的动作变化。
 
 ## 安装
 
@@ -66,7 +68,75 @@ python naked_k_analysis.py --report-path reports/today.md --journal-path reports
 python naked_k_analysis.py --config-path config/naked_k.json
 python naked_k_analysis.py --audit-path reports/audit.jsonl
 python naked_k_analysis.py --llm
+python naked_k_analysis.py --news
 ```
+
+## 消息面两轮斟酌（可选）
+
+`--news` 默认关闭。启用后，程序在原有纯裸 K 计划之外，收集公开新闻并生成可追溯的消息面和综合结论；未启用时不会发起新闻或消息模型请求，既有 Markdown、JSON、journal 和交易计划保持原样。
+
+```bash
+# 只启用公开新闻和两轮综合斟酌
+python naked_k_analysis.py --news
+
+# 可选地覆盖模型、主窗口和每个标的的去重新闻上限
+python naked_k_analysis.py --news --news-model your-selected-model-id \
+  --news-lookback-days 7 --news-max-items 12
+```
+
+`--news` 与现有 `--llm` 相互独立：`--llm` 仍是 OpenAI-compatible 的交易复盘文本增强，写入 `ai_assistant.llm_commentary`；`--news` 使用 Anthropic-compatible 的两轮消息面流程，写入独立的 `news_analysis` 和 `combined_conclusion`。两者可以单独使用或同时使用，彼此不覆盖。
+
+### 两轮与价格边界
+
+第一轮是独立的消息面审查：它只接收公司、ticker、运行时间和规范化新闻，**不接收**技术动作、触发价、止损、目标或仓位。第二轮才会同时审阅不可变的技术结论快照、原始新闻、第一轮结论和风险上下文，并给出动作建议、技术/消息的一致或冲突解释及引用的证据 ID。
+
+这里没有“技术分数 + 新闻分数”的固定权重、加总公式或动作矩阵。模型可以建议把动作升级或降级，但不能提供或改写任何价格字段。每次动作变化都必须同时给出非空的 `evidence_ids` 和逐项 `evidence_claims`；每条 claim 只绑定一个本次输入的新闻 ID，并携带从该来源标题或摘要逐字复制的 `supporting_excerpt`。引用不存在的 ID、无关或矛盾断言、从否定或不确定语句中截取肯定结论、在真实文字上追加未获支持的事实，以及任何指令式提示词，都不能改变动作。新闻 ID、标题、摘要、媒体、时间、URL、来源和新鲜度等所有会序列化进 prompt 的字段，任一被判定为指令式内容都会在第一轮请求之前隔离，因而不会进入任一轮模型 prompt；第一轮模型输出若包含同类内容，也会在进入第二轮前隔离。`news_analysis.quarantine` 只记录安全的状态、数量和证据 ID。只要本次输入发生过隔离，任何动作变化都会保持技术基线。
+
+任何提高实际敞口或账户风险的重建结果还有一道确定性安全门，包括 `suggested_gross_pct`、`effective_account_risk_pct`、可执行仓位上限，以及动作配置上限。安全门比较的是重建后的候选计划与未改动的技术基线，而不只比较动作名称；即使动作标签看似更保守，只要候选实际风险增加，也需要交叉佐证。引用证据必须至少来自两个规范化后不同的发布方、且注册主域名也不同的新闻项目，并且两条有效 claim 的规范化命题指纹必须相同；两条彼此无关的真实新闻不能拼成增仓依据。媒体别名和同一主域名的子域不会重复计数。满足条件时仍由模型自动判断，不使用固定融合分数；不满足时完整保留技术动作，并在 `override_reason_code` / `evidence_gate` 中记录机器可读的覆盖原因。最终 `entry_trigger`、`stop_loss`、`target_price`、仓位、R/R、风险计划和组合保护仍由确定性的裸 K 代码生成和同步；`减仓` 的残余仓位与账户风险还会被钳制为不高于技术基线。报告会分别保留模型建议的 `model_action` 与风控后的 `final_action`。
+
+### 公开来源、时效与证据
+
+新闻不需要额外的新闻 API key，来源为 yfinance Search 新闻和 Google News RSS；任何一个来源不可用时会尝试另一个来源。默认优先使用最近 **7 个自然日**内、归一化去重后的新闻（每个标的最多 12 条）。只有在主窗口没有有效新闻时，才回看最近 **30 日**并标注 `low_freshness`；超过 30 日或未来时间的新闻不会进入当前判断。
+
+每条进入模型的新闻都带稳定的 `news-01`、`news-02` 等证据 ID，以及标题、媒体、时间、URL、摘要、来源和新鲜度。第一轮和第二轮只能引用本次输入中存在的证据 ID；第二轮的结构化 claim-to-evidence 映射还必须通过逐字摘录、词项覆盖、子句级否定/不确定性一致性和规范化命题指纹检查，因此报告中的消息判断可以回溯到对应公开来源，而不会让模型凭训练记忆补造新闻。
+
+### 报告与安全降级
+
+当 `--news` 成功运行时，每个标的的 Markdown 会连续显示：
+
+- `技术面结论`
+- `消息面结论`
+- `技术与消息冲突/一致性`
+- `综合结论`
+- `消息来源`
+
+JSON 与 journal 同时保存 `technical_conclusion`、`news_analysis` 和 `combined_conclusion`。单个公开新闻来源失败时，采集器仍会使用另一个来源，并保留来源错误状态；只有两者都不可用或没有可用新闻时，才跳过后续消息判断。对某个标的，如果新闻采集不可用、两轮请求或校验失败，或者确定性价格重建失败，该标的会保留安全状态/错误类型并回退到原有技术动作；新闻不足时会标记为不足并跳过第二轮，不会把缺失消息伪装成模型判断。
+
+组合保护异常使用不同的事务边界：程序会恢复整个列表在组合保护开始前的报告快照，然后继续持久化。因此，保护前已经有效的 `combined_conclusion`、模型动作和综合动作会被保留，不一定全部回退为原始技术动作；只有本次组合保护产生的部分改写会被撤销。
+
+### Anthropic-compatible 本地配置
+
+只在本地、被 `.gitignore` 忽略的 `.env` 或系统环境变量中保存配置。以下是安全占位示例，不能直接用于真实请求：
+
+```dotenv
+ANTHROPIC_BASE_URL="https://one.iflytek.com/api/llm/console/chat"
+ANTHROPIC_AUTH_TOKEN="replace-me-with-a-rotated-local-token"
+NAKED_K_NEWS_MODEL="replace-me-with-one-model-id"
+```
+
+Base URL 的完整路径前缀会在内存中的实际请求里保留，而不是裁剪到站点根路径：上例的消息端点是 `https://one.iflytek.com/api/llm/console/chat/v1/messages`，模型端点是 `https://one.iflytek.com/api/llm/console/chat/v1/models`。远程主机必须使用 HTTPS；HTTP 只允许显式的 `localhost` / loopback 开发地址。Base URL 不接受用户名密码、query 或 fragment。
+
+可打印配置和 `--json` 只显示安全的 endpoint origin（例如 `https://one.iflytek.com`），不显示完整租户路径。成功响应、错误、模型 ID、Markdown、journal、audit 和 CLI JSON 在持久化前都会递归脱敏认证 token、敏感 Base URL 和常见 credential-like 字符串；Base URL 比较会规范化主机大小写、默认端口、百分号编码、路径和末尾斜杠，嵌套的 camelCase / AWS 凭据键也会识别。`Basic` / `Bearer` 只有在认证头、敏感键或符合凭据语法的上下文中才会脱敏，普通的金融或工程文本不会仅因包含这些单词而被改写。请求仍在内存中使用原始已选模型 ID。
+
+明确设置模型时会直接使用。未设置时，程序会从上述完整前缀的 `/v1/models` 发现模型：只排除元数据纯粹、明确标为 embedding、rerank、图像、音频或审核用途的 ID；`type=chat` 且同时支持 text/image 的多模态聊天模型不会仅因 image capability 被排除。真正互相冲突或能力含糊的元数据会要求显式选择。若存在多个合格候选或任何能力含糊的候选，程序不会猜测“最佳”模型，而会列出经脱敏的候选 ID。
+
+配置先按来源决定优先级：进程环境整体覆盖 `.env`，也就是进程环境中任一兼容别名存在时，都不会再从 `.env` 为该项取值；然后在同一来源内按以下顺序选择：
+
+- Base URL：`ANTHROPIC_BASE_URL` → `NAKED_K_NEWS_BASE_URL` → `NAKED_K_LLM_BASE_URL` → `LLM_BASE_URL`
+- 认证：`ANTHROPIC_AUTH_TOKEN` → `ANTHROPIC_API_KEY` → `NAKED_K_NEWS_API_KEY` → `NAKED_K_LLM_API_KEY` → `LLM_API_KEY`
+- 模型：CLI `--news-model` 覆盖所有环境来源；否则依次为 `NAKED_K_NEWS_MODEL` → `ANTHROPIC_MODEL` → `NAKED_K_LLM_MODEL` → `LLM_MODEL`
+
+认证信息没有 CLI 参数，避免进入 shell history；日志、audit、JSON 和异常只记录脱敏后的 provider、model、安全 endpoint origin、状态或错误类型。任何曾粘贴到聊天、日志或其他文本，或提交到仓库任何位置的真实 token，都必须先轮换，再进行真实网络 smoke test。不要读取、打印、提交或分享 `.env`。
 
 ## 报告字段
 
@@ -89,6 +159,9 @@ python naked_k_analysis.py --llm
 - `risk_plan`：结构化风险计划，包括单笔风险、账户风险、建议仓位、R 目标、风控保护状态
 - `trader_brief`：交易员式复盘，包括市场状态、多空力量、关键区域、可能路径、交易计划和风险点
 - `ai_assistant`：AI 助手输入和输出边界，包括确定性引擎计划、市场上下文、历史样本校准、失败归因和禁止 AI 改写信号的规则
+- `technical_conclusion`：启用 `--news` 时保存的不可变纯技术计划快照
+- `news_analysis`：公开新闻采集状态、第一轮消息面结论、证据和安全调用状态
+- `combined_conclusion`：第二轮模型建议、结构化证据 claims、冲突分析、模型动作、证据安全门、风控后的最终动作和机器可读覆盖原因
 - `review`：上一条计划在当前 K 线中的触发、失效和错误类型
 
 ## 裸 K 逻辑
@@ -269,6 +342,9 @@ python naked_k_analysis.py --llm
 - `naked_k_analysis.py`：CLI、报告、复盘日志和运行审计入口
 - `naked_k_ai.py`：AI 交易助手边界、结构化 payload、历史样本校准和失败归因
 - `naked_k_llm.py`：OpenAI-compatible LLM adapter、环境变量配置、请求构造、响应解析和密钥脱敏
+- `naked_k_news.py`：公开新闻采集（yfinance Search / Google News RSS）、归一化去重和时效窗口
+- `naked_k_news_llm.py`：两轮消息面斟酌、Anthropic Messages adapter、零宽/形近字/leetspeak 混淆检测、指令注入隔离和结构化证据引用校验
+- `naked_k_synthesis.py`：消息与技术综合、交叉佐证门、规范化命题指纹、实际敞口比较和价格字段边界保护
 - `naked_k_audit.py`：结构化 JSONL 审计日志，用于追踪数据加载、计划生成、组合风险和运行异常
 - `naked_k_planner.py`：交易计划编排，把价格行为、结构、剧本、区域和风险计划组合成 `InstrumentReport`
 - `naked_k_config.py`：交易参数配置，包含风险参数、动作仓位上限和组合暴露限制
@@ -287,6 +363,9 @@ python naked_k_analysis.py --llm
 - `tests/test_naked_k_analysis.py`：裸 K 计划和报告测试
 - `tests/test_naked_k_ai.py`：AI 助手信号边界、样本校准和失败归因测试
 - `tests/test_naked_k_llm.py`：OpenAI-compatible LLM adapter、密钥脱敏和请求解析测试
+- `tests/test_naked_k_news.py`：公开新闻采集、归一化去重和时效窗口测试
+- `tests/test_naked_k_news_llm.py`：两轮消息面斟酌、零宽/形近字/leetspeak 混淆检测、指令注入隔离和证据引用校验测试
+- `tests/test_naked_k_synthesis.py`：消息与技术综合、交叉佐证门、规范化命题指纹和实际敞口门测试
 - `tests/test_naked_k_audit.py`：结构化运行审计 JSONL 测试
 - `tests/test_naked_k_config.py`：JSON 参数配置测试
 - `tests/test_naked_k_context.py`：上下文化 K 线行为测试
@@ -316,6 +395,7 @@ python naked_k_analysis.py --llm
 - 港股：`0700.HK` -> `hk00700`
 - A 股：`600703.SS` -> `sh600703`、`001391.SZ` -> `sz001391`
 - 美股：`NVDA` -> `usNVDA`
+- 韩股：`005930.KS` -> `kr005930`、`035720.KQ` -> `kr035720`
 
 ## 测试
 
@@ -346,6 +426,10 @@ python -m unittest discover -v
 - 未收盘日线 / 周线过滤
 - 复盘日志去重和上一计划复盘
 - 腾讯 / Yahoo / yfinance 数据源 fallback
+- 韩国市场 ticker 转换和 Asia/Seoul 时区处理
+- 消息面两轮斟酌、新闻采集、证据引用校验和安全降级
+- 零宽字符 / 形近字 / leetspeak 混淆检测与指令注入隔离
+- 交叉佐证门、规范化命题指纹和实际敞口门
 
 ## 免责声明
 

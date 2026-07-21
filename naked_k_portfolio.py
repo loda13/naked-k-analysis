@@ -11,6 +11,8 @@ def classify_market(ticker: str) -> str:
         return "hk"
     if symbol.endswith((".SS", ".SZ", ".BJ")):
         return "cn"
+    if symbol.endswith((".KS", ".KQ")):
+        return "kr"
     if symbol.startswith(("BTC", "ETH", "SOL")) or "-" in symbol:
         return "crypto"
     return "us"
@@ -27,6 +29,12 @@ def _risk_plan(report: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _direction_bucket(direction: str) -> str:
+    # Defensive plans represent residual long exposure being reduced or avoided;
+    # they are not naked shorts and therefore still consume the long-side cap.
+    return "long" if direction == "bearish_defensive" else direction
+
+
 def evaluate_portfolio_exposure(
     reports: list[Any],
     config: naked_k_config.PortfolioConfig | None = None,
@@ -40,7 +48,7 @@ def evaluate_portfolio_exposure(
         if gross_pct <= 0 and account_risk_pct <= 0:
             continue
         ticker = str(_value(report, "ticker", ""))
-        direction = str(risk_plan.get("direction", "none"))
+        direction = _direction_bucket(str(risk_plan.get("direction", "none")))
         positions.append(
             {
                 "ticker": ticker,

@@ -55,6 +55,9 @@ class InstrumentReport:
     trader_brief: dict[str, Any] = field(default_factory=dict)
     candle_context: list[dict[str, Any]] = field(default_factory=list)
     ai_assistant: dict[str, Any] = field(default_factory=dict)
+    technical_conclusion: dict[str, Any] = field(default_factory=dict)
+    news_analysis: dict[str, Any] = field(default_factory=dict)
+    combined_conclusion: dict[str, Any] = field(default_factory=dict)
 
 
 def build_trade_plan(

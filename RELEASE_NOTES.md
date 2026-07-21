@@ -1,3 +1,26 @@
+# v3.1.0 - 韩国市场与消息面安全加固
+
+## 概述
+
+本版本新增韩国市场（KOSPI / KOSDAQ）数据支持和时区处理，并对可选的消息面两轮斟酌功能进行了三轮安全加固，关闭零宽字符/形近字/leetspeak 混淆绕过指令注入隔离的向量，确保未经量化支持的动作变化不会进入报告。
+
+## 新增
+
+- 新增韩国市场支持：`.KS`（KOSPI）和 `.KQ`（KOSDAQ）ticker 转换，数据源 fallback 覆盖腾讯 K 线和 yfinance 韩股接口，时区处理使用 `Asia/Seoul`。
+- 新增消息面两轮斟酌混淆检测：零宽字符（ZWSP/ZWJ/BOM/soft-hyphen）、格式字符（Cf）和非空白控制字符（Cc）剥离，百分号编码走私检测（每轮 decode 后重新剥离和折叠），组合附加符号（NFKD + 丢弃 Mn）和西里尔/希腊形近字折叠为小写 Latin 骨架，leetspeak 数字还原（0→o/1→l/3→e/4→a/5→s/7→t，豁免 2/6/8/9 以保护 B2B/H2O/Q2/5G），以及混合脚本结构检测（Latin 与非 Latin 非 CJK 字母混合的 token 失败关闭，CJK 豁免）。
+- 新增规范化命题指纹（material-proposition fingerprint）：对交叉佐证门的两条 claim 规范化后取 Blake2b 指纹，确保两条真实但彼此无关的新闻不能拼成增仓依据。
+
+## 变更
+
+- 更新消息面安全边界文档：README 核心能力列表、消息面两轮斟酌章节、测试覆盖列表和文件结构列表全面反映零宽/形近字/leetspeak 混淆检测、交叉佐证门和实际敞口门。
+- 扩展单元测试覆盖：韩国市场 ticker 转换和 Asia/Seoul 时区处理（`test_westock_wrapper.py`、`test_naked_k_analysis.py`、`test_naked_k_portfolio.py`），零宽字符/百分号编码走私/组合附加符号/西里尔希腊形近字/混合脚本/leetspeak 混淆检测（`test_naked_k_news_llm.py`），以及规范化命题指纹（`test_naked_k_synthesis.py`）。
+
+## 安全
+
+- 关闭消息面指令注入隔离的三类绕过向量：(1) 零宽/格式/控制字符与百分号编码走私，(2) 组合附加符号和西里尔/希腊形近字替换，(3) leetspeak 数字替换和混合脚本结构混淆。所有混淆检测仅作用于指令识别路径（`is_instruction_like_evidence`），证据接地和规范化命题指纹路径（`_normalized_evidence_text`）保持不变，避免破坏引用摘录的逐字匹配。
+- 规范化命题指纹确保交叉佐证门比较的是两条新闻表达的**同一命题**，而非两条彼此无关但都真实的新闻（例如"营收增长"与"股价上涨"不能互相佐证同一风险变化）。
+- 独立评审验证：三轮 TDD 修复后，由独立评审 agent 对所有目标向量（零宽/编码走私、形近字、混合脚本、leetspeak）逐一探测，最终结论为 CLEAR（无残留绕过，quarantine 边界完整）。
+
 # v3.0.0 - Professional Naked K + AI Trading Assistant
 
 ## Summary
