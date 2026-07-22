@@ -10,6 +10,8 @@ from typing import Any
 
 import pandas as pd
 
+from naked_k_news import _as_timestamp, _to_utc
+
 
 def _load_finnhub_ticker_mapping() -> dict[str, str | None]:
     """Load Finnhub ticker mapping from company_names.json."""
@@ -24,9 +26,8 @@ def _load_finnhub_ticker_mapping() -> dict[str, str | None]:
         # Extract finnhub_ticker mapping
         mapping = {}
         for ticker, info in data.items():
-            finnhub_ticker = info.get("finnhub_ticker")
-            if finnhub_ticker:
-                mapping[ticker] = finnhub_ticker
+            if "finnhub_ticker" in info:
+                mapping[ticker] = info["finnhub_ticker"]
 
         return mapping
     except Exception:
@@ -36,6 +37,7 @@ def _load_finnhub_ticker_mapping() -> dict[str, str | None]:
 def collect_finnhub_news(
     ticker: str,
     *,
+    now=None,
     lookback_days: int = 7,
     max_items: int = 20,
     get: Any = None,
@@ -52,6 +54,11 @@ def collect_finnhub_news(
     Returns:
         List of news items in internal format
     """
+    if lookback_days <= 0:
+        raise ValueError("lookback_days must be positive")
+    if max_items <= 0:
+        raise ValueError("max_items must be positive")
+
     api_key = os.getenv("FINNHUB_API_KEY")
     if not api_key:
         # No API key, return empty list silently
@@ -74,7 +81,7 @@ def collect_finnhub_news(
         return []
 
     # Calculate date range
-    to_date = datetime.now(timezone.utc)
+    to_date = _to_utc(_as_timestamp(now))
     from_date = to_date - timedelta(days=lookback_days)
 
     url = "https://finnhub.io/api/v1/company-news"

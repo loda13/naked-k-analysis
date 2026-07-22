@@ -6,7 +6,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from naked_k_news import collect_news
+from naked_k_news import (
+    _as_timestamp,
+    _canonical_url,
+    _dedupe_title,
+    _validate_windows,
+    collect_news,
+)
 from naked_k_news_finnhub import collect_finnhub_news
 
 
@@ -38,6 +44,8 @@ def collect_news_enhanced(
     Includes Finnhub professional financial news when API key is available.
     Prioritizes high-quality sources and filters by relevance.
     """
+    _validate_windows(lookback_days, fallback_days, max_items)
+    as_of = _as_timestamp(now)
     company_names = load_company_names()
     queries = _generate_queries(name, ticker, company_names)
 
@@ -49,6 +57,7 @@ def collect_news_enhanced(
         finnhub_lookback = max(lookback_days, 30)  # Extend Finnhub to 30 days
         finnhub_candidates = collect_finnhub_news(
             ticker,
+            now=as_of,
             lookback_days=finnhub_lookback,
             max_items=max_items * 2,
             get=get,
@@ -124,9 +133,8 @@ def collect_news_enhanced(
         reverse=True
     )
 
-    # Deduplicate top candidates
-    from naked_k_news import _deduplicate
-    selected = _deduplicate(scored_candidates, max_items)
+    # Preserve the relevance/quality ordering while removing duplicate stories.
+    selected = _deduplicate_ranked(scored_candidates, max_items)
 
     # Build response
     items = [
@@ -149,13 +157,38 @@ def collect_news_enhanced(
         "status": status,
         "name": name,
         "ticker": ticker,
-        "as_of": pd.Timestamp.now(tz="UTC").isoformat(),
+        "as_of": as_of.isoformat(),
         "window_days": lookback_days,
         "freshness": "fresh" if items else "insufficient",
         "items": items,
         "source_errors": list(set(source_errors_all)),
         "queries_used": queries[:3],
     }
+
+
+def _deduplicate_ranked(
+    candidates: list[dict[str, Any]], max_items: int
+) -> list[dict[str, Any]]:
+    """Deduplicate an already-ranked candidate list without reordering it."""
+    seen_titles: set[str] = set()
+    seen_urls: set[str] = set()
+    selected: list[dict[str, Any]] = []
+    for candidate in candidates:
+        normalized_title = _dedupe_title(candidate["title"])
+        canonical_url = _canonical_url(candidate["url"])
+        if (
+            (normalized_title and normalized_title in seen_titles)
+            or (canonical_url and canonical_url in seen_urls)
+        ):
+            continue
+        if normalized_title:
+            seen_titles.add(normalized_title)
+        if canonical_url:
+            seen_urls.add(canonical_url)
+        selected.append({**candidate, "url": canonical_url})
+        if len(selected) == max_items:
+            break
+    return selected
 
 
 def _build_relevance_keywords(name: str, ticker: str, company_names: dict) -> list[str]:

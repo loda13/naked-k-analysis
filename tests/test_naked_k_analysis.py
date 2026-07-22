@@ -16,7 +16,7 @@ import pandas as pd
 import naked_k_config
 import naked_k_llm
 import naked_k_analysis
-import naked_k_news
+import naked_k_news_enhanced
 import naked_k_news_llm
 
 
@@ -292,7 +292,7 @@ class NakedKAnalysisTests(unittest.TestCase):
             with (
                 patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
                 patch.object(naked_k_analysis, "build_trade_plan", return_value=technical),
-                patch.object(naked_k_news, "collect_news", side_effect=AssertionError("news collection called")) as collect,
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced", side_effect=AssertionError("news collection called")) as collect,
                 patch.object(
                     naked_k_news_llm,
                     "run_two_pass_deliberation",
@@ -394,7 +394,7 @@ class NakedKAnalysisTests(unittest.TestCase):
             with (
                 patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
                 patch.object(naked_k_analysis, "build_trade_plan", return_value=technical),
-                patch.object(naked_k_news, "collect_news", return_value=self._news_collection()),
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced", return_value=self._news_collection()),
             ):
                 markdown, reports = naked_k_analysis.run_analysis(
                     [("测试", "TEST")],
@@ -457,7 +457,7 @@ class NakedKAnalysisTests(unittest.TestCase):
             with (
                 patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
                 patch.object(naked_k_analysis, "build_trade_plan", side_effect=build),
-                patch.object(naked_k_news, "collect_news", side_effect=collect),
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced", side_effect=collect),
             ):
                 _, reports = naked_k_analysis.run_analysis(
                     [("失败公司", "FAIL"), ("成功公司", "PASS")],
@@ -543,8 +543,8 @@ class NakedKAnalysisTests(unittest.TestCase):
                     return_value=self._integration_report(),
                 ),
                 patch.object(
-                    naked_k_news,
-                    "collect_news",
+                    naked_k_news_enhanced,
+                    "collect_news_enhanced",
                     return_value=self._news_collection(),
                 ),
             ):
@@ -613,7 +613,7 @@ class NakedKAnalysisTests(unittest.TestCase):
                 with (
                     patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
                     patch.object(naked_k_analysis, "build_trade_plan", return_value=technical),
-                    patch.object(naked_k_news, "collect_news", return_value=self._news_collection()),
+                    patch.object(naked_k_news_enhanced, "collect_news_enhanced", return_value=self._news_collection()),
                 ):
                     _, reports = naked_k_analysis.run_analysis(
                         [("测试", "TEST")],
@@ -644,7 +644,7 @@ class NakedKAnalysisTests(unittest.TestCase):
             with (
                 patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
                 patch.object(naked_k_analysis, "build_trade_plan", return_value=self._integration_report()),
-                patch.object(naked_k_news, "collect_news", return_value=self._news_collection()),
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced", return_value=self._news_collection()),
                 patch.object(naked_k_analysis.naked_k_synthesis, "apply_deliberation", side_effect=explode_after_mutation),
             ):
                 _, reports = naked_k_analysis.run_analysis(
@@ -704,7 +704,7 @@ class NakedKAnalysisTests(unittest.TestCase):
             with (
                 patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
                 patch.object(naked_k_analysis, "build_trade_plan", side_effect=build),
-                patch.object(naked_k_news, "collect_news", side_effect=collect),
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced", side_effect=collect),
                 patch.object(
                     naked_k_analysis.naked_k_synthesis,
                     "apply_portfolio_guardrails",
@@ -763,7 +763,7 @@ class NakedKAnalysisTests(unittest.TestCase):
             with (
                 patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
                 patch.object(naked_k_analysis, "build_trade_plan", side_effect=build),
-                patch.object(naked_k_news, "collect_news", side_effect=collect),
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced", side_effect=collect),
                 patch.object(
                     naked_k_analysis.naked_k_synthesis,
                     "build_risk_context",
@@ -808,7 +808,7 @@ class NakedKAnalysisTests(unittest.TestCase):
             with (
                 patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
                 patch.object(naked_k_analysis, "build_trade_plan", side_effect=build),
-                patch.object(naked_k_news, "collect_news", return_value=self._news_collection()),
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced", return_value=self._news_collection()),
                 patch.object(
                     naked_k_analysis.naked_k_synthesis,
                     "snapshot_technical_conclusion",
@@ -868,7 +868,7 @@ class NakedKAnalysisTests(unittest.TestCase):
                 patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
                 patch.object(naked_k_analysis, "build_trade_plan", side_effect=build),
                 patch.object(naked_k_analysis, "_capture_technical_fields", side_effect=capture),
-                patch.object(naked_k_news, "collect_news", side_effect=collect),
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced", side_effect=collect),
             ):
                 _, reports = naked_k_analysis.run_analysis(
                     [("捕获失败", "FAIL"), ("后续成功", "PASS")],
@@ -927,7 +927,7 @@ class NakedKAnalysisTests(unittest.TestCase):
             with (
                 patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
                 patch.object(naked_k_analysis, "build_trade_plan", return_value=self._integration_report()),
-                patch.object(naked_k_news, "collect_news", return_value=self._news_collection()),
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced", return_value=self._news_collection()),
                 patch.object(
                     naked_k_analysis.naked_k_synthesis,
                     "_synchronized_candidate",
@@ -1034,7 +1034,7 @@ class NakedKAnalysisTests(unittest.TestCase):
                 self.subTest(limits=limits),
                 TemporaryDirectory() as tmpdir,
                 patch.object(naked_k_analysis, "load_ohlcv") as load,
-                patch.object(naked_k_news, "collect_news") as collect,
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced") as collect,
                 patch.object(naked_k_news_llm, "run_two_pass_deliberation") as deliberate,
             ):
                 with self.assertRaisesRegex(ValueError, "positive"):
@@ -1101,7 +1101,7 @@ class NakedKAnalysisTests(unittest.TestCase):
             with (
                 patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
                 patch.object(naked_k_analysis, "build_trade_plan", return_value=self._integration_report()),
-                patch.object(naked_k_news, "collect_news", return_value=self._news_collection()),
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced", return_value=self._news_collection()),
             ):
                 naked_k_analysis.run_analysis(
                     [("测试", "TEST")],
@@ -1161,7 +1161,7 @@ class NakedKAnalysisTests(unittest.TestCase):
             with (
                 patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
                 patch.object(naked_k_analysis, "build_trade_plan", return_value=self._integration_report()),
-                patch.object(naked_k_news, "collect_news", return_value=self._news_collection()),
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced", return_value=self._news_collection()),
                 patch.object(
                     naked_k_analysis.naked_k_synthesis,
                     "apply_portfolio_guardrails",
@@ -1188,7 +1188,7 @@ class NakedKAnalysisTests(unittest.TestCase):
             with (
                 patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
                 patch.object(naked_k_analysis, "build_trade_plan", return_value=self._integration_report()),
-                patch.object(naked_k_news, "collect_news", side_effect=AssertionError("collection called")) as collect,
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced", side_effect=AssertionError("collection called")) as collect,
                 patch.object(
                     naked_k_news_llm,
                     "run_two_pass_deliberation",
@@ -1268,8 +1268,8 @@ class NakedKAnalysisTests(unittest.TestCase):
                     return_value=self._integration_report(),
                 ),
                 patch.object(
-                    naked_k_news,
-                    "collect_news",
+                    naked_k_news_enhanced,
+                    "collect_news_enhanced",
                     side_effect=AssertionError("collection called"),
                 ),
                 patch.object(
@@ -1337,8 +1337,8 @@ class NakedKAnalysisTests(unittest.TestCase):
                     return_value=self._integration_report(),
                 ),
                 patch.object(
-                    naked_k_news,
-                    "collect_news",
+                    naked_k_news_enhanced,
+                    "collect_news_enhanced",
                     return_value=self._news_collection(),
                 ),
             ):
