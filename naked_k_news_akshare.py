@@ -14,16 +14,13 @@ from typing import Any
 
 import pandas as pd
 
-from naked_k_news import _as_timestamp, _canonical_url, _clip
+from naked_k_news import _as_timestamp, _candidate
 
 
 FetchCallable = Callable[..., Any]
 LoaderCallable = Callable[[], FetchCallable]
 
 _BEIJING_TZ = "Asia/Shanghai"
-_TITLE_LIMIT = 300
-_SUMMARY_LIMIT = 500
-_URL_LIMIT = 500
 
 
 def collect_akshare_news(
@@ -62,7 +59,7 @@ def collect_akshare_news(
     candidates: list[dict[str, Any]] = []
     try:
         for row in frame.to_dict("records"):
-            candidate = _candidate(row)
+            candidate = _row_candidate(row)
             if candidate is None:
                 continue
             if not cutoff <= candidate["published_at"] <= now_utc:
@@ -99,19 +96,16 @@ def _akshare_symbol(ticker: str) -> str:
     return symbol
 
 
-def _candidate(row: dict[str, Any]) -> dict[str, Any] | None:
-    title = _clip(str(row.get("新闻标题") or "").strip(), _TITLE_LIMIT)
-    published_at = _beijing_to_utc(row.get("发布时间"))
-    if not title or published_at is None:
-        return None
-    return {
-        "title": title,
-        "publisher": _clip(str(row.get("文章来源") or "").strip(), _TITLE_LIMIT),
-        "published_at": published_at,
-        "url": _clip(_canonical_url(str(row.get("新闻链接") or "")), _URL_LIMIT),
-        "summary": _clip(str(row.get("新闻内容") or "").strip(), _SUMMARY_LIMIT),
-        "source_provider": "akshare_em",
-    }
+def _row_candidate(row: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize one East Money row via the shared candidate builder."""
+    return _candidate(
+        title=row.get("新闻标题"),
+        publisher=row.get("文章来源"),
+        published_at=_beijing_to_utc(row.get("发布时间")),
+        url=row.get("新闻链接"),
+        summary=row.get("新闻内容"),
+        source_provider="akshare_em",
+    )
 
 
 def _beijing_to_utc(value: Any) -> pd.Timestamp | None:

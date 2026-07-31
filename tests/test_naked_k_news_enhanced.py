@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from unittest.mock import patch
 import unittest
 
@@ -28,6 +29,25 @@ def collection_item(
         "summary": title,
         "source_provider": source_provider,
     }
+
+
+@contextmanager
+def only_akshare(mapping: dict[str, object], items: list[dict[str, object]]):
+    """Stub every provider but AkShare, so a test sees only the items it supplies."""
+    with (
+        patch.object(
+            naked_k_news_enhanced, "load_company_names", return_value=mapping
+        ),
+        patch.object(
+            naked_k_news_enhanced, "collect_akshare_news", return_value=items
+        ),
+        patch.object(
+            naked_k_news_enhanced,
+            "collect_news",
+            return_value={"items": [], "source_errors": []},
+        ),
+    ):
+        yield
 
 
 class EnhancedNewsCollectionTests(unittest.TestCase):
@@ -246,21 +266,7 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
             "source_provider": "akshare_em",
         }
 
-        with (
-            patch.object(
-                naked_k_news_enhanced, "load_company_names", return_value=mapping
-            ),
-            patch.object(
-                naked_k_news_enhanced,
-                "collect_akshare_news",
-                return_value=[noise_item],
-            ),
-            patch.object(
-                naked_k_news_enhanced,
-                "collect_news",
-                return_value={"items": [], "source_errors": []},
-            ),
-        ):
+        with only_akshare(mapping, [noise_item]):
             result = naked_k_news_enhanced.collect_news_enhanced(
                 "小米", "1810.HK", now=NOW, use_finnhub=False
             )
@@ -287,21 +293,7 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
             "source_provider": "akshare_em",
         }
 
-        with (
-            patch.object(
-                naked_k_news_enhanced, "load_company_names", return_value=mapping
-            ),
-            patch.object(
-                naked_k_news_enhanced,
-                "collect_akshare_news",
-                return_value=[noise_item],
-            ),
-            patch.object(
-                naked_k_news_enhanced,
-                "collect_news",
-                return_value={"items": [], "source_errors": []},
-            ),
-        ):
+        with only_akshare(mapping, [noise_item]):
             result = naked_k_news_enhanced.collect_news_enhanced(
                 "腾讯", "0700.HK", now=NOW, use_finnhub=False
             )
@@ -324,21 +316,7 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
             url="https://akshare.example/pdd",
         )
 
-        with (
-            patch.object(
-                naked_k_news_enhanced, "load_company_names", return_value=mapping
-            ),
-            patch.object(
-                naked_k_news_enhanced,
-                "collect_akshare_news",
-                return_value=[acronym_collision, genuine],
-            ),
-            patch.object(
-                naked_k_news_enhanced,
-                "collect_news",
-                return_value={"items": [], "source_errors": []},
-            ),
-        ):
+        with only_akshare(mapping, [acronym_collision, genuine]):
             result = naked_k_news_enhanced.collect_news_enhanced(
                 "拼多多", "PDD", now=NOW, use_finnhub=False
             )
@@ -357,17 +335,7 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
             url="https://akshare.example/unknown",
         )
 
-        with (
-            patch.object(naked_k_news_enhanced, "load_company_names", return_value={}),
-            patch.object(
-                naked_k_news_enhanced, "collect_akshare_news", return_value=[item]
-            ),
-            patch.object(
-                naked_k_news_enhanced,
-                "collect_news",
-                return_value={"items": [], "source_errors": []},
-            ),
-        ):
+        with only_akshare({}, [item]):
             result = naked_k_news_enhanced.collect_news_enhanced(
                 "", "600519.SS", now=NOW, use_finnhub=False
             )
