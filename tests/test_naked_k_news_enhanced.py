@@ -42,6 +42,29 @@ def only_akshare(mapping: dict[str, object], items: list[dict[str, object]]):
             naked_k_news_enhanced, "collect_akshare_news", return_value=items
         ),
         patch.object(
+            naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
+        ),
+        patch.object(
+            naked_k_news_enhanced,
+            "collect_news",
+            return_value={"items": [], "source_errors": []},
+        ),
+    ):
+        yield
+
+
+@contextmanager
+def only_sina(mapping: dict[str, object], items: list[dict[str, object]]):
+    """Stub every provider but Sina, so a test sees only the items it supplies."""
+    with (
+        patch.object(
+            naked_k_news_enhanced, "load_company_names", return_value=mapping
+        ),
+        patch.object(
+            naked_k_news_enhanced, "collect_sina_rolling_news", return_value=items
+        ),
+        patch.object(naked_k_news_enhanced, "collect_akshare_news", return_value=[]),
+        patch.object(
             naked_k_news_enhanced,
             "collect_news",
             return_value={"items": [], "source_errors": []},
@@ -62,6 +85,9 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
                 patch.object(naked_k_news_enhanced, "collect_news") as collect,
                 patch.object(naked_k_news_enhanced, "collect_finnhub_news") as finnhub,
                 patch.object(naked_k_news_enhanced, "collect_akshare_news") as akshare,
+                patch.object(
+                    naked_k_news_enhanced, "collect_sina_rolling_news"
+                ) as sina,
                 self.assertRaises(ValueError),
             ):
                 naked_k_news_enhanced.collect_news_enhanced(
@@ -70,6 +96,7 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
             collect.assert_not_called()
             finnhub.assert_not_called()
             akshare.assert_not_called()
+            sina.assert_not_called()
 
     def test_quality_ranking_survives_deduplication_and_uses_supplied_clock(self) -> None:
         mapping = {
@@ -107,6 +134,9 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
                 naked_k_news_enhanced, "collect_akshare_news", return_value=[]
             ) as akshare,
             patch.object(
+                naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
+            ) as sina,
+            patch.object(
                 naked_k_news_enhanced,
                 "collect_news",
                 return_value=base_result,
@@ -128,6 +158,15 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
         )
         akshare.assert_called_once_with(
             "PDD", now=NOW, lookback_days=30, max_items=4, fetch=None
+        )
+        sina.assert_called_once_with(
+            "PDD",
+            "拼多多",
+            now=NOW,
+            lookback_days=7,
+            max_items=4,
+            aliases=["拼多多", "Pinduoduo"],
+            get=None,
         )
         self.assertEqual(collect.call_count, 3)
         self.assertEqual(
@@ -192,6 +231,9 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
             patch.object(
                 naked_k_news_enhanced, "collect_akshare_news", return_value=[]
             ),
+            patch.object(
+                naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
+            ),
         ):
             result = naked_k_news_enhanced.collect_news_enhanced(
                 "测试公司", "TEST", now=NOW, use_finnhub=False
@@ -235,6 +277,9 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
                 naked_k_news_enhanced,
                 "collect_akshare_news",
                 return_value=[akshare_item],
+            ),
+            patch.object(
+                naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
             ),
             patch.object(
                 naked_k_news_enhanced,
@@ -358,6 +403,9 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
                 naked_k_news_enhanced, "load_company_names", return_value=mapping
             ),
             patch.object(
+                naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
+            ),
+            patch.object(
                 naked_k_news_enhanced,
                 "collect_news",
                 return_value={"items": [body_match], "source_errors": []},
@@ -376,6 +424,9 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
                 naked_k_news_enhanced, "collect_akshare_news"
             ) as akshare,
             patch.object(
+                naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
+            ),
+            patch.object(
                 naked_k_news_enhanced,
                 "collect_news",
                 return_value={"items": [], "source_errors": []},
@@ -390,6 +441,170 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
             )
 
         akshare.assert_not_called()
+
+    def test_sina_can_be_disabled(self) -> None:
+        with (
+            patch.object(naked_k_news_enhanced, "load_company_names", return_value={}),
+            patch.object(naked_k_news_enhanced, "collect_akshare_news", return_value=[]),
+            patch.object(
+                naked_k_news_enhanced, "collect_sina_rolling_news"
+            ) as sina,
+            patch.object(
+                naked_k_news_enhanced,
+                "collect_news",
+                return_value={"items": [], "source_errors": []},
+            ),
+        ):
+            naked_k_news_enhanced.collect_news_enhanced(
+                "小米",
+                "1810.HK",
+                now=NOW,
+                use_finnhub=False,
+                use_sina=False,
+            )
+
+        sina.assert_not_called()
+
+    def test_sec_can_be_disabled(self) -> None:
+        with (
+            patch.object(naked_k_news_enhanced, "load_company_names", return_value={}),
+            patch.object(naked_k_news_enhanced, "collect_akshare_news", return_value=[]),
+            patch.object(
+                naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
+            ),
+            patch.object(
+                naked_k_news_enhanced, "collect_sec_8k_filings"
+            ) as sec,
+            patch.object(
+                naked_k_news_enhanced,
+                "collect_news",
+                return_value={"items": [], "source_errors": []},
+            ),
+        ):
+            naked_k_news_enhanced.collect_news_enhanced(
+                "拼多多",
+                "PDD",
+                now=NOW,
+                use_finnhub=False,
+                use_sec=False,
+            )
+
+        sec.assert_not_called()
+
+    def test_sina_failure_does_not_abort_collection(self) -> None:
+        """A newswire outage must still leave the technical report renderable."""
+        with (
+            patch.object(naked_k_news_enhanced, "load_company_names", return_value={}),
+            patch.object(naked_k_news_enhanced, "collect_akshare_news", return_value=[]),
+            patch.object(
+                naked_k_news_enhanced,
+                "collect_sina_rolling_news",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch.object(
+                naked_k_news_enhanced,
+                "collect_news",
+                return_value={"items": [], "source_errors": []},
+            ),
+        ):
+            result = naked_k_news_enhanced.collect_news_enhanced(
+                "小米", "1810.HK", now=NOW, use_finnhub=False
+            )
+
+        self.assertIn("RuntimeError", result["source_errors"])
+
+    def test_sina_items_bypass_the_relevance_gate(self) -> None:
+        """Sina items are attributed by headline upstream, so they arrive scoped.
+
+        The headline need not repeat the issuer name for the item to be real:
+        "新车定价25.99万" is attributed by the collector, not by this gate.
+        """
+        mapping = {"1810.HK": {"zh": ["小米"], "en": ["Xiaomi"], "keywords": ["Mi"]}}
+        sina_item = collection_item(
+            title="新车定价25.99万元起",
+            published_at="2026-07-30T02:00:00+00:00",
+            source_provider="sina",
+            url="",
+        )
+
+        with only_sina(mapping, [sina_item]):
+            result = naked_k_news_enhanced.collect_news_enhanced(
+                "小米", "1810.HK", now=NOW, use_finnhub=False, max_items=3
+            )
+
+        self.assertEqual(
+            [item["source_provider"] for item in result["items"]], ["sina"]
+        )
+
+    def test_sina_outranks_google_but_not_finnhub(self) -> None:
+        published_at = "2026-07-30T02:00:00+00:00"
+        mapping = {"1810.HK": {"zh": ["小米"], "en": ["Xiaomi"]}}
+        finnhub_item = collection_item(
+            title="Xiaomi quarterly result",
+            published_at=published_at,
+            source_provider="finnhub",
+            url="https://finnhub.example/xiaomi-q",
+        )
+        sina_item = collection_item(
+            title="小米发布新车",
+            published_at=published_at,
+            source_provider="sina",
+            url="",
+        )
+        google_item = collection_item(
+            title="Xiaomi in the press",
+            published_at=published_at,
+            source_provider="google_news_rss",
+            url="https://google.example/xiaomi-p",
+        )
+
+        with (
+            patch.object(
+                naked_k_news_enhanced, "load_company_names", return_value=mapping
+            ),
+            patch.object(
+                naked_k_news_enhanced,
+                "collect_finnhub_news",
+                return_value=[finnhub_item],
+            ),
+            patch.object(naked_k_news_enhanced, "collect_akshare_news", return_value=[]),
+            patch.object(
+                naked_k_news_enhanced,
+                "collect_sina_rolling_news",
+                return_value=[sina_item],
+            ),
+            patch.object(
+                naked_k_news_enhanced,
+                "collect_news",
+                return_value={"items": [google_item], "source_errors": []},
+            ),
+        ):
+            result = naked_k_news_enhanced.collect_news_enhanced(
+                "小米", "1810.HK", now=NOW, max_items=3
+            )
+
+        self.assertEqual(
+            [item["source_provider"] for item in result["items"]],
+            ["finnhub", "sina", "google_news_rss"],
+        )
+
+    def test_loose_keyword_tokens_are_withheld_from_sina(self) -> None:
+        """"Mi" and "盲盒" would misattribute items in a market-wide digest."""
+        mapping = {
+            "1810.HK": {
+                "zh": ["小米", "小米集团"],
+                "en": ["Xiaomi"],
+                "keywords": ["Mi", "Redmi", "雷军"],
+            }
+        }
+
+        self.assertEqual(
+            naked_k_news_enhanced._sina_aliases("1810.HK", mapping),
+            ["小米", "小米集团", "Xiaomi"],
+        )
+
+    def test_sina_aliases_are_empty_for_an_unmapped_ticker(self) -> None:
+        self.assertEqual(naked_k_news_enhanced._sina_aliases("XYZ", {}), [])
 
     def test_akshare_failure_does_not_abort_collection(self) -> None:
         mapping = {"1810.HK": {"zh": ["小米"], "en": ["Xiaomi"]}}
@@ -409,6 +624,9 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
             ),
             patch.object(
                 naked_k_news_enhanced, "collect_akshare_news", side_effect=broken
+            ),
+            patch.object(
+                naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
             ),
             patch.object(
                 naked_k_news_enhanced,

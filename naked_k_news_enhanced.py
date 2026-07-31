@@ -16,6 +16,8 @@ from naked_k_news import (
 )
 from naked_k_news_akshare import collect_akshare_news
 from naked_k_news_finnhub import collect_finnhub_news
+from naked_k_news_sec import collect_sec_8k_filings
+from naked_k_news_sina import collect_sina_rolling_news
 
 
 # A keyword hit in the title is worth more than one in the body. The relevance
@@ -43,7 +45,11 @@ class _SourcePolicy:
 
 _SOURCE_POLICIES = {
     "finnhub": _SourcePolicy(quality_weight=3.0, bypasses_gate=True),
+    "sec_edgar": _SourcePolicy(quality_weight=5.0, bypasses_gate=True),
     "akshare_em": _SourcePolicy(quality_weight=2.0, requires_title_match=True),
+    # Sina is a market-wide newswire digest already attributed by headline
+    # upstream, so it arrives pre-scoped to the symbol.
+    "sina": _SourcePolicy(quality_weight=2.0, bypasses_gate=True),
     "google_news_rss": _SourcePolicy(quality_weight=1.0),
     "yahoo_finance": _SourcePolicy(quality_weight=0.5),
 }
@@ -59,6 +65,20 @@ def load_company_names() -> dict[str, dict[str, list[str]]]:
     return {}
 
 
+def _sina_aliases(
+    ticker: str, company_names: dict[str, dict[str, list[str]]]
+) -> list[str]:
+    """Return the issuer-name aliases safe to match inside a newswire digest.
+
+    Only the ``zh`` and ``en`` name lists are used. The ``keywords`` list holds
+    deliberately loose product and person tokens ("Mi", "QQ", "盲盒") that earn
+    their keep when scoring a feed already scoped to one symbol, but would
+    misattribute unrelated items in a market-wide digest.
+    """
+    mapping = company_names.get(ticker, {})
+    return [*mapping.get("zh", []), *mapping.get("en", [])]
+
+
 def collect_news_enhanced(
     name: str,
     ticker: str,
@@ -72,14 +92,20 @@ def collect_news_enhanced(
     use_finnhub: bool = True,
     use_akshare: bool = True,
     akshare_fetch=None,
+    use_sina: bool = True,
+    sina_get=None,
+    use_sec: bool = True,
+    sec_get=None,
 ) -> dict[str, Any]:
     """
     Enhanced news collection with multi-query strategy and Finnhub integration.
 
     Performs multiple searches using company name variations and merges results.
     Includes Finnhub professional financial news when API key is available, and
-    AkShare Chinese-language coverage when the optional dependency is installed.
-    Prioritizes high-quality sources and filters by relevance.
+    AkShare Chinese-language coverage plus Sina's minute-level newswire when the
+    optional dependency is installed. For US-listed tickers, includes SEC EDGAR
+    8-K material event filings. Prioritizes high-quality sources and filters by
+    relevance.
     """
     _validate_windows(lookback_days, fallback_days, max_items)
     as_of = _as_timestamp(now)
@@ -117,7 +143,41 @@ def collect_news_enhanced(
         except Exception as exc:  # Providers must never abort the caller.
             source_errors_all.append(type(exc).__name__)
 
-    # Priority 3: Multi-query search (Yahoo + Google)
+    # Priority 3: Sina's newswire digest, the only minute-level source here.
+    # It carries breaking items (product launches, buybacks) hours before the
+    # slower per-symbol feeds pick them up.
+    if use_sina:
+        try:
+            all_candidates.extend(
+                collect_sina_rolling_news(
+                    ticker,
+                    name,
+                    now=as_of,
+                    lookback_days=lookback_days,
+                    max_items=max_items * 2,
+                    aliases=_sina_aliases(ticker, company_names),
+                    get=sina_get,
+                )
+            )
+        except Exception as exc:  # Providers must never abort the caller.
+            source_errors_all.append(type(exc).__name__)
+
+    # Priority 4: SEC EDGAR 8-K filings for US-listed material events.
+    if use_sec:
+        try:
+            all_candidates.extend(
+                collect_sec_8k_filings(
+                    ticker,
+                    now=as_of,
+                    lookback_days=lookback_days,
+                    max_items=max_items * 2,
+                    get=sec_get,
+                )
+            )
+        except Exception as exc:
+            source_errors_all.append(type(exc).__name__)
+
+    # Priority 5: Multi-query search (Yahoo + Google)
     for query_text in queries[:3]:  # Limit to top 3 queries to avoid rate limits
         result = collect_news(
             name="",  # Empty to use raw query
@@ -162,6 +222,15 @@ def collect_news_enhanced(
             keywords
         )
         relevance_score = title_score + body_score
+
+        # Sources that bypass the relevance gate (Finnhub, SEC, Sina) are
+        # pre-attributed upstream, so a keyword miss means the title was
+        # phrased generically ("Form 8-K filing"), not that the item is
+        # irrelevant. Give them a baseline score equal to one title hit so they
+        # rank competitively with keyword-matched items from lower-quality sources.
+        policy = _source_policy(c["source_provider"])
+        if policy.bypasses_gate and relevance_score == 0:
+            relevance_score = 1.0  # One title-match worth
 
         # Apply source quality multiplier
         quality_weight = _get_source_quality_weight(c["source_provider"])
