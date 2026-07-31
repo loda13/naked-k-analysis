@@ -99,8 +99,34 @@ python naked_k_analysis.py --news --news-model your-selected-model-id \
 新闻来源包括：
 - **Yahoo Finance Search** + **Google News RSS**（无需配置，默认启用）
 - **Finnhub 专业财经新闻**（可选，推荐，v3.2.0 新增）
+- **AkShare 中文财经新闻**（可选，无需 API key，v3.3.0 新增）
 
 Finnhub 提供 SeekingAlpha、Benzinga 等专业财经来源，配合智能相关性过滤和数据源优先级系统，相关新闻比例从 0% 提升至 71%。详见上文"Finnhub 集成"章节。
+
+AkShare 补上中文财经媒体覆盖，详见下文"AkShare 集成"章节。
+
+#### AkShare 集成（可选，无需 API key）✨ 新增
+
+港股与 A 股的实质性消息主要以中文发布，Finnhub / Google / Yahoo 对这块覆盖有限；`9992.HK` 这类没有美股 ADR 映射的标的更是只剩 Yahoo 噪音。`naked_k_news_akshare.py` 通过 `akshare.stock_news_em`（东方财富个股新闻）补上这一层：
+
+**特点**：
+- 无需 API key，0.1s 返回
+- 来源包括证券时报网、每日经济新闻、界面新闻、第一财经、财联社等
+- 质量权重 **2.0**（介于 Finnhub 3.0 与 Google 1.0 之间）
+- 东方财富每周条数较少，因此喂 30 天窗口而非 7 天主窗
+
+**安装**（可选依赖，未安装则自动降级）：
+```bash
+python -m pip install akshare
+```
+
+**实现要点**：
+- **ticker 必须补零到 5 位**：`01810` 返回小米回购公告；`1810` 会匹配到"利润暴增1810%"这类无关标题
+- **时间戳按北京时间解析**：东方财富返回朴素本地时间，当作 UTC 处理会产生 8 小时误差
+- **窗口在客户端过滤**：该接口忽略日期范围参数，固定返回约 10 条，不过滤会让数月前的旧闻漏进报告
+- **必须命中标题才保留**：东方财富会混入"港股通净卖出""南向资金"这类全市场资金流水表，其正文列出了每一个 ticker 代码与发行人名称，仅靠正文匹配无法拦截
+
+未安装 akshare、接口异常或返回格式异常时一律降级为空列表，报告仍输出纯技术结论。
 
 #### Finnhub 集成（可选，强烈推荐）✨ 新增
 
@@ -373,6 +399,7 @@ python naked_k_analysis.py --llm
 - `naked_k_llm.py`：OpenAI-compatible LLM adapter、环境变量配置、请求构造、响应解析和密钥脱敏
 - `naked_k_news.py`：公开新闻采集（yfinance Search / Google News RSS）、归一化去重和时效窗口
 - `naked_k_news_finnhub.py`：Finnhub 专业财经新闻采集器（v3.2.0 新增）
+- `naked_k_news_akshare.py`：AkShare 中文财经新闻采集器（东方财富个股新闻，可选依赖，v3.3.0 新增）
 - `naked_k_news_enhanced.py`：多数据源智能合并、相关性评分、质量权重系统（v3.2.0 新增）
 - `naked_k_news_llm.py`：两轮消息面斟酌、Anthropic Messages adapter、零宽/形近字/leetspeak 混淆检测、指令注入隔离和结构化证据引用校验
 - `naked_k_synthesis.py`：消息与技术综合、交叉佐证门、规范化命题指纹、实际敞口比较和价格字段边界保护
@@ -396,7 +423,8 @@ python naked_k_analysis.py --llm
 - `tests/test_naked_k_llm.py`：OpenAI-compatible LLM adapter、密钥脱敏和请求解析测试
 - `tests/test_naked_k_news.py`：公开新闻采集、归一化去重和时效窗口测试
 - `tests/test_naked_k_news_finnhub.py`：Finnhub API 连接、数据格式和降级测试（v3.2.0 新增）
-- `tests/test_naked_k_news_enhanced.py`：多源合并、相关性评分、质量权重和单词边界匹配测试（v3.2.0 新增）
+- `tests/test_naked_k_news_akshare.py`：AkShare ticker 补零、北京时间转换、窗口过滤和可选依赖降级测试（v3.3.0 新增）
+- `tests/test_naked_k_news_enhanced.py`：多源合并、相关性评分、质量权重、单词边界匹配和 AkShare 标题门测试（v3.2.0 新增）
 - `tests/test_naked_k_news_llm.py`：两轮消息面斟酌、零宽/形近字/leetspeak 混淆检测、指令注入隔离和证据引用校验测试
 - `tests/test_naked_k_synthesis.py`：消息与技术综合、交叉佐证门、规范化命题指纹和实际敞口门测试
 - `tests/test_naked_k_audit.py`：结构化运行审计 JSONL 测试
