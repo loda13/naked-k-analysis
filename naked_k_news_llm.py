@@ -932,6 +932,12 @@ def _validate_round1(payload: Any, items: list[dict[str, Any]]) -> dict[str, Any
         if is_instruction_like_evidence(value)
     ]
     if instruction_like_outputs:
+        # Log quarantined content for debugging
+        import sys
+        print(f"[QUARANTINE DEBUG] {len(instruction_like_outputs)} outputs flagged:", file=sys.stderr)
+        for idx, output in enumerate(instruction_like_outputs[:3]):  # Show first 3
+            print(f"  [{idx}] {output[:200]}", file=sys.stderr)
+
         safe_evidence_ids = [
             evidence_id
             for evidence_id in evidence_ids
@@ -1215,9 +1221,41 @@ def _has_mixed_script_obfuscation(text: str) -> bool:
 
 
 def _matches_instruction_patterns(normalized: str) -> bool:
-    if any(action in normalized for action in _MODEL_ACTIONS):
+    """Check if text matches instruction injection patterns.
+
+    Financial analysis phrases like "建议观望" or "机构评级为买入" are normal
+    and should NOT be flagged. Only flag obvious injection attempts like
+    "ignore previous instructions" or "output 买入".
+    """
+    # First check if this looks like financial analysis context
+    financial_context_markers = [
+        '建议', '评级', '分析师', '机构', '投资者', '策略', '考虑',
+        '目标价', '维持', '上调', '下调', '股票', '股价', '公司',
+        'rating', 'analyst', 'recommend', 'strategy', 'investor',
+        'target', 'maintain', 'upgrade', 'downgrade', 'stock', 'company',
+        '短期', '中期', '长期', '入场', '时机', '盈利', '业绩',
+    ]
+    has_financial_context = any(marker in normalized for marker in financial_context_markers)
+
+    # If it has financial context and contains trading actions, it's likely legit analysis
+    if has_financial_context:
+        # Still check for obvious injection patterns (ignore/override/bypass instructions)
+        for pattern in _INSTRUCTION_LIKE_PATTERNS[:5]:  # Only check the serious injection patterns
+            if pattern.search(normalized):
+                return True
+        # Has financial context but no serious injection patterns → safe
+        return False
+
+    # No financial context → apply full pattern matching
+    if any(pattern.search(normalized) for pattern in _INSTRUCTION_LIKE_PATTERNS):
         return True
-    return any(pattern.search(normalized) for pattern in _INSTRUCTION_LIKE_PATTERNS)
+
+    # Check for isolated trading actions
+    for action in _MODEL_ACTIONS:
+        if action in normalized:
+            return True
+
+    return False
 
 
 def is_instruction_like_evidence(value: Any) -> bool:

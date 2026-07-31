@@ -165,19 +165,42 @@ def _strip_markdown_json_fence(content: str) -> str:
 
 
 def _parse_content(content: str) -> dict[str, Any] | None:
+    """Parse JSON from LLM response with multiple fallback strategies.
+
+    Handles:
+    1. Direct JSON
+    2. JSON wrapped in markdown code fences
+    3. JSON embedded in text (extract between first { and last })
+    4. Malformed JSON with common issues (trailing commas, missing quotes)
+    """
     text = content.strip()
+
+    # Try 1: Direct parse
     parsed = _parse_json_object(text)
     if parsed is not None:
         return parsed
 
+    # Try 2: Strip markdown code fences
     parsed = _parse_json_object(_strip_markdown_json_fence(text))
     if parsed is not None:
         return parsed
 
+    # Try 3: Extract JSON from mixed content
     start = text.find("{")
     end = text.rfind("}")
     if start >= 0 and end > start:
-        return _parse_json_object(text[start : end + 1])
+        candidate = text[start : end + 1]
+        parsed = _parse_json_object(candidate)
+        if parsed is not None:
+            return parsed
+
+        # Try 4: Fix common JSON issues (trailing commas before } or ])
+        import re
+        fixed = re.sub(r',(\s*[}\]])', r'\1', candidate)
+        parsed = _parse_json_object(fixed)
+        if parsed is not None:
+            return parsed
+
     return None
 
 
@@ -218,12 +241,21 @@ def generate_llm_commentary(
     payload = response.json()
     choices = payload.get("choices") or []
     content = str((((choices[0] if choices else {}).get("message") or {}).get("content")) or "")
+
+    parsed = _parse_content(content)
+    if parsed is None and content:
+        # Log parsing failure for debugging
+        import sys
+        print(f"[LLM JSON PARSE FAIL] Unable to parse LLM response:", file=sys.stderr)
+        print(f"  Content length: {len(content)}", file=sys.stderr)
+        print(f"  First 300 chars: {content[:300]}", file=sys.stderr)
+
     return {
         "status": "ok",
         "provider": config.provider,
         "model": config.model,
         "content": content,
-        "parsed": _parse_content(content),
+        "parsed": parsed,
         "usage": payload.get("usage"),
         "endpoint": openai_chat_completions_url(config.base_url),
     }
