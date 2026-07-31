@@ -1,11 +1,17 @@
 """Sina rolling-newswire collector for minute-level breaking coverage.
 
-Wraps Sina's global live feed (``akshare.stock_info_global_sina``). Unlike the
-per-symbol East Money feed in :mod:`naked_k_news_akshare`, this is a
-market-wide digest: every item is scanned against the symbol's aliases, so the
-caller must gate it on a title match (see ``_SOURCE_POLICIES``). AkShare is an
-optional dependency: when absent, or on any provider failure, the collector
-degrades to an empty list so the caller still renders a pure technical report.
+Reads Sina's global live feed (the ``zhibo.sina.com.cn`` endpoint behind
+https://finance.sina.com.cn/7x24). Unlike the per-symbol East Money feed in
+:mod:`naked_k_news_akshare`, this is a market-wide digest: every item is scanned
+against the symbol's aliases, so attribution happens here rather than in the
+caller's relevance gate.
+
+The endpoint is paged directly rather than through ``akshare``:
+``akshare.stock_info_global_sina`` hardcodes ``page_size=20``, and the feed is
+busy enough that 20 rows span only ten-odd minutes — far too narrow for a
+multi-day lookback. Paging back until the cutoff is what makes the window
+meaningful. Any provider failure degrades to an empty list so the caller still
+renders a pure technical report.
 
 The feed carries no per-item URL or publisher, and packs headline and body into
 one ``【标题】正文`` string, so both are split out here.
@@ -25,10 +31,19 @@ from naked_k_news import _as_timestamp, _candidate
 
 FetchCallable = Callable[..., Any]
 LoaderCallable = Callable[[], FetchCallable]
+GetCallable = Callable[..., Any]
 
 _BEIJING_TZ = "Asia/Shanghai"
 _SOURCE_PROVIDER = "sina"
 _PUBLISHER = "新浪财经"
+
+_FEED_URL = "https://zhibo.sina.com.cn/api/zhibo/feed"
+# zhibo_id 152 is the 7x24 global finance channel.
+_ZHIBO_ID = "152"
+_PAGE_SIZE = 100
+# The feed runs ~100 items per 45 minutes, so 20 pages reaches roughly a day.
+# Deep history is East Money's job; this source exists for recency.
+_MAX_PAGES = 20
 
 # Sina packs the headline in full-width brackets ahead of the body, e.g.
 # "【小米新车定价25.99万】小米今日发布...". Items without brackets are plain
@@ -44,14 +59,13 @@ def collect_sina_rolling_news(
     lookback_days: int = 7,
     max_items: int = 20,
     aliases: list[str] | None = None,
-    fetch: FetchCallable | None = None,
-    loader: LoaderCallable | None = None,
+    get: GetCallable | None = None,
 ) -> list[dict[str, Any]]:
     """Return normalized, newest-first Sina newswire items mentioning the symbol.
 
-    Sina publishes naive Beijing timestamps and ignores any date range, so
-    timestamps are localized explicitly and the lookback window is applied
-    client-side.
+    Sina publishes naive Beijing timestamps, so they are localized explicitly.
+    The feed is a reverse-chronological stream with no date filter, so pages are
+    walked until one falls entirely before the cutoff.
     """
     if lookback_days <= 0:
         raise ValueError("lookback_days must be positive")
@@ -64,27 +78,43 @@ def collect_sina_rolling_news(
     if not keywords:
         return []
 
-    try:
-        if fetch is None:
-            fetch = (loader or _load_stock_info_global_sina)()
-        frame = fetch()
-    except Exception:  # Providers must never abort the caller.
-        return []
+    if get is None:
+        import requests
 
-    if not isinstance(frame, pd.DataFrame):
-        return []
+        get = requests.get
 
     candidates: list[dict[str, Any]] = []
-    try:
-        for row in frame.to_dict("records"):
+    seen_keys: set[tuple[str, str]] = set()
+
+    for page in range(1, _MAX_PAGES + 1):
+        try:
+            rows = _fetch_page(get, page)
+        except Exception:  # Providers must never abort the caller.
+            break
+        if not rows:
+            break
+
+        page_exhausted = False
+        for row in rows:
+            timestamp = _beijing_to_utc(row.get("时间"))
+            if timestamp is None:
+                continue
+            if timestamp < cutoff:
+                # Reverse-chronological, so this page has run past the window.
+                page_exhausted = True
+                continue
+            if timestamp > now_utc:
+                continue
+            key = (str(row.get("时间")), str(row.get("内容"))[:60])
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
             candidate = _row_candidate(row, keywords)
-            if candidate is None:
-                continue
-            if not cutoff <= candidate["published_at"] <= now_utc:
-                continue
-            candidates.append(candidate)
-    except Exception:  # Malformed frames must not abort the caller.
-        return []
+            if candidate is not None:
+                candidates.append(candidate)
+
+        if page_exhausted:
+            break
 
     candidates.sort(key=lambda item: item["published_at"], reverse=True)
     return [
@@ -93,11 +123,31 @@ def collect_sina_rolling_news(
     ]
 
 
-def _load_stock_info_global_sina() -> FetchCallable:
-    """Resolve the AkShare entry point lazily so the dependency stays optional."""
-    import akshare
-
-    return akshare.stock_info_global_sina
+def _fetch_page(get: GetCallable, page: int) -> list[dict[str, Any]]:
+    """Return one page of raw feed rows in the frame's column vocabulary."""
+    response = get(
+        _FEED_URL,
+        params={
+            "page": str(page),
+            "page_size": str(_PAGE_SIZE),
+            "zhibo_id": _ZHIBO_ID,
+            "tag_id": "0",
+            "dire": "f",
+            "dpc": "1",
+            "pagesize": str(_PAGE_SIZE),
+            "type": "1",
+        },
+        timeout=15,
+    )
+    payload = response.json()
+    items = payload["result"]["data"]["feed"]["list"]
+    if not isinstance(items, list):
+        return []
+    return [
+        {"时间": item.get("create_time"), "内容": item.get("rich_text")}
+        for item in items
+        if isinstance(item, dict)
+    ]
 
 
 def _match_keywords(

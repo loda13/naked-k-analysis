@@ -92,7 +92,7 @@ def collect_news_enhanced(
     use_akshare: bool = True,
     akshare_fetch=None,
     use_sina: bool = True,
-    sina_fetch=None,
+    sina_get=None,
 ) -> dict[str, Any]:
     """
     Enhanced news collection with multi-query strategy and Finnhub integration.
@@ -152,7 +152,7 @@ def collect_news_enhanced(
                     lookback_days=lookback_days,
                     max_items=max_items * 2,
                     aliases=_sina_aliases(ticker, company_names),
-                    fetch=sina_fetch,
+                    get=sina_get,
                 )
             )
         except Exception as exc:  # Providers must never abort the caller.

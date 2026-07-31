@@ -166,7 +166,7 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
             lookback_days=7,
             max_items=4,
             aliases=["拼多多", "Pinduoduo"],
-            fetch=None,
+            get=None,
         )
         self.assertEqual(collect.call_count, 3)
         self.assertEqual(
@@ -230,6 +230,9 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
             patch.object(naked_k_news_enhanced, "collect_news", return_value=base_result),
             patch.object(
                 naked_k_news_enhanced, "collect_akshare_news", return_value=[]
+            ),
+            patch.object(
+                naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
             ),
         ):
             result = naked_k_news_enhanced.collect_news_enhanced(
@@ -398,6 +401,9 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
         with (
             patch.object(
                 naked_k_news_enhanced, "load_company_names", return_value=mapping
+            ),
+            patch.object(
+                naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
             ),
             patch.object(
                 naked_k_news_enhanced,
@@ -592,6 +598,9 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
             ),
             patch.object(
                 naked_k_news_enhanced, "collect_akshare_news", side_effect=broken
+            ),
+            patch.object(
+                naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
             ),
             patch.object(
                 naked_k_news_enhanced,
