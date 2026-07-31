@@ -104,6 +104,26 @@ def collect_cls_breaking_news(ticker: str, lookback_hours: int = 24) -> list[dic
 
 ---
 
+#### 3. **SEC EDGAR** — ✅ 已接入（`naked_k_news_sec.py`）
+- **覆盖范围**：美国上市公司官方申报文件
+- **时效性**：实时（公司申报后立即公开）
+- **接入方式**：SEC EDGAR JSON API（`data.sec.gov/submissions/CIK{cik}.json`）
+  - 需要 User-Agent header（SEC 政策要求）
+  - 限流：10 次/秒（单次查询远低于此阈值）
+- **返回结构**：申报类型、申报日期、文档 URL
+- **实际能力边界**：
+  - 仅覆盖**美国本土上市公司**，OTC ADR（如 TCEHY、XIACF）不在 SEC 数据库中
+  - 当前接入 **Form 8-K**（重大事件：并购、高管变动、财报发布等）
+  - 文档是 HTML 法律文本，采集器仅返回元数据（标题、日期、URL），
+    实际摘要留给下游 LLM 合成
+  - 标题格式为 "Form 8-K filing on YYYY-MM-DD"，不包含公司名，
+    因此设置了最高 `quality_weight=5.0` 和 `bypasses_gate=True`，
+    确保官方申报优先级高于关键词匹配的新闻聚合源
+- **适用标的**：PDD、AAPL、TSLA 等美股（非 ADR）
+- **优先级**：⭐⭐⭐
+
+---
+
 ### 🌐 **长期探索**（社交情绪 + 另类数据）
 
 #### 5. **雪球动态**
@@ -129,7 +149,7 @@ def collect_cls_breaking_news(ticker: str, lookback_hours: int = 24) -> list[dic
 
 ---
 
-#### 6. **Twitter/X 财经博主聚合**
+#### 4. **Twitter/X 财经博主聚合**
 - **覆盖范围**：全球市场，时效性极强
 - **内容类型**：
   - 突发新闻

@@ -16,7 +16,7 @@ from naked_k_news import (
 )
 from naked_k_news_akshare import collect_akshare_news
 from naked_k_news_finnhub import collect_finnhub_news
-
+from naked_k_news_sec import collect_sec_8k_filings
 from naked_k_news_sina import collect_sina_rolling_news
 
 
@@ -45,6 +45,7 @@ class _SourcePolicy:
 
 _SOURCE_POLICIES = {
     "finnhub": _SourcePolicy(quality_weight=3.0, bypasses_gate=True),
+    "sec_edgar": _SourcePolicy(quality_weight=5.0, bypasses_gate=True),
     "akshare_em": _SourcePolicy(quality_weight=2.0, requires_title_match=True),
     # Sina is a market-wide newswire digest already attributed by headline
     # upstream, so it arrives pre-scoped to the symbol.
@@ -93,6 +94,8 @@ def collect_news_enhanced(
     akshare_fetch=None,
     use_sina: bool = True,
     sina_get=None,
+    use_sec: bool = True,
+    sec_get=None,
 ) -> dict[str, Any]:
     """
     Enhanced news collection with multi-query strategy and Finnhub integration.
@@ -100,8 +103,9 @@ def collect_news_enhanced(
     Performs multiple searches using company name variations and merges results.
     Includes Finnhub professional financial news when API key is available, and
     AkShare Chinese-language coverage plus Sina's minute-level newswire when the
-    optional dependency is installed. Prioritizes high-quality sources and
-    filters by relevance.
+    optional dependency is installed. For US-listed tickers, includes SEC EDGAR
+    8-K material event filings. Prioritizes high-quality sources and filters by
+    relevance.
     """
     _validate_windows(lookback_days, fallback_days, max_items)
     as_of = _as_timestamp(now)
@@ -158,7 +162,22 @@ def collect_news_enhanced(
         except Exception as exc:  # Providers must never abort the caller.
             source_errors_all.append(type(exc).__name__)
 
-    # Priority 4: Multi-query search (Yahoo + Google)
+    # Priority 4: SEC EDGAR 8-K filings for US-listed material events.
+    if use_sec:
+        try:
+            all_candidates.extend(
+                collect_sec_8k_filings(
+                    ticker,
+                    now=as_of,
+                    lookback_days=lookback_days,
+                    max_items=max_items * 2,
+                    get=sec_get,
+                )
+            )
+        except Exception as exc:
+            source_errors_all.append(type(exc).__name__)
+
+    # Priority 5: Multi-query search (Yahoo + Google)
     for query_text in queries[:3]:  # Limit to top 3 queries to avoid rate limits
         result = collect_news(
             name="",  # Empty to use raw query
@@ -203,6 +222,15 @@ def collect_news_enhanced(
             keywords
         )
         relevance_score = title_score + body_score
+
+        # Sources that bypass the relevance gate (Finnhub, SEC, Sina) are
+        # pre-attributed upstream, so a keyword miss means the title was
+        # phrased generically ("Form 8-K filing"), not that the item is
+        # irrelevant. Give them a baseline score equal to one title hit so they
+        # rank competitively with keyword-matched items from lower-quality sources.
+        policy = _source_policy(c["source_provider"])
+        if policy.bypasses_gate and relevance_score == 0:
+            relevance_score = 1.0  # One title-match worth
 
         # Apply source quality multiplier
         quality_weight = _get_source_quality_weight(c["source_provider"])
