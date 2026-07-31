@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,38 @@ from naked_k_news import (
 )
 from naked_k_news_akshare import collect_akshare_news
 from naked_k_news_finnhub import collect_finnhub_news
+
+
+# A keyword hit in the title is worth more than one in the body. The relevance
+# gate reads these back, so they must stay in sync with the scores awarded in
+# _calculate_relevance_score.
+_TITLE_MATCH_SCORE = 3.0
+_BODY_MATCH_SCORE = 1.0
+
+
+@dataclass(frozen=True)
+class _SourcePolicy:
+    """Per-provider ranking weight and relevance-gate rule.
+
+    Keeping both in one record means adding a provider is a single entry here
+    rather than parallel edits in a weight table and a gate branch.
+    """
+
+    quality_weight: float
+    # Set for providers that emit market-wide digests: their bodies list every
+    # ticker code and issuer name incidentally, so a body hit proves nothing.
+    requires_title_match: bool = False
+    # Set for providers already scoped to the symbol upstream.
+    bypasses_gate: bool = False
+
+
+_SOURCE_POLICIES = {
+    "finnhub": _SourcePolicy(quality_weight=3.0, bypasses_gate=True),
+    "akshare_em": _SourcePolicy(quality_weight=2.0, requires_title_match=True),
+    "google_news_rss": _SourcePolicy(quality_weight=1.0),
+    "yahoo_finance": _SourcePolicy(quality_weight=0.5),
+}
+_DEFAULT_SOURCE_POLICY = _SourcePolicy(quality_weight=1.0)
 
 
 def load_company_names() -> dict[str, dict[str, list[str]]]:
@@ -121,19 +154,17 @@ def collect_news_enhanced(
     # Score and filter candidates
     scored_candidates = []
     for c in all_candidates:
-        relevance_score = _calculate_relevance_score(
+        # Title and body are scored separately so the gate can require a title
+        # hit; ranking still uses their sum.
+        title_score, body_score = _relevance_scores(
             c["title"],
             c.get("summary", ""),
             keywords
         )
-
-        # Scored without the body so the gate can require a title match.
-        title_score = _calculate_relevance_score(c["title"], "", keywords)
+        relevance_score = title_score + body_score
 
         # Apply source quality multiplier
         quality_weight = _get_source_quality_weight(c["source_provider"])
-
-        # Calculate final score
         final_score = relevance_score * quality_weight
 
         # Only keep items with minimum relevance
@@ -256,22 +287,39 @@ def _calculate_relevance_score(title: str, summary: str, keywords: list[str]) ->
         Score >= 1: Relevant (keyword in summary or partial match)
         Score < 1: Low relevance
     """
+    title_score, body_score = _relevance_scores(title, summary, keywords)
+    return title_score + body_score
+
+
+def _relevance_scores(
+    title: str, summary: str, keywords: list[str]
+) -> tuple[float, float]:
+    """Score title and body separately in one pass over the keywords.
+
+    Split so the relevance gate can require a title hit without rescoring: a
+    provider that emits market-wide digests names every issuer in the body, so
+    only the title half proves the item is about this symbol.
+    """
     if not keywords:
-        return 0.5  # Neutral score if no keywords
+        return 0.5, 0.0  # Neutral score if no keywords
 
     import re
 
     title_lower = title.lower()
     summary_lower = summary.lower()
 
-    score = 0.0
+    title_score = 0.0
+    body_score = 0.0
 
     for keyword in keywords:
         keyword_lower = keyword.lower()
 
         # Use word boundary matching for short keywords to avoid false positives
         # (e.g., "mi" matching "million"). CJK is excluded: it runs without
-        # spaces, so \b would never match a 2-3 character company name.
+        # spaces, so \b would never match a 2-3 character company name. Short
+        # CJK keywords therefore fall through to substring matching with no
+        # equivalent false-positive guard — accepted because these keywords come
+        # from curated company names, not free text.
         if (
             len(keyword_lower) <= 3
             and keyword_lower.isalpha()
@@ -279,19 +327,22 @@ def _calculate_relevance_score(title: str, summary: str, keywords: list[str]) ->
         ):
             # Word boundary matching for short keywords
             pattern = r'\b' + re.escape(keyword_lower) + r'\b'
-
-            if re.search(pattern, title_lower):
-                score += 3.0
-            elif re.search(pattern, summary_lower):
-                score += 1.0
+            in_title = re.search(pattern, title_lower) is not None
+            # Only probed when the title misses, matching the elif below.
+            in_summary = (
+                False if in_title else re.search(pattern, summary_lower) is not None
+            )
         else:
             # Substring matching for longer keywords and special characters
-            if keyword_lower in title_lower:
-                score += 3.0
-            elif keyword_lower in summary_lower:
-                score += 1.0
+            in_title = keyword_lower in title_lower
+            in_summary = False if in_title else keyword_lower in summary_lower
 
-    return score
+        if in_title:
+            title_score += _TITLE_MATCH_SCORE
+        elif in_summary:
+            body_score += _BODY_MATCH_SCORE
+
+    return title_score, body_score
 
 
 def _passes_relevance_gate(
@@ -299,34 +350,25 @@ def _passes_relevance_gate(
 ) -> bool:
     """Decide whether a scored candidate is relevant enough to keep.
 
-    Finnhub is already symbol-scoped upstream, so it bypasses the gate. AkShare
-    must match in the title: East Money mixes in market-wide flow tables whose
-    bodies list every ticker code and issuer name, so any body-derived score
-    would let them through. Every other provider keeps the looser threshold.
+    Providers marked ``requires_title_match`` must earn at least one title hit;
+    a body-derived score does not qualify them. See _SourcePolicy for why.
     """
-    if source_provider == "finnhub":
+    policy = _source_policy(source_provider)
+    if policy.bypasses_gate:
         return True
-    if source_provider == "akshare_em":
-        return title_score >= 3
-    return relevance_score >= 1
+    if policy.requires_title_match:
+        return title_score >= _TITLE_MATCH_SCORE
+    return relevance_score >= _BODY_MATCH_SCORE
 
 
 def _get_source_quality_weight(source_provider: str) -> float:
-    """
-    Get quality weight multiplier for different sources.
+    """Get the ranking weight multiplier for a source (see _SOURCE_POLICIES)."""
+    return _source_policy(source_provider).quality_weight
 
-    Finnhub: 3.0 (professional financial news)
-    AkShare/East Money: 2.0 (Chinese financial press, some market-wide noise)
-    Google News: 1.0 (standard)
-    Yahoo Finance: 0.5 (high noise ratio)
-    """
-    weights = {
-        "finnhub": 3.0,
-        "akshare_em": 2.0,
-        "google_news_rss": 1.0,
-        "yahoo_finance": 0.5,
-    }
-    return weights.get(source_provider, 1.0)
+
+def _source_policy(source_provider: str) -> _SourcePolicy:
+    """Return the policy for a provider, defaulting to unweighted and ungated."""
+    return _SOURCE_POLICIES.get(source_provider, _DEFAULT_SOURCE_POLICY)
 
 
 def _generate_queries(name: str, ticker: str, company_names: dict) -> list[str]:
