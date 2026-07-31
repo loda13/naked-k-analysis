@@ -7,3 +7,4 @@ __pycache__/
 reports/*.md
 reports/*.jsonl
 reports/*.json
+naked_k_reports/
