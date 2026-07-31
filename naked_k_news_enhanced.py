@@ -13,6 +13,7 @@ from naked_k_news import (
     _validate_windows,
     collect_news,
 )
+from naked_k_news_akshare import collect_akshare_news
 from naked_k_news_finnhub import collect_finnhub_news
 
 
@@ -36,12 +37,15 @@ def collect_news_enhanced(
     search_factory=None,
     get=None,
     use_finnhub: bool = True,
+    use_akshare: bool = True,
+    akshare_fetch=None,
 ) -> dict[str, Any]:
     """
     Enhanced news collection with multi-query strategy and Finnhub integration.
 
     Performs multiple searches using company name variations and merges results.
-    Includes Finnhub professional financial news when API key is available.
+    Includes Finnhub professional financial news when API key is available, and
+    AkShare Chinese-language coverage when the optional dependency is installed.
     Prioritizes high-quality sources and filters by relevance.
     """
     _validate_windows(lookback_days, fallback_days, max_items)
@@ -64,7 +68,23 @@ def collect_news_enhanced(
         )
         all_candidates.extend(finnhub_candidates)
 
-    # Priority 2: Multi-query search (Yahoo + Google)
+    # Priority 2: AkShare Chinese coverage. East Money publishes few items per
+    # week, so it feeds the 30-day window rather than the fresh one.
+    if use_akshare:
+        try:
+            all_candidates.extend(
+                collect_akshare_news(
+                    ticker,
+                    now=as_of,
+                    lookback_days=max(lookback_days, 30),
+                    max_items=max_items * 2,
+                    fetch=akshare_fetch,
+                )
+            )
+        except Exception as exc:  # Providers must never abort the caller.
+            source_errors_all.append(type(exc).__name__)
+
+    # Priority 3: Multi-query search (Yahoo + Google)
     for query_text in queries[:3]:  # Limit to top 3 queries to avoid rate limits
         result = collect_news(
             name="",  # Empty to use raw query
@@ -107,6 +127,9 @@ def collect_news_enhanced(
             keywords
         )
 
+        # Scored without the body so the gate can require a title match.
+        title_score = _calculate_relevance_score(c["title"], "", keywords)
+
         # Apply source quality multiplier
         quality_weight = _get_source_quality_weight(c["source_provider"])
 
@@ -114,7 +137,9 @@ def collect_news_enhanced(
         final_score = relevance_score * quality_weight
 
         # Only keep items with minimum relevance
-        if relevance_score >= 1 or c["source_provider"] == "finnhub":
+        if _passes_relevance_gate(
+            relevance_score, title_score, c["source_provider"]
+        ):
             scored_candidates.append({
                 "title": c["title"],
                 "publisher": c["publisher"],
@@ -245,8 +270,13 @@ def _calculate_relevance_score(title: str, summary: str, keywords: list[str]) ->
         keyword_lower = keyword.lower()
 
         # Use word boundary matching for short keywords to avoid false positives
-        # (e.g., "mi" matching "million")
-        if len(keyword_lower) <= 3 and keyword_lower.isalpha():
+        # (e.g., "mi" matching "million"). CJK is excluded: it runs without
+        # spaces, so \b would never match a 2-3 character company name.
+        if (
+            len(keyword_lower) <= 3
+            and keyword_lower.isalpha()
+            and keyword_lower.isascii()
+        ):
             # Word boundary matching for short keywords
             pattern = r'\b' + re.escape(keyword_lower) + r'\b'
 
@@ -264,16 +294,35 @@ def _calculate_relevance_score(title: str, summary: str, keywords: list[str]) ->
     return score
 
 
+def _passes_relevance_gate(
+    relevance_score: float, title_score: float, source_provider: str
+) -> bool:
+    """Decide whether a scored candidate is relevant enough to keep.
+
+    Finnhub is already symbol-scoped upstream, so it bypasses the gate. AkShare
+    must match in the title: East Money mixes in market-wide flow tables whose
+    bodies list every ticker code and issuer name, so any body-derived score
+    would let them through. Every other provider keeps the looser threshold.
+    """
+    if source_provider == "finnhub":
+        return True
+    if source_provider == "akshare_em":
+        return title_score >= 3
+    return relevance_score >= 1
+
+
 def _get_source_quality_weight(source_provider: str) -> float:
     """
     Get quality weight multiplier for different sources.
 
     Finnhub: 3.0 (professional financial news)
+    AkShare/East Money: 2.0 (Chinese financial press, some market-wide noise)
     Google News: 1.0 (standard)
     Yahoo Finance: 0.5 (high noise ratio)
     """
     weights = {
         "finnhub": 3.0,
+        "akshare_em": 2.0,
         "google_news_rss": 1.0,
         "yahoo_finance": 0.5,
     }
