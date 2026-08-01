@@ -917,6 +917,12 @@ def _run_news_for_report(
                 )
         except Exception as exc:
             decision_error_type = type(exc).__name__
+            # Log detailed error for debugging
+            import sys
+            import traceback
+            print(f"[NEWS INTEGRATION ERROR] {report.ticker}: {exc}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+
             _restore_technical_conclusion(report)
             combined = _technical_fallback_combined(
                 report,

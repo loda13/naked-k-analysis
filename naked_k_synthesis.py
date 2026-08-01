@@ -787,6 +787,13 @@ def apply_deliberation(
             evidence_gate=evidence_gate,
         )
     except Exception as exc:
+        # Log detailed error information for debugging
+        import sys
+        import traceback
+        print(f"[SYNTHESIS ERROR] {report.ticker}: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"[SYNTHESIS TRACEBACK]", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+
         for field in TECHNICAL_SNAPSHOT_FIELDS:
             setattr(report, field, copy.deepcopy(technical_snapshot[field]))
         final_action = str(technical_snapshot["action"])
