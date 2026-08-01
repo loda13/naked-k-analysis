@@ -915,6 +915,8 @@ def _run_news_for_report(
                     "确定性价格计划重建失败，已安全回退技术结论"
                     f"（{decision_error_type}）"
                 )
+                # Extract error detail if available
+                error_detail = combined.get("error_detail", synthesis_reason)
         except Exception as exc:
             decision_error_type = type(exc).__name__
             # Log detailed error for debugging
@@ -948,6 +950,7 @@ def _run_news_for_report(
         model_action=combined.get("model_action"),
         final_action=combined.get("final_action"),
         error_type=decision_error_type,
+        error_detail=combined.get("error_detail", "")[:500] if combined.get("error_detail") else "",
     )
     emitted_events.add("decision_deliberated")
 

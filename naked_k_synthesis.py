@@ -790,16 +790,19 @@ def apply_deliberation(
         # Log detailed error information for debugging
         import sys
         import traceback
-        print(f"[SYNTHESIS ERROR] {report.ticker}: {type(exc).__name__}: {exc}", file=sys.stderr)
-        print(f"[SYNTHESIS TRACEBACK]", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
+        error_detail = f"{type(exc).__name__}: {exc}"
+        traceback_str = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+
+        print(f"[SYNTHESIS ERROR] {report.ticker}: {error_detail}", file=sys.stderr)
+        print(f"[SYNTHESIS TRACEBACK]\n{traceback_str}", file=sys.stderr)
+        sys.stderr.flush()  # Force flush to ensure output is written
 
         for field in TECHNICAL_SNAPSHOT_FIELDS:
             setattr(report, field, copy.deepcopy(technical_snapshot[field]))
         final_action = str(technical_snapshot["action"])
         fallback_reason = (
             "确定性价格计划重建失败，已安全回退技术结论："
-            f"{type(exc).__name__}: {exc}"
+            f"{error_detail}"
         )
         combined = _combined_conclusion(
             deliberation,
@@ -809,6 +812,8 @@ def apply_deliberation(
             override_reason_code="deterministic_synthesis_failure",
             evidence_gate=evidence_gate,
         )
+        # Add detailed error to the result dict for audit logging
+        combined["error_detail"] = traceback_str[:500]  # Truncate to 500 chars
 
     report.combined_conclusion = combined
     return combined
