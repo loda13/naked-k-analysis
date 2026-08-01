@@ -725,6 +725,14 @@ def apply_deliberation(
         evaluate_exposure=False,
     )
     if not evidence_gate["passed"]:
+        # Log evidence gate failure for debugging
+        import sys
+        print(f"[EVIDENCE_GATE_FAILED] {report.ticker}: "
+              f"reason={evidence_gate.get('reason', 'N/A')}, "
+              f"reason_code={evidence_gate.get('reason_code', 'N/A')}",
+              file=sys.stderr)
+        sys.stderr.flush()
+
         for field in TECHNICAL_SNAPSHOT_FIELDS:
             setattr(report, field, copy.deepcopy(technical_snapshot[field]))
         combined = _combined_conclusion(

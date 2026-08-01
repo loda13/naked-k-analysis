@@ -834,17 +834,51 @@ def _run_news_for_report(
         )
     else:
         try:
-            result = naked_k_news_llm.run_two_pass_deliberation(
-                name=report.name,
-                ticker=report.ticker,
-                collection=collection,
-                technical_snapshot=report.technical_conclusion,
-                risk_context=risk_context,
-                config=news_config,
-                post=news_post,
-            )
-            if not isinstance(result, dict):
-                raise TypeError("news deliberation result must be a dictionary")
+            # Retry mechanism for LLM deliberation (up to 3 attempts)
+            max_retries = 3
+            result = None
+            last_error = None
+
+            for attempt in range(max_retries):
+                try:
+                    result = naked_k_news_llm.run_two_pass_deliberation(
+                        name=report.name,
+                        ticker=report.ticker,
+                        collection=collection,
+                        technical_snapshot=report.technical_conclusion,
+                        risk_context=risk_context,
+                        config=news_config,
+                        post=news_post,
+                    )
+                    if not isinstance(result, dict):
+                        raise TypeError("news deliberation result must be a dictionary")
+
+                    # Check if deliberation was successful
+                    deliberation = result.get("deliberation")
+                    if isinstance(deliberation, dict) and deliberation.get("model_action"):
+                        # Success - break retry loop
+                        break
+                    else:
+                        # Deliberation incomplete, retry
+                        import sys
+                        print(f"[RETRY] {report.ticker} attempt {attempt+1}/{max_retries}: "
+                              f"deliberation incomplete", file=sys.stderr)
+                        last_error = "Deliberation incomplete"
+
+                except Exception as exc:
+                    last_error = exc
+                    import sys
+                    print(f"[RETRY] {report.ticker} attempt {attempt+1}/{max_retries}: "
+                          f"{type(exc).__name__}: {exc}", file=sys.stderr)
+                    sys.stderr.flush()
+
+                    if attempt == max_retries - 1:
+                        # Last attempt failed, raise
+                        raise
+
+            if result is None:
+                # All retries exhausted
+                raise RuntimeError(f"All {max_retries} deliberation attempts failed: {last_error}")
         except Exception as exc:
             error_type = type(exc).__name__
             result = _news_fallback_result(
@@ -902,6 +936,12 @@ def _run_news_for_report(
                 intraday=intraday,
                 config=config,
             )
+            # Debug: Log combined result status
+            import sys
+            print(f"[DEBUG] {report.ticker} apply_deliberation returned: status={combined.get('status')}, "
+                  f"risk_override_reason={combined.get('risk_override_reason', '')[:100]}", file=sys.stderr)
+            sys.stderr.flush()
+
             if combined.get("status") != "ok":
                 synthesis_reason = _single_line(combined.get("risk_override_reason"))
                 synthesis_prefix = "确定性价格计划重建失败，已安全回退技术结论："

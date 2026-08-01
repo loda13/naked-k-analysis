@@ -341,7 +341,7 @@ def load_news_config(
             "LLM_MODEL",
         )),
         temperature=float(_news_setting(
-            environment_values, dotenv_values, "NAKED_K_NEWS_TEMPERATURE", default="0.1"
+            environment_values, dotenv_values, "NAKED_K_NEWS_TEMPERATURE", default="0.0"
         )),
         max_tokens=int(_news_setting(
             environment_values, dotenv_values, "NAKED_K_NEWS_MAX_TOKENS", default="1400"
