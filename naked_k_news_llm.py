@@ -1307,22 +1307,44 @@ def news_item_contains_instruction(item: Any) -> bool:
 
 
 def _excerpt_is_source_bound(excerpt: str, source: dict[str, Any]) -> bool:
+    """Check if excerpt is copied from source text.
+
+    Strategy:
+    1. Prefer exact substring match (strictest, preserves case/punctuation)
+    2. Fall back to normalized match ONLY for longer excerpts (>=6 unique words)
+       to maintain strictness for short phrases while being practical for real content
+    """
     compact_excerpt = _compact_evidence_text(excerpt)
     if len(compact_excerpt) < 6:
         return False
+
     for field in ("title", "summary"):
         source_text = source.get(field)
-        if (
-            isinstance(source_text, str)
-            and excerpt in source_text
-            and any(
+        if not isinstance(source_text, str):
+            continue
+
+        # Strategy 1: Exact substring match with clause verification (preferred)
+        if excerpt in source_text:
+            if any(
                 _normalized_evidence_text(excerpt)
                 == _normalized_evidence_text(source_clause)
                 and not _is_interrogative(source_clause)
                 for source_clause in _complete_source_clauses(source_text)
-            )
-        ):
-            return True
+            ):
+                return True
+
+        # Strategy 2: Normalized match as fallback (case/punctuation tolerant)
+        # Only for longer excerpts (>=6 words) to maintain strictness on short phrases
+        normalized_excerpt = _normalized_evidence_text(excerpt)
+        normalized_source = _normalized_evidence_text(source_text)
+
+        if normalized_excerpt in normalized_source:
+            unique_words = set(normalized_excerpt.split())
+            # Require 6+ unique words: practical for real content, strict enough
+            # to reject trivial matches and short case-changed phrases
+            if len(unique_words) >= 6:
+                return True
+
     return False
 
 
