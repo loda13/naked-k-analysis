@@ -725,14 +725,9 @@ def apply_deliberation(
         evaluate_exposure=False,
     )
     if not evidence_gate["passed"]:
-        # Log evidence gate failure for debugging
-        import sys
-        print(f"[EVIDENCE_GATE_FAILED] {report.ticker}: "
-              f"reason={evidence_gate.get('reason', 'N/A')}, "
-              f"reason_code={evidence_gate.get('reason_code', 'N/A')}",
-              file=sys.stderr)
-        sys.stderr.flush()
-
+        # The gate outcome, reason, and reason_code are carried on the returned
+        # combined conclusion and recorded by the caller's audit logger; no
+        # separate stderr channel is needed.
         for field in TECHNICAL_SNAPSHOT_FIELDS:
             setattr(report, field, copy.deepcopy(technical_snapshot[field]))
         combined = _combined_conclusion(
@@ -795,16 +790,7 @@ def apply_deliberation(
             evidence_gate=evidence_gate,
         )
     except Exception as exc:
-        # Log detailed error information for debugging
-        import sys
-        import traceback
         error_detail = f"{type(exc).__name__}: {exc}"
-        traceback_str = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-
-        print(f"[SYNTHESIS ERROR] {report.ticker}: {error_detail}", file=sys.stderr)
-        print(f"[SYNTHESIS TRACEBACK]\n{traceback_str}", file=sys.stderr)
-        sys.stderr.flush()  # Force flush to ensure output is written
-
         for field in TECHNICAL_SNAPSHOT_FIELDS:
             setattr(report, field, copy.deepcopy(technical_snapshot[field]))
         final_action = str(technical_snapshot["action"])
@@ -820,8 +806,10 @@ def apply_deliberation(
             override_reason_code="deterministic_synthesis_failure",
             evidence_gate=evidence_gate,
         )
-        # Add detailed error to the result dict for audit logging
-        combined["error_detail"] = traceback_str[:500]  # Truncate to 500 chars
+        # Deliberately NOT storing the raw exception message. It can embed prompt
+        # text or credentials, this dict is serialized into the journal, and this
+        # module has no news config with which to redact. The class name already
+        # reaches the audit log via risk_override_reason and error_type.
 
     report.combined_conclusion = combined
     return combined
