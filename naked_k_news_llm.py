@@ -1231,9 +1231,11 @@ def _matches_instruction_patterns(normalized: str) -> bool:
     financial_context_markers = [
         '建议', '评级', '分析师', '机构', '投资者', '策略', '考虑',
         '目标价', '维持', '上调', '下调', '股票', '股价', '公司',
+        '短期', '中期', '长期', '入场', '时机', '盈利', '业绩',
+        '披露', '持仓', '规模', '买入价', '成本', '仓位', '价格',
         'rating', 'analyst', 'recommend', 'strategy', 'investor',
         'target', 'maintain', 'upgrade', 'downgrade', 'stock', 'company',
-        '短期', '中期', '长期', '入场', '时机', '盈利', '业绩',
+        'disclosed', 'holding', 'position', 'entry', 'cost', 'price',
     ]
     has_financial_context = any(marker in normalized for marker in financial_context_markers)
 
@@ -1313,6 +1315,7 @@ def _excerpt_is_source_bound(excerpt: str, source: dict[str, Any]) -> bool:
     1. Prefer exact substring match (strictest, preserves case/punctuation)
     2. Fall back to normalized match ONLY for longer excerpts (>=6 unique words)
        to maintain strictness for short phrases while being practical for real content
+    3. For CJK text, count semantic units (>=5) since CJK words aren't space-delimited
     """
     compact_excerpt = _compact_evidence_text(excerpt)
     if len(compact_excerpt) < 6:
@@ -1334,16 +1337,21 @@ def _excerpt_is_source_bound(excerpt: str, source: dict[str, Any]) -> bool:
                 return True
 
         # Strategy 2: Normalized match as fallback (case/punctuation tolerant)
-        # Only for longer excerpts (>=6 words) to maintain strictness on short phrases
         normalized_excerpt = _normalized_evidence_text(excerpt)
         normalized_source = _normalized_evidence_text(source_text)
 
         if normalized_excerpt in normalized_source:
+            # Count unique words for English/space-delimited text
             unique_words = set(normalized_excerpt.split())
-            # Require 6+ unique words: practical for real content, strict enough
-            # to reject trivial matches and short case-changed phrases
             if len(unique_words) >= 6:
                 return True
+
+            # For CJK-heavy text, use semantic units count (no space delimiters)
+            cjk_chars = len(re.findall(r'[㐀-䶿一-鿿]', normalized_excerpt))
+            if cjk_chars > len(normalized_excerpt) * 0.5:  # >50% CJK
+                semantic_units = _semantic_units(excerpt)
+                if len(semantic_units) >= 5:
+                    return True
 
     return False
 
