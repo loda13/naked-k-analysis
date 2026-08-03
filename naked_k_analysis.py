@@ -68,6 +68,9 @@ DEFAULT_TICKERS = [
     ("小米", "1810.HK"),
     ("PDD", "PDD"),
     ("泡泡玛特", "9992.HK"),
+    ("NVDA", "NVDA"),
+    ("TSLA", "TSLA"),
+    ("QQQ", "QQQ"),
 ]
 DEFAULT_JOURNAL_PATH = Path("reports/naked_k_journal.jsonl")
 DEFAULT_REPORT_PATH = Path("reports/naked_k_latest.md")
