@@ -12,6 +12,7 @@ import json
 import sys
 
 import pandas as pd
+import requests
 
 import naked_k_config
 import naked_k_llm
@@ -630,6 +631,106 @@ class NakedKAnalysisTests(unittest.TestCase):
                 self.assertEqual(report.combined_conclusion["final_action"], "观望")
                 self.assertEqual(report.combined_conclusion["status"], "technical_fallback")
 
+    def test_deterministic_news_rejections_are_not_retried(self):
+        """A validation rejection is a property of the payload, not of the call.
+
+        Observed live: three identical retries per ticker turned one rejection
+        into ~200s of wasted latency and 3x the API spend. Only transport-class
+        failures may be retried.
+        """
+        attempts = {"count": 0}
+
+        def counting_post(_url, headers, timeout, **_kwargs):
+            del headers, timeout
+            attempts["count"] += 1
+            # Round one always succeeds; round two is deterministically invalid.
+            if attempts["count"] % 2 == 1:
+                return self._anthropic_response(self._round1())
+            return self._anthropic_response(self._round2(evidence_ids=["news-99"]))
+
+        with TemporaryDirectory() as tmpdir:
+            with (
+                patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
+                patch.object(naked_k_analysis, "build_trade_plan", return_value=self._integration_report()),
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced", return_value=self._news_collection()),
+            ):
+                _, reports = naked_k_analysis.run_analysis(
+                    [("测试", "TEST")],
+                    Path(tmpdir) / "journal.jsonl",
+                    news_config=self._news_config(),
+                    news_post=counting_post,
+                )
+
+        # Exactly one round-one + one round-two call. No retry storm.
+        self.assertEqual(attempts["count"], 2)
+        report = reports[0]
+        self.assertEqual(report.combined_conclusion["status"], "technical_fallback")
+        self.assertEqual(report.combined_conclusion["final_action"], "观望")
+
+    def test_transport_failures_are_retried_before_falling_back(self):
+        attempts = {"count": 0}
+
+        def flaky_post(_url, headers, timeout, **_kwargs):
+            del headers, timeout
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise requests.exceptions.ReadTimeout("read timed out")
+            if attempts["count"] == 2:
+                return self._anthropic_response(self._round1())
+            return self._anthropic_response(self._round2())
+
+        with TemporaryDirectory() as tmpdir:
+            with (
+                patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
+                patch.object(naked_k_analysis, "build_trade_plan", return_value=self._integration_report()),
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced", return_value=self._news_collection()),
+            ):
+                _, reports = naked_k_analysis.run_analysis(
+                    [("测试", "TEST")],
+                    Path(tmpdir) / "journal.jsonl",
+                    news_config=self._news_config(),
+                    news_post=flaky_post,
+                )
+
+        # Timeout retried, then round1 + round2 succeeded.
+        self.assertEqual(attempts["count"], 3)
+        self.assertEqual(reports[0].combined_conclusion["status"], "ok")
+
+    def test_report_explains_news_fallback_without_leaking_exception_names(self):
+        """Users read the report; raw class names are not an explanation."""
+        news_post = self._sequential_news_post([
+            self._round1(),
+            self._round2(evidence_ids=["news-99"]),
+        ])
+
+        with TemporaryDirectory() as tmpdir:
+            with (
+                patch.object(naked_k_analysis, "load_ohlcv", side_effect=self._fake_load_ohlcv),
+                patch.object(naked_k_analysis, "build_trade_plan", return_value=self._integration_report()),
+                patch.object(naked_k_news_enhanced, "collect_news_enhanced", return_value=self._news_collection()),
+            ):
+                markdown, reports = naked_k_analysis.run_analysis(
+                    [("测试", "TEST")],
+                    Path(tmpdir) / "journal.jsonl",
+                    news_config=self._news_config(),
+                    news_post=news_post,
+                )
+
+        for leaked in (
+            "NewsValidationError",
+            "NewsResponseError",
+            "NewsIntegrationError",
+            "Traceback",
+        ):
+            self.assertNotIn(leaked, markdown)
+        # A human-readable Chinese explanation replaces it.
+        self.assertIn("消息面", markdown)
+        self.assertIn("技术", markdown)
+        # The machine-readable type stays available for audit/debugging.
+        combined = reports[0].combined_conclusion
+        self.assertEqual(combined["status"], "technical_fallback")
+        self.assertTrue(combined.get("risk_override_reason"))
+
     def test_synthesis_exception_preserves_valid_model_action_but_restores_execution(self):
         news_post = self._sequential_news_post([self._round1(), self._round2()])
 
@@ -948,6 +1049,12 @@ class NakedKAnalysisTests(unittest.TestCase):
         self.assertIn("RuntimeError", combined["risk_override_reason"])
         self.assertNotIn("FULL_PROMPT_SENTINEL", journal_text)
         self.assertNotIn("fake-news-secret", journal_text)
+        # combined_conclusion is serialized wholesale into the journal, so no key
+        # may carry a raw exception message: naked_k_synthesis has no news config
+        # with which to redact prompt text or credentials.
+        serialized_combined = json.dumps(combined, ensure_ascii=False, default=str)
+        self.assertNotIn("FULL_PROMPT_SENTINEL", serialized_combined)
+        self.assertNotIn("fake-news-secret", serialized_combined)
 
     def test_main_ambiguous_news_model_prints_only_ids_and_returns_two(self):
         with TemporaryDirectory() as tmpdir:

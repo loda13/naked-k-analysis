@@ -345,6 +345,55 @@ def _news_error_type(value: Any) -> str:
     return "NewsIntegrationError"
 
 
+_NEWS_FALLBACK_EXPLANATIONS = {
+    "NewsResponseError": "消息模型响应超时或格式无效，已保留技术结论",
+    "NewsValidationError": "消息模型输出未通过证据校验（引用需逐字摘自原文），已保留技术结论",
+    "NewsInstructionQuarantineError": "消息内容含疑似指令注入，已隔离并保留技术结论",
+    "NewsModelDiscoveryError": "消息模型不可用，已保留技术结论",
+    "NewsModelSelectionRequired": "未指定消息模型，已保留技术结论",
+    "NewsUnavailable": "未取得可用消息数据，已保留技术结论",
+    "NewsIntegrationError": "消息面流程未形成有效结论，已保留技术结论",
+    "ReadTimeout": "消息模型读取超时，已保留技术结论",
+    "InvalidNewsResult": "消息面结果无效，已保留技术结论",
+}
+
+_NEWS_FALLBACK_DEFAULT = "消息面未形成有效结论，沿用技术判断"
+
+# A bare class name, or a class name followed by its message ("NewsX: detail").
+# Deliberately strict: unlike _news_error_type, prose must NOT match, or genuine
+# analysis text would be overwritten by a canned explanation.
+_NEWS_ERROR_TEXT_RE = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception))\s*(?::.*)?$"
+)
+
+
+def _news_error_text_type(value: Any) -> str:
+    """Return the class name only when the text really is an error string."""
+    text = _single_line(value)
+    if not text or len(text) > 256:
+        return ""
+    match = _NEWS_ERROR_TEXT_RE.match(text)
+    return match.group(1) if match else ""
+
+
+def _explain_news_fallback(value: Any) -> str:
+    """Translate an internal error type into a reader-facing explanation.
+
+    The raw class name stays in the audit log and combined_conclusion for
+    debugging; the markdown report is written for a human, so it gets prose.
+    Text that is not an error string is passed through unchanged.
+    """
+    text = _single_line(value)
+    error_type = _news_error_text_type(text) or _news_error_type(
+        text if isinstance(value, dict) else None
+    )
+    if not error_type:
+        return text or _NEWS_FALLBACK_DEFAULT
+    return _NEWS_FALLBACK_EXPLANATIONS.get(
+        error_type, _NEWS_FALLBACK_EXPLANATIONS["NewsIntegrationError"]
+    )
+
+
 def _unavailable_news_collection(
     name: str,
     ticker: str,
@@ -538,19 +587,26 @@ def _format_news_blocks(report: InstrumentReport) -> list[str]:
             if isinstance(source_errors, list) and source_errors:
                 unavailable_type = _single_line(source_errors[0])
         status_text = "消息面不足" if news.get("status") == "insufficient" else "消息面不可用"
-        lines.append(f"- {status_text}：{unavailable_type or '未取得可验证消息证据'}")
+        detail = (
+            _explain_news_fallback(unavailable_type)
+            if unavailable_type
+            else "未取得可验证消息证据"
+        )
+        lines.append(f"- {status_text}：{detail}")
 
+    conflict_text = _single_line(combined.get("conflict_analysis"))
+    override_text = _single_line(combined.get("risk_override_reason"))
     lines.extend(
         [
             "",
             "### 技术与消息冲突/一致性",
-            f"- 分析：{_single_line(combined.get('conflict_analysis')) or '消息面未形成有效结论，沿用技术判断'}",
+            f"- 分析：{_explain_news_fallback(conflict_text) if conflict_text else _NEWS_FALLBACK_DEFAULT}",
             "",
             "### 综合结论",
             f"- 模型动作：{_single_line(combined.get('model_action')) or _single_line(technical.get('action'))}",
             f"- 风险保护后最终动作：{_single_line(combined.get('final_action')) or report.action}",
             f"- 决策理由：{'；'.join(_single_line(item) for item in combined.get('decision_reasons', [])) or '沿用技术结论'}",
-            f"- 覆盖原因：{_single_line(combined.get('risk_override_reason')) or '无'}",
+            f"- 覆盖原因：{_explain_news_fallback(override_text) if override_text else '无'}",
             "",
             "### 消息来源",
         ]
@@ -734,6 +790,64 @@ def _recover_news_branch(
         emitted_events.add(event_type)
 
 
+_NEWS_TRANSPORT_RETRIES = 2
+_NEWS_TRANSPORT_ERRORS = ("NewsResponseError",)
+
+
+def _is_retryable_news_failure(result: dict[str, Any]) -> bool:
+    """Only transport-class failures can plausibly succeed on a repeat call.
+
+    A schema or evidence rejection is a deterministic property of the payload:
+    re-issuing the identical request reproduces it, costing latency and spend
+    for no chance of a different outcome. Timeouts and malformed/empty
+    responses are the only failures worth another attempt.
+    """
+    if result.get("status") == "ok":
+        return False
+    news_analysis = result.get("news_analysis")
+    stages = []
+    if isinstance(news_analysis, dict):
+        stages.append(news_analysis.get("round1"))
+    candidates = [
+        stage.get("error_type") for stage in stages if isinstance(stage, dict)
+    ]
+    reason = result.get("fallback_reason")
+    if isinstance(reason, str) and reason:
+        candidates.append(reason.split(":", 1)[0].strip())
+    return any(
+        isinstance(candidate, str) and candidate in _NEWS_TRANSPORT_ERRORS
+        for candidate in candidates
+    )
+
+
+def _deliberate_with_transport_retry(
+    *,
+    report: InstrumentReport,
+    collection: dict[str, Any],
+    risk_context: dict[str, Any],
+    news_config: naked_k_news_llm.AnthropicNewsConfig,
+    news_post: naked_k_news_llm.PostCallable | None,
+) -> dict[str, Any]:
+    result: dict[str, Any] | None = None
+    for attempt in range(_NEWS_TRANSPORT_RETRIES + 1):
+        result = naked_k_news_llm.run_two_pass_deliberation(
+            name=report.name,
+            ticker=report.ticker,
+            collection=collection,
+            technical_snapshot=report.technical_conclusion,
+            risk_context=risk_context,
+            config=news_config,
+            post=news_post,
+        )
+        if not isinstance(result, dict):
+            raise TypeError("news deliberation result must be a dictionary")
+        if result.get("status") == "ok":
+            return result
+        if attempt == _NEWS_TRANSPORT_RETRIES or not _is_retryable_news_failure(result):
+            return result
+    return result if isinstance(result, dict) else {}
+
+
 def _run_news_for_report(
     report: InstrumentReport,
     daily: pd.DataFrame,
@@ -834,51 +948,13 @@ def _run_news_for_report(
         )
     else:
         try:
-            # Retry mechanism for LLM deliberation (up to 3 attempts)
-            max_retries = 3
-            result = None
-            last_error = None
-
-            for attempt in range(max_retries):
-                try:
-                    result = naked_k_news_llm.run_two_pass_deliberation(
-                        name=report.name,
-                        ticker=report.ticker,
-                        collection=collection,
-                        technical_snapshot=report.technical_conclusion,
-                        risk_context=risk_context,
-                        config=news_config,
-                        post=news_post,
-                    )
-                    if not isinstance(result, dict):
-                        raise TypeError("news deliberation result must be a dictionary")
-
-                    # Check if deliberation was successful
-                    deliberation = result.get("deliberation")
-                    if isinstance(deliberation, dict) and deliberation.get("model_action"):
-                        # Success - break retry loop
-                        break
-                    else:
-                        # Deliberation incomplete, retry
-                        import sys
-                        print(f"[RETRY] {report.ticker} attempt {attempt+1}/{max_retries}: "
-                              f"deliberation incomplete", file=sys.stderr)
-                        last_error = "Deliberation incomplete"
-
-                except Exception as exc:
-                    last_error = exc
-                    import sys
-                    print(f"[RETRY] {report.ticker} attempt {attempt+1}/{max_retries}: "
-                          f"{type(exc).__name__}: {exc}", file=sys.stderr)
-                    sys.stderr.flush()
-
-                    if attempt == max_retries - 1:
-                        # Last attempt failed, raise
-                        raise
-
-            if result is None:
-                # All retries exhausted
-                raise RuntimeError(f"All {max_retries} deliberation attempts failed: {last_error}")
+            result = _deliberate_with_transport_retry(
+                report=report,
+                collection=collection,
+                risk_context=risk_context,
+                news_config=news_config,
+                news_post=news_post,
+            )
         except Exception as exc:
             error_type = type(exc).__name__
             result = _news_fallback_result(
@@ -936,12 +1012,6 @@ def _run_news_for_report(
                 intraday=intraday,
                 config=config,
             )
-            # Debug: Log combined result status
-            import sys
-            print(f"[DEBUG] {report.ticker} apply_deliberation returned: status={combined.get('status')}, "
-                  f"risk_override_reason={combined.get('risk_override_reason', '')[:100]}", file=sys.stderr)
-            sys.stderr.flush()
-
             if combined.get("status") != "ok":
                 synthesis_reason = _single_line(combined.get("risk_override_reason"))
                 synthesis_prefix = "确定性价格计划重建失败，已安全回退技术结论："
@@ -955,16 +1025,8 @@ def _run_news_for_report(
                     "确定性价格计划重建失败，已安全回退技术结论"
                     f"（{decision_error_type}）"
                 )
-                # Extract error detail if available
-                error_detail = combined.get("error_detail", synthesis_reason)
         except Exception as exc:
             decision_error_type = type(exc).__name__
-            # Log detailed error for debugging
-            import sys
-            import traceback
-            print(f"[NEWS INTEGRATION ERROR] {report.ticker}: {exc}", file=sys.stderr)
-            traceback.print_exc(file=sys.stderr)
-
             _restore_technical_conclusion(report)
             combined = _technical_fallback_combined(
                 report,
@@ -990,7 +1052,6 @@ def _run_news_for_report(
         model_action=combined.get("model_action"),
         final_action=combined.get("final_action"),
         error_type=decision_error_type,
-        error_detail=combined.get("error_detail", "")[:500] if combined.get("error_detail") else "",
     )
     emitted_events.add("decision_deliberated")
 
