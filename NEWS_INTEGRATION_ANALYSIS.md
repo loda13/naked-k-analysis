@@ -226,9 +226,9 @@ commit `6b676aa` 的财务白名单分支写成了
 
 ### 2. SEC EDGAR 覆盖：已测，并修掉一处无谓外联
 
-`collect_sec_8k_filings` 原先对**每个** ticker 都去下 SEC 的 ~2MB
+`collect_sec_filings`（原名 `collect_sec_8k_filings`）原先对**每个** ticker 都去下 SEC 的 ~2MB
 `company_tickers.json` 全量索引，包括按定义不可能有 CIK 的带后缀标的。
-默认票池以港股为主，等于每轮白跑数次往返换必然的 `None`。已短路。
+默认票池 7 个标的中有 3 个是港股，等于每轮白跑数次往返换必然的 `None`。已短路。
 
 短路条件是**含点**，而非一份后缀 denylist。实测 SEC 索引 10432 条里带点的是
 **0 条**、带连字符的 544 条——股份类别一律写作 `BRK-B` 而非 `BRK.B`。所以

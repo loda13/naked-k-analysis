@@ -65,7 +65,7 @@ def _is_outside_edgar(ticker: str) -> bool:
 _MATERIAL_EVENT_FORMS = frozenset({"8-K", "6-K"})
 
 
-def collect_sec_8k_filings(
+def collect_sec_filings(
     ticker: str,
     *,
     now: datetime | pd.Timestamp | None = None,
@@ -73,11 +73,11 @@ def collect_sec_8k_filings(
     max_items: int = 10,
     get: GetCallable | None = None,
 ) -> list[dict[str, Any]]:
-    """Return normalized, newest-first SEC 8-K filings for the given ticker.
+    """Return normalized, newest-first SEC material-event filings for a ticker.
 
-    The ticker must be US-listed with a CIK. OTC ADRs are not included in the
-    SEC database. Tickers carrying an exchange suffix (any dot) return empty
-    without any network call.
+    Covers both 8-K (domestic issuers) and 6-K (foreign private issuers). The
+    ticker must have a CIK; OTC ADRs are not in the SEC database. Tickers
+    carrying an exchange suffix (any dot) return empty without a network call.
     """
     if lookback_days <= 0:
         raise ValueError("lookback_days must be positive")

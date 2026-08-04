@@ -45,7 +45,7 @@ def only_akshare(mapping: dict[str, object], items: list[dict[str, object]]):
             naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
         ),
         patch.object(
-            naked_k_news_enhanced, "collect_sec_8k_filings", return_value=[]
+            naked_k_news_enhanced, "collect_sec_filings", return_value=[]
         ),
         patch.object(
             naked_k_news_enhanced,
@@ -68,7 +68,7 @@ def only_sina(mapping: dict[str, object], items: list[dict[str, object]]):
         ),
         patch.object(naked_k_news_enhanced, "collect_akshare_news", return_value=[]),
         patch.object(
-            naked_k_news_enhanced, "collect_sec_8k_filings", return_value=[]
+            naked_k_news_enhanced, "collect_sec_filings", return_value=[]
         ),
         patch.object(
             naked_k_news_enhanced,
@@ -178,7 +178,7 @@ class EnhancedNewsCollectionTests(NoNetworkMixin, unittest.TestCase):
                 naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
             ) as sina,
             patch.object(
-                naked_k_news_enhanced, "collect_sec_8k_filings", return_value=[]
+                naked_k_news_enhanced, "collect_sec_filings", return_value=[]
             ),
             patch.object(
                 naked_k_news_enhanced,
@@ -279,7 +279,7 @@ class EnhancedNewsCollectionTests(NoNetworkMixin, unittest.TestCase):
                 naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
             ),
             patch.object(
-                naked_k_news_enhanced, "collect_sec_8k_filings", return_value=[]
+                naked_k_news_enhanced, "collect_sec_filings", return_value=[]
             ),
         ):
             result = naked_k_news_enhanced.collect_news_enhanced(
@@ -520,7 +520,7 @@ class EnhancedNewsCollectionTests(NoNetworkMixin, unittest.TestCase):
                 naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
             ),
             patch.object(
-                naked_k_news_enhanced, "collect_sec_8k_filings"
+                naked_k_news_enhanced, "collect_sec_filings"
             ) as sec,
             patch.object(
                 naked_k_news_enhanced,

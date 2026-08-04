@@ -71,7 +71,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
                 )
             )
 
-        items = naked_k_news_sec.collect_sec_8k_filings(
+        items = naked_k_news_sec.collect_sec_filings(
             "TEST", now=NOW, lookback_days=7, max_items=10, get=fake_get
         )
 
@@ -104,7 +104,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
                 )
             )
 
-        items = naked_k_news_sec.collect_sec_8k_filings(
+        items = naked_k_news_sec.collect_sec_filings(
             "TEST", now=NOW, lookback_days=30, get=fake_get
         )
 
@@ -135,7 +135,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
                 )
             )
 
-        items = naked_k_news_sec.collect_sec_8k_filings(
+        items = naked_k_news_sec.collect_sec_filings(
             "PDD", now=NOW, lookback_days=30, get=fake_get
         )
 
@@ -159,7 +159,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
                 )
             )
 
-        items = naked_k_news_sec.collect_sec_8k_filings(
+        items = naked_k_news_sec.collect_sec_filings(
             "TEST", now=NOW, lookback_days=30, get=fake_get
         )
 
@@ -178,7 +178,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
                 )
             )
 
-        items = naked_k_news_sec.collect_sec_8k_filings(
+        items = naked_k_news_sec.collect_sec_filings(
             "TEST", now=NOW, lookback_days=30, max_items=3, get=fake_get
         )
 
@@ -194,7 +194,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
                 submissions_payload([filing(filing_date="2026-08-05")])
             )
 
-        items = naked_k_news_sec.collect_sec_8k_filings(
+        items = naked_k_news_sec.collect_sec_filings(
             "TEST", now=NOW, lookback_days=30, get=fake_get
         )
 
@@ -206,7 +206,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
                 return FakeResponse(ticker_index([("OTHER", 9999999, "Other Inc")]))
             raise AssertionError("should not fetch submissions for unknown ticker")
 
-        items = naked_k_news_sec.collect_sec_8k_filings(
+        items = naked_k_news_sec.collect_sec_filings(
             "NOTFOUND", now=NOW, get=fake_get
         )
 
@@ -216,7 +216,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
         def failing_get(url: str, **kwargs: object) -> FakeResponse:
             raise RuntimeError("network error")
 
-        items = naked_k_news_sec.collect_sec_8k_filings(
+        items = naked_k_news_sec.collect_sec_filings(
             "TEST", now=NOW, get=failing_get
         )
 
@@ -228,7 +228,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
                 return FakeResponse("not a dict")
             raise AssertionError("should not proceed past malformed index")
 
-        items = naked_k_news_sec.collect_sec_8k_filings(
+        items = naked_k_news_sec.collect_sec_filings(
             "TEST", now=NOW, get=fake_get
         )
 
@@ -240,7 +240,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
                 return FakeResponse(ticker_index([("TEST", 1234567, "Test Inc")]))
             return FakeResponse({"filings": {}})  # Missing 'recent'
 
-        items = naked_k_news_sec.collect_sec_8k_filings(
+        items = naked_k_news_sec.collect_sec_filings(
             "TEST", now=NOW, get=fake_get
         )
 
@@ -261,7 +261,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
                 )
             )
 
-        items = naked_k_news_sec.collect_sec_8k_filings(
+        items = naked_k_news_sec.collect_sec_filings(
             "TEST", now=NOW, lookback_days=30, get=fake_get
         )
 
@@ -277,7 +277,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
 
         for kwargs in ({"lookback_days": 0}, {"max_items": 0}):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
-                naked_k_news_sec.collect_sec_8k_filings(
+                naked_k_news_sec.collect_sec_filings(
                     "TEST", now=NOW, get=fake_get, **kwargs
                 )
 
@@ -286,7 +286,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
     def test_suffixed_listings_skip_the_network_entirely(self) -> None:
         """A suffixed ticker has no CIK, so downloading the index is pure waste.
 
-        The index is a ~2MB download and the default ticker pool is mostly HK,
+        The index is a ~2MB download and 3 of the 7 default tickers are HK,
         so without this guard every run pays for round trips that can only ever
         answer ``None``. The rule is "contains a dot", not a list of the
         suffixes we thought of, so European and Japanese listings are covered
@@ -309,7 +309,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
             "SHOP.TO",
         ):
             with self.subTest(ticker=ticker):
-                items = naked_k_news_sec.collect_sec_8k_filings(
+                items = naked_k_news_sec.collect_sec_filings(
                     ticker, now=NOW, get=fake_get
                 )
                 self.assertEqual(items, [])
@@ -326,7 +326,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
                 return FakeResponse(ticker_index([("PDD", 1737806, "PDD Holdings")]))
             return FakeResponse(submissions_payload([filing()]))
 
-        items = naked_k_news_sec.collect_sec_8k_filings("PDD", now=NOW, get=fake_get)
+        items = naked_k_news_sec.collect_sec_filings("PDD", now=NOW, get=fake_get)
 
         self.assertEqual(len(items), 1)
         self.assertEqual(len(calls), 2)
@@ -346,7 +346,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
                 return FakeResponse(ticker_index([("BRK-B", 1067983, "Berkshire")]))
             return FakeResponse(submissions_payload([filing()]))
 
-        items = naked_k_news_sec.collect_sec_8k_filings("BRK-B", now=NOW, get=fake_get)
+        items = naked_k_news_sec.collect_sec_filings("BRK-B", now=NOW, get=fake_get)
 
         self.assertEqual(len(items), 1)
         self.assertEqual(len(calls), 2)
