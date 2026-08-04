@@ -1,37 +1,40 @@
 # Naked K Analysis
 
-裸 K 分析 CLI。项目只专注于 K 线本身：实体、影线、收盘位置、前高/前低、结构性突破/假突破、孕线、吞没、Pin Bar、十字星、确认 K、止损触发和复盘日志。
+裸 K 分析 CLI。纯价格结构驱动的交易计划生成器：从 OHLCV 和市场结构中识别 BOS/CHoCH、供需区、流动性扫单，生成触发位、止损、目标和风险计划，可选叠加多源公开新闻的两轮消息面综合。不使用任何技术指标（无 MA/EMA/MACD/RSI/BOLL）。
 
-当前版本：[v3.2.0](https://github.com/loda13/naked-k-analysis/releases/tag/v3.2.0)
+当前版本：[v3.3.1](https://github.com/loda13/naked-k-analysis/releases/tag/v3.3.1)
 
 ## 核心能力
 
-- **裸 K 收盘计划**：用日线 / 周线 K 线生成动作、触发位、失效位、第一目标和目标盈亏比。
-- **读线结构化**：输出最新 K 线实体强弱、上下影线、收盘位置、前高/前低突破或失败、趋势结构、回撤深度、波动扩张/压缩和高低点节奏。
-- **市场结构识别**：识别 swing high/low、HH/HL、LH/LL、BOS 和 CHoCH，把单根 K 线放回结构背景中解释。
-- **市场状态识别**：区分趋势市场、震荡市场、高波动市场和低波动压缩阶段，作为后续交易剧本的上层过滤。
-- **交易剧本分类**：把 BOS 延续、CHoCH 反转、假突破反打、压缩等待扩张等市场行为归类为可复盘 setup。
-- **多周期交易框架**：月线定义长期方向，周线定义主要结构，日线寻找交易机会，1H 只做入场触发/失效确认。
-- **上下文化 K 线行为**：Pin Bar、孕线、吞没和流动性扫单会结合位置、结构、量能、波动、影线质量和确认条件解释，不再机械输出形态标签。
-- **关键价格区域**：用 swing 聚类识别供需区、支撑/压力区、上下方流动性池、POC、价值区域、Anchored VWAP 和成交密集区，不再只依赖单一水平线。
-- **量价确认**：识别放量突破、放量跌破、下破收回、上破失败和缩量突破待确认，帮助区分确认 K 与假突破压力。
-- **标准形态识别**：覆盖看涨/看跌吸收、Pin Bar、十字星、锤子线、射击之星、早晨星、黄昏星、孕线。
-- **确认 K 触发**：多头先突破信号 K 高点，空头先跌破信号 K 低点，避免只凭单根形态追价。
-- **ATR 自适应缓冲**：触发位和止损位最低缓冲 0.2%，高波动股票自动放宽。
-- **结构化风险计划**：输出单笔风险、账户风险预算、建议仓位、1R/2R/3R 目标、最大回撤保护和连续亏损降风险状态。
-- **参数配置层**：账户风险、回撤阈值、连续亏损保护、动作仓位上限和组合暴露上限可通过 JSON 配置覆盖。
-- **组合风险暴露**：汇总总仓位、方向暴露、市场暴露、单标的暴露和账户风险暴露，并在超限时输出 guardrails。
-- **事件回测底座**：逐根 K 线推进，用信号日前历史生成计划，用下一根 K 线验证触发 / 止损 / 目标；提供 Walk Forward、R 倍数绩效和 Monte Carlo 风险重排。
-- **市场周期验证**：回测结果按趋势、震荡、高波动、低波动压缩和熊市分桶，输出各周期绩效、缺失周期和鲁棒性风险。
-- **交易员式简报**：把市场状态、多空力量、关键价格区域、可能路径、交易计划和风险点组织成复盘语言，避免“某指标金叉”式信号输出。
-- **AI 交易助手**：基于确定性引擎 JSON 做解释、复盘、失败归因和历史样本胜率校准；AI 不允许改写动作、触发位、止损位、目标位或风控计划。
-- **OpenAI-compatible LLM 增强**：可选调用 `/chat/completions` 生成交易复盘文本；默认关闭，失败不影响裸 K 主计划。
-- **1H 盘中确认**：盘中只做触发 / 失效预警，不覆盖日线和周线主计划。
-- **复盘日志**：每次运行写入 `reports/naked_k_journal.jsonl`，下一次会复盘上一根 K 的触发和失效情况。
-- **结构化运行审计**：每次 CLI 运行写入 JSONL 审计事件，记录数据加载、计划生成、组合风险、运行完成和失败原因。
-- **多数据源兜底**：优先 `westock-data`，再走腾讯 K 线、Yahoo chart JSON，最后用 yfinance。
-- **多市场支持**：港股 `.HK`、A 股 `.SS`/`.SZ`、美股和韩股 `.KS`/`.KQ`（KOSPI / KOSDAQ，Asia/Seoul 时区）。
-- **消息面两轮斟酌（可选）**：第一轮独立审查新闻（不见技术动作和价格），第二轮综合审阅并给出建议；零宽/形近字/leetspeak 混淆检测隔离指令注入，交叉佐证门、规范化命题指纹和实际敞口比较防止未经量化支持的动作变化。
+### 技术面：纯价格结构分析
+
+- **市场结构识别**：识别 swing high/low、HH/HL/LH/LL 序列、BOS（突破延续）和 CHoCH（结构转换），把单根 K 线放回结构背景中解释。
+- **关键价格区域**：用 swing 聚类识别供需区、支撑/压力、流动性池（买方/卖方扫单区）、POC、价值区域和 Anchored VWAP，不依赖单一水平线。
+- **上下文化形态**：Pin Bar、吞没、孕线、十字星会结合位置、结构、量能、波动和影线质量解释，不机械输出形态标签。
+- **交易剧本分类**：BOS 延续、CHoCH 反转、假突破反打、压缩等待扩张等市场行为归类为可复盘 setup。
+- **多周期框架**：月线定方向，周线定结构，日线找机会，1H 做触发/失效确认；周期冲突时降仓或等待。
+- **触发与止损**：多头突破信号 K 高点触发、跌破低点失效；空头反之。ATR 自适应缓冲（最低 0.2%），高波动自动放宽。
+- **风险计划**：输出 1R/2R/3R 目标、建议仓位、账户风险预算、最大回撤保护和连续亏损降风险状态。
+- **组合风险暴露**：汇总总仓位、方向暴露、市场暴露、单标的暴露和账户风险，超限时输出 guardrails。
+
+### 消息面：多源公开新闻 + 两轮综合（可选）
+
+- **多源采集**：Yahoo Finance + Google News RSS（默认）+ Finnhub 专业财经（SeekingAlpha/Benzinga，可选）+ SEC EDGAR 重大事件文件（8-K/6-K，60 天窗口）+ AkShare 中文财经（东方财富，可选）+ 新浪 7x24 滚动（分钟级，可选）。
+- **智能过滤**：相关性评分、质量权重（Finnhub 3.0x、SEC 5.0x、AkShare 2.0x、Sina 2.0x、Google 1.0x、Yahoo 0.5x）、单词边界匹配、市场流水表标题门。
+- **两轮斟酌**（`--news`）：第一轮独立审查新闻（不见技术动作），第二轮综合技术快照与消息给出建议；每条 claim 必须引用证据 ID 并逐字摘录。
+- **安全边界**：零宽/形近字/leetspeak 混淆检测隔离指令注入；增仓需交叉佐证门（≥2 个不同发布方、规范化命题指纹相同）；价格字段（触发/止损/目标）由确定性代码重建，模型不可改写。
+- **降级保护**：单源失败不中断，全源不可用时回退纯技术；新闻不足标记为 insufficient 并跳过第二轮；异常时保留错误状态，不伪装成模型判断。
+
+### 回测与验证
+
+- **事件回测**：逐根 K 线推进，用信号日前历史生成计划，下一根验证触发/止损/目标；Walk Forward、R 倍数绩效、Monte Carlo 重排。
+- **市场周期验证**：按趋势/震荡/高波动/低波动/熊市分桶，输出各周期绩效、缺失周期和鲁棒性风险。
+- **复盘日志**：每次运行写入 `reports/naked_k_journal.jsonl`，下次复盘上一根 K 的触发/失效情况。
+
+### 数据与市场
+
+- **多数据源兜底**：westock-data CLI → 腾讯 K 线 → Yahoo chart JSON → yfinance，自动降级。
+- **多市场支持**：港股 `.HK`、A 股 `.SS`/`.SZ`、北交所 `.BJ`、美股、韩股 `.KS`/`.KQ`。
 
 ## 安装
 
@@ -73,10 +76,10 @@ python naked_k_analysis.py --news
 
 ## 消息面两轮斟酌（可选）
 
-`--news` 默认关闭。启用后，程序在原有纯裸 K 计划之外，收集公开新闻并生成可追溯的消息面和综合结论；未启用时不会发起新闻或消息模型请求，既有 Markdown、JSON、journal 和交易计划保持原样。
+`--news` 默认关闭。启用后，程序在纯裸 K 计划之外，收集多源公开新闻并生成可追溯的消息面和综合结论。
 
 ```bash
-# 只启用公开新闻和两轮综合斟酌
+# 启用公开新闻和两轮综合斟酌
 python naked_k_analysis.py --news
 
 # 可选地覆盖模型、主窗口和每个标的的去重新闻上限
@@ -84,305 +87,198 @@ python naked_k_analysis.py --news --news-model your-selected-model-id \
   --news-lookback-days 7 --news-max-items 12
 ```
 
-`--news` 与现有 `--llm` 相互独立：`--llm` 仍是 OpenAI-compatible 的交易复盘文本增强，写入 `ai_assistant.llm_commentary`；`--news` 使用 Anthropic-compatible 的两轮消息面流程，写入独立的 `news_analysis` 和 `combined_conclusion`。两者可以单独使用或同时使用，彼此不覆盖。
+`--news` 与现有 `--llm` 相互独立：`--llm` 是 OpenAI-compatible 的交易复盘文本增强（写入 `ai_assistant.llm_commentary`）；`--news` 使用 Anthropic-compatible 的两轮消息面流程（写入 `news_analysis` 和 `combined_conclusion`）。两者可单独使用或同时使用，彼此不覆盖。
+
+### 新闻来源
+
+**无需配置（默认启用）**：
+- **Yahoo Finance Search** + **Google News RSS**
+
+**推荐配置（可选）**：
+- **SEC EDGAR 重大事件文件**：8-K（美国本土发行人）和 6-K（外国私人发行人/中概 ADR），覆盖财报、并购、高管变动等。质量权重 5.0x，60 天窗口（8-K/6-K 是事件驱动的，围绕财报成簇出现、中间空几十天）。同日多份 filing 标题带 accession 后缀区分（`#122766` / `#122765`）。无 API key，自动跳过非美股。
+- **Finnhub 专业财经新闻**：SeekingAlpha、Benzinga 等专业财经来源，相关新闻比例从 0% 提升至 71%（小米 1810.HK 实测）。质量权重 3.0x，30 天窗口。需免费 API key（60 calls/分钟，本项目每天仅 4 次调用），未配置时自动降级。
+- **AkShare 中文财经新闻**：东方财富个股新闻，补上港股/A 股中文覆盖。质量权重 2.0x，30 天窗口。可选依赖（`pip install akshare`），未安装时自动降级。**必须命中标题才保留**（东方财富会混入全市场资金流水表，正文列出每个 ticker）。
+- **新浪 7x24 滚动新闻**：分钟级市场消息，最快来源。质量权重 2.0x，实际窗口约 24 小时（endpoint 返回最近 2000 条全市场记录）。**headline-only 归因**（标题命中才归属该 ticker，正文命中不算）。
+
+### 智能过滤与质量排序
+
+- **相关性评分**：标题匹配 3.0 分/次，正文匹配 1.0 分/次；短 ASCII 关键词（≤3 字符）用单词边界匹配防止误报（`”mi”` 不匹配 `”million”`），CJK 用子串匹配（`小米` / `腾讯` 无单词边界）。
+- **质量权重**：Finnhub 3.0x、SEC 5.0x、AkShare 2.0x、Sina 2.0x、Google 1.0x、Yahoo 0.5x。最终得分 = 相关性 × 质量权重。
+- **市场流水表标题门**：AkShare 设 `requires_title_match`（其正文包含每个 ticker，仅靠正文分无法拦截）；Finnhub/SEC/Sina 设 `bypasses_gate`（已在上游按 symbol 筛选）。
+- **去重与排序**：标题归一化（NFKC、小写、去标点）+ URL 规范化，按最终得分和时效排序后去重，保留前 12 条。
 
 ### 两轮与价格边界
 
-第一轮是独立的消息面审查：它只接收公司、ticker、运行时间和规范化新闻，**不接收**技术动作、触发价、止损、目标或仓位。第二轮才会同时审阅不可变的技术结论快照、原始新闻、第一轮结论和风险上下文，并给出动作建议、技术/消息的一致或冲突解释及引用的证据 ID。
+**第一轮**（独立消息面审查）：只接收公司、ticker、运行时间和规范化新闻，**不接收**技术动作、触发价、止损、目标或仓位。输出结构化消息面结论，每条 claim 必须引用证据 ID。
 
-这里没有“技术分数 + 新闻分数”的固定权重、加总公式或动作矩阵。模型可以建议把动作升级或降级，但不能提供或改写任何价格字段。每次动作变化都必须同时给出非空的 `evidence_ids` 和逐项 `evidence_claims`；每条 claim 只绑定一个本次输入的新闻 ID，并携带从该来源标题或摘要逐字复制的 `supporting_excerpt`。引用不存在的 ID、无关或矛盾断言、从否定或不确定语句中截取肯定结论、在真实文字上追加未获支持的事实，以及任何指令式提示词，都不能改变动作。新闻 ID、标题、摘要、媒体、时间、URL、来源和新鲜度等所有会序列化进 prompt 的字段，任一被判定为指令式内容都会在第一轮请求之前隔离，因而不会进入任一轮模型 prompt；第一轮模型输出若包含同类内容，也会在进入第二轮前隔离。`news_analysis.quarantine` 只记录安全的状态、数量和证据 ID。只要本次输入发生过隔离，任何动作变化都会保持技术基线。
+**第二轮**（技术与消息综合）：审阅不可变的技术快照、原始新闻、第一轮结论和风险上下文，给出动作建议、一致/冲突解释和引用证据。可建议升级或降级动作，但**不能提供或改写价格字段**。
 
-任何提高实际敞口或账户风险的重建结果还有一道确定性安全门，包括 `suggested_gross_pct`、`effective_account_risk_pct`、可执行仓位上限，以及动作配置上限。安全门比较的是重建后的候选计划与未改动的技术基线，而不只比较动作名称；即使动作标签看似更保守，只要候选实际风险增加，也需要交叉佐证。引用证据必须至少来自两个规范化后不同的发布方、且注册主域名也不同的新闻项目，并且两条有效 claim 的规范化命题指纹必须相同；两条彼此无关的真实新闻不能拼成增仓依据。媒体别名和同一主域名的子域不会重复计数。满足条件时仍由模型自动判断，不使用固定融合分数；不满足时完整保留技术动作，并在 `override_reason_code` / `evidence_gate` 中记录机器可读的覆盖原因。最终 `entry_trigger`、`stop_loss`、`target_price`、仓位、R/R、风险计划和组合保护仍由确定性的裸 K 代码生成和同步；`减仓` 的残余仓位与账户风险还会被钳制为不高于技术基线。报告会分别保留模型建议的 `model_action` 与风控后的 `final_action`。
+**安全边界**：
+- **指令注入隔离**：零宽字符、形近字、leetspeak 混淆检测；新闻 ID/标题/摘要/媒体/时间/URL 任一字段被判定为指令式内容时在第一轮前隔离，不进入任一轮 prompt；第一轮输出若包含同类内容也会隔离。`news_analysis.quarantine` 只记录安全的状态、数量和证据 ID。
+- **交叉佐证门**（增仓时）：必须 ≥2 个不同发布方（规范化后主域名不同）+ 规范化命题指纹相同（两条彼此无关的真实新闻不能拼成增仓依据）。不满足时保留技术动作，`override_reason_code` / `evidence_gate` 记录机器可读原因。
+- **价格字段边界**：`entry_trigger`、`stop_loss`、`target_price`、仓位、R/R、风险计划由确定性代码生成和同步；`减仓` 残余仓位钳制为不高于技术基线。报告分别保留 `model_action`（模型建议）与 `final_action`（风控后）。
 
-### 公开来源、时效与证据
+### 报告与安全降级
 
-新闻来源包括：
-- **Yahoo Finance Search** + **Google News RSS**（无需配置，默认启用）
-- **Finnhub 专业财经新闻**（可选，推荐，v3.2.0 新增）
-- **AkShare 中文财经新闻**（可选，无需 API key，v3.3.0 新增）
+成功时 Markdown 显示：`技术面结论` → `消息面结论` → `技术与消息冲突/一致性` → `综合结论` → `消息来源`。
 
-Finnhub 提供 SeekingAlpha、Benzinga 等专业财经来源，配合智能相关性过滤和数据源优先级系统，相关新闻比例从 0% 提升至 71%。详见上文"Finnhub 集成"章节。
+JSON 与 journal 同时保存 `technical_conclusion`、`news_analysis` 和 `combined_conclusion`。
 
-AkShare 补上中文财经媒体覆盖，详见下文"AkShare 集成"章节。
+**降级保护**：
+- 单源失败：采集器使用其他来源，保留来源错误状态。
+- 全源不可用或无有效新闻：跳过消息判断，保留安全状态/错误类型，回退纯技术。
+- 新闻不足：标记 insufficient 并跳过第二轮，不伪装成模型判断。
+- 某标的异常：保留错误状态，该标的回退技术动作，其他标的正常输出。
 
-#### AkShare 集成（可选，无需 API key）✨ 新增
+### Finnhub 快速配置（5 分钟）
 
-港股与 A 股的实质性消息主要以中文发布，Finnhub / Google / Yahoo 对这块覆盖有限；`9992.HK` 这类没有美股 ADR 映射的标的更是只剩 Yahoo 噪音。`naked_k_news_akshare.py` 通过 `akshare.stock_news_em`（东方财富个股新闻）补上这一层：
+1. 注册免费账号：https://finnhub.io/register
+2. 获取 API Key
+3. 添加到 `.env`：`FINNHUB_API_KEY=your_api_key_here`
 
-**特点**：
-- 无需 API key，0.1s 返回
-- 来源包括证券时报网、每日经济新闻、界面新闻、第一财经、财联社等
-- 质量权重 **2.0**（介于 Finnhub 3.0 与 Google 1.0 之间）
-- 东方财富每周条数较少，因此喂 30 天窗口而非 7 天主窗
+**免费额度**：60 calls/分钟（本项目每天仅 4 次调用，完全在免费额度内）。  
+**无 API Key 时**：自动降级到 Yahoo + Google + SEC，不会报错。  
+**详细文档**：`FINNHUB_QUICKSTART.md`、`FINNHUB_SETUP.md`、`NEWS_OPTIMIZATION_SUMMARY.md`。
 
-**安装**（可选依赖，未安装则自动降级）：
+### AkShare 安装（可选）
+
 ```bash
 python -m pip install akshare
 ```
 
+未安装时自动降级为空列表，报告仍输出纯技术结论。
+
 **实现要点**：
-- **ticker 必须补零到 5 位**：`01810` 返回小米回购公告；`1810` 会匹配到"利润暴增1810%"这类无关标题
-- **时间戳按北京时间解析**：东方财富返回朴素本地时间，当作 UTC 处理会产生 8 小时误差
-- **窗口在客户端过滤**：该接口忽略日期范围参数，固定返回约 10 条，不过滤会让数月前的旧闻漏进报告
-- **必须命中标题才保留**：东方财富会混入"港股通净卖出""南向资金"这类全市场资金流水表，其正文列出了每一个 ticker 代码与发行人名称，仅靠正文匹配无法拦截
-
-未安装 akshare、接口异常或返回格式异常时一律降级为空列表，报告仍输出纯技术结论。
-
-#### Finnhub 集成（可选，强烈推荐）✨ 新增
-
-Finnhub 提供专业财经新闻聚合（SeekingAlpha, Benzinga 等），显著改善消息面质量：
-
-**优化效果**（小米 1810.HK 实测）：
-- 优化前: 0条相关新闻，置信度 0
-- 优化后: 5条相关新闻（71%），置信度 45 (+450%)
-- 数据源: Finnhub 57% + Google 43%（Yahoo 噪音已过滤）
-
-**设置步骤**（5分钟）：
-1. 注册免费账号: https://finnhub.io/register
-2. 获取 API Key
-3. 添加到 `.env`: `FINNHUB_API_KEY=your_api_key_here`
-
-**详细文档**: 
-- 快速开始: `FINNHUB_QUICKSTART.md`
-- 完整指南: `FINNHUB_SETUP.md`
-- 技术细节: `NEWS_OPTIMIZATION_SUMMARY.md`
-
-**免费额度**: 60 calls/分钟（本项目每天仅4次调用，完全在免费额度内）
-
-**无 API Key 时**: 系统自动降级到 Yahoo + Google，不会报错
-
-默认优先使用最近 **7 个自然日**内、归一化去重后的新闻（每个标的最多 12 条）。只有在主窗口没有有效新闻时，才回看最近 **30 日**并标注 `low_freshness`；超过 30 日或未来时间的新闻不会进入当前判断。
-
-每条进入模型的新闻都带稳定的 `news-01`、`news-02` 等证据 ID，以及标题、媒体、时间、URL、摘要、来源和新鲜度。第一轮和第二轮只能引用本次输入中存在的证据 ID；第二轮的结构化 claim-to-evidence 映射还必须通过逐字摘录、词项覆盖、子句级否定/不确定性一致性和规范化命题指纹检查，因此报告中的消息判断可以回溯到对应公开来源，而不会让模型凭训练记忆补造新闻。
-
-### 报告与安全降级
-
-当 `--news` 成功运行时，每个标的的 Markdown 会连续显示：
-
-- `技术面结论`
-- `消息面结论`
-- `技术与消息冲突/一致性`
-- `综合结论`
-- `消息来源`
-
-JSON 与 journal 同时保存 `technical_conclusion`、`news_analysis` 和 `combined_conclusion`。单个公开新闻来源失败时，采集器仍会使用另一个来源，并保留来源错误状态；只有两者都不可用或没有可用新闻时，才跳过后续消息判断。对某个标的，如果新闻采集不可用、两轮请求或校验失败，或者确定性价格重建失败，该标的会保留安全状态/错误类型并回退到原有技术动作；新闻不足时会标记为不足并跳过第二轮，不会把缺失消息伪装成模型判断。
-
-组合保护异常使用不同的事务边界：程序会恢复整个列表在组合保护开始前的报告快照，然后继续持久化。因此，保护前已经有效的 `combined_conclusion`、模型动作和综合动作会被保留，不一定全部回退为原始技术动作；只有本次组合保护产生的部分改写会被撤销。
+- **ticker 必须补零到 5 位**：`01810` 返回小米回购公告；`1810` 会匹配到”利润暴增1810%”无关标题。
+- **时间戳按北京时间解析**：东方财富返回朴素本地时间，当作 UTC 处理会产生 8 小时误差。
+- **窗口在客户端过滤**：接口忽略日期参数，固定返回约 10 条，不过滤会让数月前旧闻漏进报告。
 
 ### Anthropic-compatible 本地配置
 
-只在本地、被 `.gitignore` 忽略的 `.env` 或系统环境变量中保存配置。以下是安全占位示例，不能直接用于真实请求：
+只在 `.env`（被 `.gitignore` 忽略）或系统环境变量中保存配置。安全占位示例：
 
 ```dotenv
-ANTHROPIC_BASE_URL="https://one.iflytek.com/api/llm/console/chat"
-ANTHROPIC_AUTH_TOKEN="replace-me-with-a-rotated-local-token"
-NAKED_K_NEWS_MODEL="replace-me-with-one-model-id"
+ANTHROPIC_BASE_URL=”https://one.iflytek.com/api/llm/console/chat”
+ANTHROPIC_AUTH_TOKEN=”replace-me-with-a-rotated-local-token”
+NAKED_K_NEWS_MODEL=”replace-me-with-one-model-id”
 ```
 
-Base URL 的完整路径前缀会在内存中的实际请求里保留，而不是裁剪到站点根路径：上例的消息端点是 `https://one.iflytek.com/api/llm/console/chat/v1/messages`，模型端点是 `https://one.iflytek.com/api/llm/console/chat/v1/models`。远程主机必须使用 HTTPS；HTTP 只允许显式的 `localhost` / loopback 开发地址。Base URL 不接受用户名密码、query 或 fragment。
-
-可打印配置和 `--json` 只显示安全的 endpoint origin（例如 `https://one.iflytek.com`），不显示完整租户路径。成功响应、错误、模型 ID、Markdown、journal、audit 和 CLI JSON 在持久化前都会递归脱敏认证 token、敏感 Base URL 和常见 credential-like 字符串；Base URL 比较会规范化主机大小写、默认端口、百分号编码、路径和末尾斜杠，嵌套的 camelCase / AWS 凭据键也会识别。`Basic` / `Bearer` 只有在认证头、敏感键或符合凭据语法的上下文中才会脱敏，普通的金融或工程文本不会仅因包含这些单词而被改写。请求仍在内存中使用原始已选模型 ID。
-
-明确设置模型时会直接使用。未设置时，程序会从上述完整前缀的 `/v1/models` 发现模型：只排除元数据纯粹、明确标为 embedding、rerank、图像、音频或审核用途的 ID；`type=chat` 且同时支持 text/image 的多模态聊天模型不会仅因 image capability 被排除。真正互相冲突或能力含糊的元数据会要求显式选择。若存在多个合格候选或任何能力含糊的候选，程序不会猜测“最佳”模型，而会列出经脱敏的候选 ID。
-
-配置先按来源决定优先级：进程环境整体覆盖 `.env`，也就是进程环境中任一兼容别名存在时，都不会再从 `.env` 为该项取值；然后在同一来源内按以下顺序选择：
-
+配置优先级（进程环境整体覆盖 `.env`，同一来源内按顺序选择）：
 - Base URL：`ANTHROPIC_BASE_URL` → `NAKED_K_NEWS_BASE_URL` → `NAKED_K_LLM_BASE_URL` → `LLM_BASE_URL`
 - 认证：`ANTHROPIC_AUTH_TOKEN` → `ANTHROPIC_API_KEY` → `NAKED_K_NEWS_API_KEY` → `NAKED_K_LLM_API_KEY` → `LLM_API_KEY`
 - 模型：CLI `--news-model` 覆盖所有环境来源；否则依次为 `NAKED_K_NEWS_MODEL` → `ANTHROPIC_MODEL` → `NAKED_K_LLM_MODEL` → `LLM_MODEL`
 
-认证信息没有 CLI 参数，避免进入 shell history；日志、audit、JSON 和异常只记录脱敏后的 provider、model、安全 endpoint origin、状态或错误类型。任何曾粘贴到聊天、日志或其他文本，或提交到仓库任何位置的真实 token，都必须先轮换，再进行真实网络 smoke test。不要读取、打印、提交或分享 `.env`。
+未明确设置模型时，程序从 `/v1/models` 发现模型，排除 embedding/rerank/图像/音频/审核专用 ID。多个候选或能力含糊时不猜测，列出经脱敏的候选 ID 要求显式选择。
+
+日志、audit、JSON 和异常只记录脱敏后的 provider/model/安全 endpoint origin/状态，不记录认证 token。
 
 ## 报告字段
 
+**技术面核心**：
 - `action`：`买入`、`小仓试错`、`观望`、`减仓`、`回避`
-- `signal_state`：`planned_long`、`planned_short`、`watching`
-- `price_action`：裸 K 解读，包括 K 线标签、结构信号、趋势结构、回撤深度、波动状态、量价状态、风险提示和收盘位置
-- `entry_trigger`：突破 / 跌破信号 K 极值后的触发位
-- `stop_loss`：信号失效位
-- `target_price`：第一目标位，优先使用最近结构压力 / 支撑
-- `risk_per_share`：单股风险
-- `reward_to_risk`：第一目标对应的目标盈亏比
-- `position_size`：按 1% 账户风险预算和动作上限反推的仓位上限
-- `intraday_status`：1H 盘中状态，只做触发 / 失效预警
-- `market_structure`：swing 结构、HH/HL 或 LH/LL 序列、BOS / CHoCH 事件和最近结构高低点
-- `market_regime`：趋势 / 震荡 / 高波动 / 低波动压缩状态、方向和最新波幅比
-- `timeframe_context`：多周期框架，包括月线长期方向、周线主要结构、日线机会、1H 触发状态和周期一致性过滤
-- `trade_setup`：交易剧本，包括 setup 名称、方向、质量、置信分、市场行为解释、确认条件和失效逻辑
-- `price_zones`：关键价格区域，包括供需区、最近支撑/压力、流动性池和成交密集区
-- `candle_context`：上下文化 K 线行为，包括行为类型、方向、位置、影线质量、收盘质量、量能背景、波动背景、结构背景、质量分和确认条件
-- `risk_plan`：结构化风险计划，包括单笔风险、账户风险、建议仓位、R 目标、风控保护状态
-- `trader_brief`：交易员式复盘，包括市场状态、多空力量、关键区域、可能路径、交易计划和风险点
-- `ai_assistant`：AI 助手输入和输出边界，包括确定性引擎计划、市场上下文、历史样本校准、失败归因和禁止 AI 改写信号的规则
-- `technical_conclusion`：启用 `--news` 时保存的不可变纯技术计划快照
+- `entry_trigger` / `stop_loss` / `target_price`：触发位、失效位、第一目标（R/R 计算基础）
+- `market_structure`：swing 结构、HH/HL 或 LH/LL 序列、BOS/CHoCH 事件、最近结构高低点
+- `market_regime`：趋势/震荡/高波动/低波动压缩状态、方向、最新波幅比
+- `price_zones`：供需区、最近支撑/压力、流动性池、成交密集区
+- `trade_setup`：交易剧本（BOS 延续、CHoCH 反转、假突破反打、压缩等待扩张等）
+- `timeframe_context`：月线方向、周线结构、日线机会、1H 触发、周期一致性
+- `candle_context`：上下文化 K 线行为（位置、影线质量、收盘质量、量能背景、结构背景、质量分、确认条件）
+- `risk_plan`：单笔风险、账户风险、建议仓位、1R/2R/3R 目标、风控保护状态
+- `trader_brief`：交易员式复盘（市场状态、多空力量、关键区域、可能路径、交易计划、风险点）
+
+**消息面与综合（`--news` 启用时）**：
+- `technical_conclusion`：不可变纯技术计划快照
 - `news_analysis`：公开新闻采集状态、第一轮消息面结论、证据和安全调用状态
-- `combined_conclusion`：第二轮模型建议、结构化证据 claims、冲突分析、模型动作、证据安全门、风控后的最终动作和机器可读覆盖原因
-- `review`：上一条计划在当前 K 线中的触发、失效和错误类型
+- `combined_conclusion`：第二轮模型建议、结构化证据 claims、冲突分析、`model_action`（模型建议）、证据安全门、`final_action`（风控后）、机器可读覆盖原因
+
+**复盘与审计**：
+- `review`：上一条计划在当前 K 线中的触发、失效和错误类型（`reports/naked_k_journal.jsonl`）
+- `intraday_status`：1H 盘中状态（接近触发、盘中确认、接近失效位等）
+- 运行审计：`run_started` / `data_loaded` / `plan_generated` / `portfolio_exposure` / `run_completed`（`reports/naked_k_audit.jsonl`）
 
 ## 裸 K 逻辑
 
-月线决定长期方向，周线决定主要结构，日线寻找交易机会，1H 只做入场触发 / 失效确认。
+**多周期框架**：月线定方向，周线定结构，日线找机会，1H 做触发/失效确认。日线机会与月线/周线方向冲突时标记 `conflict`，优先降仓或等待。
 
-多周期框架：
+**市场结构**：
+- 识别局部 swing high/low，判断 HH/HL、LH/LL、扩张震荡或收敛震荡。
+- 收盘突破前结构高点 → 多头 BOS；下降结构中向上突破 → 多头 CHoCH。
+- 收盘跌破前结构低点 → 空头 BOS；上升结构中向下跌破 → 空头 CHoCH。
+- CHoCH 只代表结构转换，需后续回踩和小周期触发确认。
 
-- 月线不直接给入场信号，只回答长期方向是否支持当前交易计划。
-- 周线负责判断主结构和大级别风险，避免日线信号逆着主要结构硬做。
-- 日线负责识别 BOS、CHoCH、假突破、压缩扩张和交易机会。
-- 1H 只验证触发位和失效位，不覆盖日线 / 周线计划。
-- 当日线机会与月线 / 周线方向冲突时，系统标记为 `conflict`，优先降仓或等待重新确认。
+**市场状态**：
+- HH/HL 或 LH/LL 且波动正常 → 趋势市场
+- 波幅显著放大 → 高波动市场（控制仓位和滑点）
+- 波幅低于近期均值 → 低波动压缩（等待扩张方向）
+- 结构未确认 → 震荡市场（关注区间边界和假突破）
 
-市场结构：
+**交易剧本**：
+- **多头 BOS 趋势延续**：HH/HL 结构中收盘突破结构高点，等待回踩不破突破位或小周期重新转强。
+- **多头 CHoCH 反转试错**：下降结构被向上打断，需小周期 HL 和回踩确认。
+- **上方流动性扫过失败**：上破前高后收回，结合派发压力或放量失败，按假突破反打处理。
+- **压缩后等待扩张**：低波动收敛阶段不押方向，等待扩张 K 收盘和量价确认。
 
-- 先识别局部 swing high / swing low，再判断 HH/HL、LH/LL、扩张震荡或收敛震荡。
-- 收盘突破前一个结构高点记为多头 BOS；下降结构中向上突破记为多头 CHoCH。
-- 收盘跌破前一个结构低点记为空头 BOS；上升结构中向下跌破记为空头 CHoCH。
-- CHoCH 只代表结构转换，不直接等同于趋势反转，需要后续回踩和小周期触发确认。
+**关键价格区域**：
+- 局部 swing low 聚类 → 需求/支撑区；swing high 聚类 → 供给/压力区。
+- 多次触碰等高区域 → 上方买方流动性池；等低区域 → 下方卖方流动性池。
+- 成交量按典型价格分箱，输出 POC 成交控制点、70% 价值区域和成交密集区。
+- Anchored VWAP 从最近结构 swing 锚定，判断价格相对机构平均成本区位置。
 
-市场状态：
+**上下文化 K 线行为**：
+- Pin Bar、吞没、孕线、十字、流动性扫单统一转成结构化 `candle_context`。
+- 每个行为包含 `location`、`volume_context`、`volatility_context`、`structure_context`、`quality_score`、`interpretation`、`confirmation`。
+- 孕线按压缩处理，需等待母线高低点被收盘突破，不直接当作方向信号。
+- 下破前低收回识别为 `liquidity_sweep`，只有结合支撑/流动性区、放量吸收和结构转换时才提高质量分。
 
-- 结构 HH/HL 或 LH/LL 且波动正常时，归类为趋势市场。
-- 最新波幅显著放大时，归类为高波动市场，优先控制仓位和滑点。
-- 最新波幅低于近期均值时，归类为低波动压缩，等待扩张方向。
-- 结构未确认时，归类为震荡市场，优先关注区间边界和假突破。
+**价格行为上下文**：
+- 最近 K 线：实体强弱、上下影线、收盘位置、前高/前低关系。
+- 最近 5 根 K 线：上升/下降/横盘结构。
+- 最近波段：回撤区间（浅回撤、健康回撤、深回撤观察、趋势破坏）。
+- 最新波幅 vs 近 5 根平均：突破扩张、跌破扩张、宽幅震荡、波幅压缩。
+- 放量：量价确认、下破收回、上破失败、派发压力；缩量突破 → 待确认信号。
 
-交易剧本：
+**多头计划**：
+- 日线看涨形态或收盘突破前 N 日高点。
+- 周线偏多 → `买入`；周线未确认 → `小仓试错`。
+- 触发位 = 信号 K 高点 + ATR 缓冲；失效位 = 信号 K 低点 - ATR 缓冲。
 
-- 多头 BOS 趋势延续：HH/HL 结构中收盘突破结构高点，等待回踩不破突破位或小周期重新转强。
-- 多头 CHoCH 反转试错：下降结构被向上打断，只代表结构转换，需要小周期 HL 和回踩确认。
-- 上方流动性扫过失败：上破前高后收回，结合派发压力或放量失败，优先按假突破反打处理。
-- 压缩后等待扩张：低波动收敛阶段不提前押方向，等待扩张 K 收盘和量价确认。
+**空头/回避计划**：
+- 日线看跌形态、上破前高失败或收盘跌破前 N 日低点。
+- 周线偏空或中性 → `回避`；周线偏多 → `减仓`。
+- 触发位 = 信号 K 低点 - ATR 缓冲；失效位 = 信号 K 高点 + ATR 缓冲。
 
-关键价格区域：
-
-- 局部 swing low 聚类形成需求 / 支撑区，局部 swing high 聚类形成供给 / 压力区。
-- 多次触碰的等高区域标记为上方买方流动性池，等低区域标记为下方卖方流动性池。
-- 成交量按典型价格分箱，输出 POC 成交控制点、70% 价值区域和最近成交密集区，用作价格接受区域参考。
-- Anchored VWAP 从最近结构 swing low / swing high 锚定，判断价格相对机构平均成本区的位置。
-- 旧字段 `support` / `resistance` 继续保留，但优先使用最近供需区中点回填。
-
-上下文化 K 线行为：
-
-- Pin Bar、吞没、孕线、十字和流动性扫单会统一转成结构化 `candle_context`。
-- 每个行为对象包含 `location`、`volume_context`、`volatility_context`、`structure_context`、`quality_score`、`interpretation` 和 `confirmation`。
-- 孕线默认按压缩处理，需要等待母线高低点被收盘突破，不直接当作方向信号。
-- 下破前低收回会被识别为 `liquidity_sweep`，只有结合支撑/流动性区、放量吸收和结构转换时才提高质量分。
-
-价格行为上下文：
-
-- 最近 K 线判断实体强弱、上下影线、收盘位置和前高 / 前低关系。
-- 最近 5 根 K 线判断上升结构、下降结构或横盘结构。
-- 最近波段判断回撤区间，包括浅回撤、健康回撤、深回撤观察和趋势破坏。
-- 最新波幅与近 5 根平均波幅对比，识别突破扩张、跌破扩张、宽幅震荡和波幅压缩。
-- 放量时优先判断量价确认、下破收回、上破失败和派发压力；缩量突破只作为待确认信号。
-
-多头计划：
-
-- 日线出现看涨形态，或收盘突破前 N 日高点。
-- 周线偏多时可给 `买入`，周线未确认时降为 `小仓试错`。
-- 触发位使用信号 K 高点加 ATR 缓冲。
-- 失效位使用信号 K 低点减 ATR 缓冲。
-
-空头 / 回避计划：
-
-- 日线出现看跌形态，或上破前高失败、收盘跌破前 N 日低点。
-- 周线偏空或中性时优先 `回避`，周线偏多时用 `减仓` 处理风险。
-- 触发位使用信号 K 低点减 ATR 缓冲。
-- 失效位使用信号 K 高点加 ATR 缓冲。
-
-观察计划：
-
-- 十字星、孕线、波幅收敛或区间内震荡时，不提前给方向。
+**观察计划**：
+- 十字星、孕线、波幅收敛或区间内震荡时不给方向。
 - 等待下一根 K 线突破母线高低点或关键结构位。
 
-风险计划：
+**风险计划**：
+- 多头和空头统一换算为 1R/2R/3R 价格路径。
+- 建议仓位 = 账户风险预算 ÷ 单笔价格风险，再受动作上限约束。
+- 回撤达最大阈值 → `blocked`（暂停新仓）；连续亏损达保护阈值 → `reduced`（账户风险预算减半）。
 
-- 多头和空头计划统一换算为 1R / 2R / 3R 价格路径。
-- 建议仓位由账户风险预算除以单笔价格风险得出，再受动作上限约束。
-- 当前回撤达到最大回撤阈值时，风险计划进入 `blocked`，暂停新仓。
-- 连续亏损达到保护阈值时，风险计划进入 `reduced`，账户风险预算减半。
-
-参数配置：
-
+**参数配置**（JSON 可覆盖）：
 ```json
 {
-  "risk": {
-    "account_risk_pct": 0.8,
-    "max_drawdown_pct": 6.0,
-    "consecutive_loss_limit": 2,
-    "consecutive_loss_risk_multiplier": 0.25,
-    "action_gross_caps": {
-      "买入": 20.0,
-      "小仓试错": 8.0,
-      "减仓": 5.0,
-      "回避": 0.0,
-      "观望": 0.0
-    }
+  “risk”: {
+    “account_risk_pct”: 0.8,
+    “max_drawdown_pct”: 6.0,
+    “consecutive_loss_limit”: 2,
+    “action_gross_caps”: {“买入”: 20.0, “小仓试错”: 8.0, “减仓”: 5.0}
   },
-  "portfolio": {
-    "max_total_gross_pct": 60.0,
-    "max_direction_gross_pct": 45.0,
-    "max_market_gross_pct": 35.0,
-    "max_single_name_gross_pct": 25.0,
-    "max_total_account_risk_pct": 2.5
+  “portfolio”: {
+    “max_total_gross_pct”: 60.0,
+    “max_direction_gross_pct”: 45.0,
+    “max_market_gross_pct”: 35.0,
+    “max_single_name_gross_pct”: 25.0,
+    “max_total_account_risk_pct”: 2.5
   }
 }
 ```
 
-组合暴露：
-
-- 报告末尾输出组合风险摘要，包括总仓位、账户风险和超限保护项。
-- 市场暴露按 ticker 自动归类为 `hk`、`cn`、`us` 或 `crypto`。
-- 超过总仓位、方向、市场、单标的或账户风险上限时，状态进入 `over_limit`。
-
-运行审计：
-
-- `run_started` / `run_completed` 记录一次分析任务的起止、标的数量和生成计划数。
-- `data_loaded` 记录每个 ticker、周期、数据源、行数和最新 K 线时间。
-- `data_unavailable` 记录月线或 1H 增强数据缺失原因，不中断主计划。
-- `plan_generated` 记录动作、信号状态、交易剧本、风险状态和周期一致性。
-- `portfolio_exposure` 记录组合风险暴露；超限时事件级别为 `warning`。
-
-回测底座：
-
-- Walk Forward 窗口严格保证训练段结束时间早于测试段开始时间。
-- 事件回测只把信号日前的历史窗口传给计划器，再用下一根 K 线执行，避免同一根 K 线既生成信号又结算。
-- 未触发计划进入 `skipped`，不计入交易绩效；已完成交易统一换算为 R 倍数。
-- 绩效以 R 倍数为核心，输出胜率、Profit Factor、平均 R、最大回撤、Recovery Factor 和 Sharpe Ratio。
-- Monte Carlo 只重排已完成交易的 R 序列，用来观察收益和回撤分布，不生成未来信号。
-- `cycle_validation` 会按市场周期分桶输出各周期指标、缺失周期和 `fragile` 鲁棒性标记，避免只看总收益掩盖某类市场失效。
-
-交易员简报：
-
-- 不输出“MACD 金叉 / RSI 超买超卖”这类指标信号。
-- 使用价格行为、结构事件、供需区、量价状态和风险计划组织语言。
-- 交易计划固定包含当前机会、胜率估计、盈亏比、建议仓位、失效位置和风险等级。
-- 可能路径同时描述延续、失败和未触发三种情况，避免单一路径预测。
-
-AI 交易助手：
-
-- AI 输入来自确定性引擎的结构化 JSON，包括计划、结构、周期、区域、风险、K 线行为和交易员简报。
-- `signal_boundary` 明确禁止 AI 改写 `action`、`entry_trigger`、`stop_loss`、`target_price` 和 `risk_plan`。
-- `calibrated_edge` 只使用历史 R 倍数样本校准胜率；样本不足时不输出概率化胜率。
-- `failure_attribution` 把假突破、未触发、周期冲突和上下文风险转成复盘归因。
-
-LLM 增强：
-
-```bash
-# .env 已在 .gitignore 中忽略，可把本地 LLM 配置放这里
-LLM_BASE_URL="https://ark.cn-beijing.volces.com/api/coding/v3"
-LLM_MODEL="glm-5.2"
-LLM_API_KEY="<your-api-key>"
-LLM_MAX_TOKENS=3000
-
-python naked_k_analysis.py --llm
-```
-
-- 兼容 OpenAI `/chat/completions` 协议，程序会自动拼接 `/chat/completions`。
-- 也支持 `NAKED_K_LLM_BASE_URL`、`NAKED_K_LLM_MODEL`、`NAKED_K_LLM_API_KEY`。
-- 默认读取本地 `.env`，同时仍支持系统环境变量；系统环境变量优先于 `.env`。
-- 可用 `--llm-base-url` 和 `--llm-model` 覆盖环境变量；API key 只从 `.env` 或系统环境变量读取，不提供 CLI 参数，避免 shell history 泄露。
-- LLM 调用结果写入 `ai_assistant.llm_commentary`；如果调用失败，只记录错误状态，不阻断主报告。
-- audit 和 JSON 输出只记录 provider/model/status，不记录 API key。
+**组合暴露**：
+- 报告末尾输出总仓位、账户风险和超限保护项。
+- 市场暴露自动归类为 `hk`、`cn`、`us` 或 `crypto`。
+- 超过总仓位、方向、市场、单标的或账户风险上限时 → `over_limit`。
 
 ## 盘中状态
 
