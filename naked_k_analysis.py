@@ -511,7 +511,17 @@ _NEWS_AUDIT_FIELDS = {
     "final_action",
     "error_type",
     "override_reason",
+    # How many inputs or model outputs the injection filter withheld, and which
+    # evidence ids they carried. Never the flagged text itself: it is
+    # attacker-controlled, and logging it re-exposes what quarantine contains.
+    "quarantine_count",
+    "quarantined_evidence_ids",
 }
+
+# Fields that must survive a falsy value. A dropped zero is indistinguishable
+# from a filter that never ran, which is precisely the false-positive blind spot
+# the count exists to close.
+_NEWS_AUDIT_ZERO_SAFE_FIELDS = frozenset({"quarantine_count"})
 
 
 def _log_news_audit(
@@ -524,9 +534,42 @@ def _log_news_audit(
     safe_payload = {
         key: value
         for key, value in payload.items()
-        if key in _NEWS_AUDIT_FIELDS and value not in (None, "")
+        if key in _NEWS_AUDIT_FIELDS
+        and (
+            value not in (None, "")
+            or (key in _NEWS_AUDIT_ZERO_SAFE_FIELDS and value is not None)
+        )
     }
     audit.log(event_type, level=level, **safe_payload)
+
+
+def _quarantine_audit_fields(news_analysis: Any) -> dict[str, Any]:
+    """Extract the auditable half of a quarantine record.
+
+    Only the count and the ids that already passed
+    ``is_safe_quarantine_evidence_id`` upstream are returned. The ids are
+    re-checked here rather than trusted, because this record travels from the
+    model layer and an id is attacker-controlled text like any other field.
+    """
+    quarantine = (news_analysis or {}).get("quarantine")
+    if not isinstance(quarantine, dict):
+        return {"quarantine_count": 0}
+
+    try:
+        count = int(quarantine.get("count") or 0)
+    except (TypeError, ValueError):
+        count = 0
+    fields: dict[str, Any] = {"quarantine_count": max(0, count)}
+
+    raw_ids = quarantine.get("evidence_ids")
+    safe_ids = [
+        evidence_id
+        for evidence_id in (raw_ids if isinstance(raw_ids, list) else [])
+        if naked_k_news_llm.is_safe_quarantine_evidence_id(evidence_id)
+    ]
+    if safe_ids:
+        fields["quarantined_evidence_ids"] = list(dict.fromkeys(safe_ids))
+    return fields
 
 
 def _format_news_blocks(report: InstrumentReport) -> list[str]:
@@ -996,6 +1039,7 @@ def _run_news_for_report(
         status=report.news_analysis.get("status"),
         item_count=item_count,
         error_type=assessment_error_type,
+        **_quarantine_audit_fields(report.news_analysis),
     )
     emitted_events.add("news_assessed")
 
