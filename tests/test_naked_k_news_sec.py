@@ -219,12 +219,14 @@ class SecEdgarCollectionTests(unittest.TestCase):
 
         self.assertEqual(calls, [])
 
-    def test_non_us_listings_skip_the_network_entirely(self) -> None:
+    def test_suffixed_listings_skip_the_network_entirely(self) -> None:
         """A suffixed ticker has no CIK, so downloading the index is pure waste.
 
-        The index is a ~2MB download and the default ticker pool is all-HK, so
-        without this guard every run pays for four round trips that can only
-        ever answer ``None``.
+        The index is a ~2MB download and the default ticker pool is mostly HK,
+        so without this guard every run pays for round trips that can only ever
+        answer ``None``. The rule is "contains a dot", not a list of the
+        suffixes we thought of, so European and Japanese listings are covered
+        by the same check rather than needing to be enumerated later.
         """
         calls: list[str] = []
 
@@ -232,7 +234,16 @@ class SecEdgarCollectionTests(unittest.TestCase):
             calls.append(url)
             return FakeResponse({})
 
-        for ticker in ("0700.HK", "600519.SS", "000001.SZ", "430047.BJ", "005930.KS"):
+        for ticker in (
+            "0700.HK",
+            "600519.SS",
+            "000001.SZ",
+            "430047.BJ",
+            "005930.KS",
+            "VOD.L",  # never enumerated in a suffix denylist
+            "7203.T",
+            "SHOP.TO",
+        ):
             with self.subTest(ticker=ticker):
                 items = naked_k_news_sec.collect_sec_8k_filings(
                     ticker, now=NOW, get=fake_get
@@ -242,7 +253,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
     def test_plain_us_symbols_still_reach_the_network(self) -> None:
-        """The skip must key on the suffix, not reject every unresolved ticker."""
+        """The skip must key on the dot, not reject every unresolved ticker."""
         calls: list[str] = []
 
         def fake_get(url: str, **kwargs: object) -> FakeResponse:
@@ -252,6 +263,26 @@ class SecEdgarCollectionTests(unittest.TestCase):
             return FakeResponse(submissions_payload([filing()]))
 
         items = naked_k_news_sec.collect_sec_8k_filings("PDD", now=NOW, get=fake_get)
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(len(calls), 2)
+
+    def test_hyphenated_share_classes_are_not_skipped(self) -> None:
+        """SEC spells share classes with a hyphen, so BRK-B must still resolve.
+
+        Verified against the live index: of 10432 entries, 544 contain a hyphen
+        and zero contain a dot. Keying the skip on the dot is what keeps these
+        reachable; a naive "non-alphanumeric means foreign" rule would drop them.
+        """
+        calls: list[str] = []
+
+        def fake_get(url: str, **kwargs: object) -> FakeResponse:
+            calls.append(url)
+            if "company_tickers" in url:
+                return FakeResponse(ticker_index([("BRK-B", 1067983, "Berkshire")]))
+            return FakeResponse(submissions_payload([filing()]))
+
+        items = naked_k_news_sec.collect_sec_8k_filings("BRK-B", now=NOW, get=fake_get)
 
         self.assertEqual(len(items), 1)
         self.assertEqual(len(calls), 2)

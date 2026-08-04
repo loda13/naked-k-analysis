@@ -518,11 +518,6 @@ _NEWS_AUDIT_FIELDS = {
     "quarantined_evidence_ids",
 }
 
-# Fields that must survive a falsy value. A dropped zero is indistinguishable
-# from a filter that never ran, which is precisely the false-positive blind spot
-# the count exists to close.
-_NEWS_AUDIT_ZERO_SAFE_FIELDS = frozenset({"quarantine_count"})
-
 
 def _log_news_audit(
     audit: naked_k_audit.AuditLogger,
@@ -534,11 +529,11 @@ def _log_news_audit(
     safe_payload = {
         key: value
         for key, value in payload.items()
-        if key in _NEWS_AUDIT_FIELDS
-        and (
-            value not in (None, "")
-            or (key in _NEWS_AUDIT_ZERO_SAFE_FIELDS and value is not None)
-        )
+        # `not in (None, "")` is an equality test, not a truthiness test, so a
+        # zero count or an empty-list value survives on its own. Do not
+        # "simplify" this to `if value` — that silently drops a legitimate 0,
+        # which is indistinguishable from a filter that never ran.
+        if key in _NEWS_AUDIT_FIELDS and value not in (None, "")
     }
     audit.log(event_type, level=level, **safe_payload)
 

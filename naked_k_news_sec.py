@@ -39,10 +39,16 @@ _DOCUMENT_URL_TEMPLATE = (
     "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{document}"
 )
 
-# Exchange suffixes that place a listing outside EDGAR by definition. Resolving
-# one still costs a ~2MB index download to learn what the suffix already says,
-# and the default ticker pool is all-HK, so the guard pays for itself per run.
-_NON_US_SUFFIXES = (".HK", ".SS", ".SZ", ".BJ", ".KS", ".KQ")
+
+# A dot means the ticker carries an exchange suffix (0700.HK, 9992.HK, VOD.L),
+# which places the listing outside EDGAR by definition. Verified against the
+# live index: of 10432 entries, zero contain a dot — SEC spells share classes
+# with a hyphen (BRK-B, BF-A), never a dot. So this is the general rule, not a
+# denylist of the suffixes we happened to think of; .L/.T/.TO/.PA are covered
+# too. Worth short-circuiting because resolving one costs a ~2MB index download
+# to learn what the ticker already said.
+def _is_outside_edgar(ticker: str) -> bool:
+    return "." in ticker
 
 
 def collect_sec_8k_filings(
@@ -56,7 +62,7 @@ def collect_sec_8k_filings(
     """Return normalized, newest-first SEC 8-K filings for the given ticker.
 
     The ticker must be US-listed with a CIK. OTC ADRs are not included in the
-    SEC database. Tickers carrying a non-US exchange suffix return empty
+    SEC database. Tickers carrying an exchange suffix (any dot) return empty
     without any network call.
     """
     if lookback_days <= 0:
@@ -64,7 +70,7 @@ def collect_sec_8k_filings(
     if max_items <= 0:
         raise ValueError("max_items must be positive")
 
-    if ticker.upper().endswith(_NON_US_SUFFIXES):
+    if _is_outside_edgar(ticker):
         return []
 
     now_utc = _as_timestamp(now)
