@@ -1,4 +1,11 @@
-import sys
+"""Manual live single-ticker run. Not a unit test.
+
+Named ``run_`` rather than ``test_`` on purpose: ``python -m unittest
+discover`` matches ``test*.py`` at the repo root too, so under the old name
+the documented test gate imported this script and performed a real network
+analysis plus a live news-LLM call on every run.
+"""
+
 from pathlib import Path
 from naked_k_analysis import run_analysis
 import naked_k_news_llm
