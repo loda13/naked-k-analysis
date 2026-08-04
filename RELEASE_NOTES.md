@@ -1,3 +1,28 @@
+# v3.3.1 - SEC EDGAR 采集修复 (2026-08-04)
+
+## 🐛 Bug 修复
+
+**SEC EDGAR 重大事件文件采集优化**
+
+1. **SEC 窗口太短**：从 7 天延长到 60 天（`max(lookback_days, 60)`），与 Finnhub/AkShare 对齐。8-K/6-K 事件驱动，围绕财报成簇出现、中间空 30-90 天。
+2. **同日多份 filing 去重**：标题添加 accession 后缀（`#122766`/`#122765`），同日 filing 产生不同标题。
+
+**实测效果**：
+- TSLA 返回 2 条 SEC 8-K（7/22, 7/02）
+- AVGO 返回 3 条 SEC 8-K（7/06, 6/18, 6/11）
+- PDD 2025-12-19 两份 6-K 都保留（之前去重丢掉 1 条）
+
+**测试覆盖**：361 个测试全绿，新增 `test_same_date_filings_produce_distinct_titles` 和 `test_sec_failure_does_not_abort_collection`。
+
+## 📚 文档
+
+- **README 重构**：强调纯价格结构驱动 + 多源公开新闻可选叠加，明确不使用任何技术指标。从 502 行压缩到 427 行（-15%），重点突出裸 K 技术面和消息面核心能力。
+- **版本号更新**：v3.2.0 → v3.3.1
+
+**详细发布说明**: [RELEASE_NOTES_v3.3.1.md](./RELEASE_NOTES_v3.3.1.md)
+
+---
+
 # v3.1.0 - 韩国市场与消息面安全加固
 
 ## 概述
