@@ -203,12 +203,61 @@ commit `6b676aa` 的财务白名单分支写成了
 
 ---
 
-## 六、待办
+## 六、已核实（原待办）
 
-1. **Sina 新闻源效果调查**（未动）。所有报告的消息来源均为东方财富（AkShare）
-   或新浪财经，Sina rolling newswire 理论覆盖（21.7 小时）与实际占比不符。
-   可能原因：`collect_sina_rolling_news` 未被调用 / keyword-alias 匹配过严 /
-   `bypasses_gate=True` 但 baseline relevance_score 为 0 导致排序截断。
-2. **SEC EDGAR 对美股覆盖**未测（当前仅中港股）。
-3. 假阴性追踪：需要一个**不回显被隔离文本**的计数机制
-   （不可重犯 `[QUARANTINE DEBUG]` 的错误）。
+### 1. Sina 新闻源「占比偏低」是误读，源本身健康
+
+本文早前版本按 `publisher` 标签统计，而 `新浪财经` 正是 Sina 自己的
+`_PUBLISHER` 常量（`naked_k_news_sina.py:38`）——把它算作「别人家的来源」。
+按 `source_provider` 复核实盘数据：akshare_em 15 / **sina 7** / google_news_rss 3。
+
+三条猜测全部不成立：
+
+- **确实被调用**：`source_errors` 为空。
+- **keyword-alias 正常**：9992 解析出 `09992` / `泡泡玛特` / `pop mart`。
+- **baseline 生效**：1810 最终 12 条里有 5 条来自 Sina。
+
+9992 拿到 0 条是**覆盖深度**问题，不是故障。走满 `_MAX_PAGES=20`（2000 行）
+实测跨度 **23.7 小时**，与模块注释「~100 items per 45 minutes」一致；在这
+2000 行里 `泡泡玛特` / `09992` 标题命中 0 次、正文命中 0 次。
+
+**结论**：Sina 的 `lookback_days=7` 是名义值，实际被 feed 深度限制在约 1 天，
+这是设计使然。判断 Sina 覆盖不能看这个参数——深历史是东方财富（AkShare）的职责。
+
+### 2. SEC EDGAR 覆盖：已测，并修掉一处无谓外联
+
+`collect_sec_8k_filings` 原先对**每个** ticker 都去下 SEC 的 ~2MB
+`company_tickers.json` 全量索引，包括按定义不可能有 CIK 的带后缀标的。
+默认票池全是港股，等于每轮白跑 4 次往返换 4 个必然的 `None`。已按后缀短路。
+
+同一处默认开启的 collector 也在**从测试套件里真连外网**：
+`tests/test_naked_k_news_enhanced.py` 16 个测试有 15 个没 stub 它，其中 4 个
+慢到让 `unittest discover` 在 120 秒超时，而输出里只有 Yahoo 噪声、没有任何
+线索指向真凶。测试侧补了 `NoNetworkMixin`（patch `requests.get`，未 stub 即
+刻失败并打印出问题 URL）。该模块从 45 秒以上超时变为 21 个测试 0.056 秒。
+
+其异常派生自 `BaseException` 而非 `AssertionError`：各 collector 都用
+`except Exception` 兜底以免单个源挂掉拖垮调用方，而那层兜底会把
+`AssertionError` 吞掉——这正是漏网当初没被发现的原因。
+
+美股实际抓取路径（`PDD` → CIK → submissions → 8-K）已有测试覆盖并断言恰好
+两次网络调用；真实 EDGAR 端到端仍未跑过，因为默认票池无美股。
+
+### 3. 假阴性追踪：已实现
+
+隔离记录此前在审计日志里**完全没有痕迹**。记录本身存在于 `news_analysis`，
+但 `_NEWS_AUDIT_FIELDS` 是正向白名单且没列出它的键，`_log_news_audit` 会静默
+丢弃——于是 `6b676aa` 的白名单缺陷误隔离段永平那条正常新闻数日，审计轨迹里
+查不到任何线索。
+
+现在记录**计数与 evidence id，绝不记被标记的文本**（那是攻击者可控内容，写进
+审计日志等于把隔离要遮住的东西重新暴露出来）。id 在此处经
+`is_safe_quarantine_evidence_id` **重新校验**而非直接信任。零值必须穿过 falsy
+过滤（`_NEWS_AUDIT_ZERO_SAFE_FIELDS`）：丢掉的 0 与「过滤器根本没跑」无法区分，
+而这恰是计数要消除的盲区。
+
+---
+
+## 七、待办
+
+1. 真实 SEC EDGAR 端到端验证——需要往票池加一个美股标的。
