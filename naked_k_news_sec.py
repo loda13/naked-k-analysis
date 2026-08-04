@@ -1,17 +1,23 @@
-"""SEC EDGAR collector for material US-listed company events (Form 8-K).
+"""SEC EDGAR collector for material corporate events (Forms 8-K and 6-K).
 
 Reads the SEC EDGAR JSON API (``data.sec.gov/submissions/CIK{cik}.json``) to
-retrieve recent Form 8-K filings, which report material corporate events
-(earnings releases, M&A, officer changes, etc.). Returns a list of normalized
-filing metadata with document URLs; the actual HTML content is left to
-downstream consumers.
+retrieve recent material-event filings (earnings releases, M&A, officer
+changes, etc.). Returns a list of normalized filing metadata with document
+URLs; the actual HTML content is left to downstream consumers.
+
+Both forms are collected because they are mutually exclusive by filer type:
+domestic issuers file 8-K, foreign private issuers file 6-K and never file
+8-K. Collecting only 8-K silently excluded every China ADR — see
+``_MATERIAL_EVENT_FORMS``.
 
 The SEC rate-limits anonymous requests to 10/second; this collector fetches
 one CIK per call, well under that threshold. The User-Agent header is required
-by SEC policy.
+by SEC policy and must carry a real contact address — a placeholder domain
+risks being throttled or blocked.
 
-Only US-listed tickers with a CIK are supported. ADRs traded OTC (e.g. TCEHY,
-XIACF) are not included in the SEC database.
+Any ticker with a CIK is supported, including exchange-listed foreign issuers.
+ADRs traded OTC (e.g. TCEHY, XIACF) have no CIK and are not in the SEC
+database.
 """
 
 from __future__ import annotations
@@ -30,7 +36,7 @@ GetCallable = Callable[..., Any]
 
 _SOURCE_PROVIDER = "sec_edgar"
 _PUBLISHER = "SEC EDGAR"
-_USER_AGENT = "naked-k-analysis/3.2.0 loda@example.com"
+_USER_AGENT = "naked-k-analysis/3.2.0 cdjudder@gmail.com"
 
 # SEC company tickers → CIK mapping, refreshed ~daily by the SEC.
 _TICKER_INDEX_URL = "https://www.sec.gov/files/company_tickers.json"
