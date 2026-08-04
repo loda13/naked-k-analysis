@@ -538,6 +538,34 @@ class EnhancedNewsCollectionTests(NoNetworkMixin, unittest.TestCase):
 
         sec.assert_not_called()
 
+    def test_sec_failure_does_not_abort_collection(self) -> None:
+        """An EDGAR outage must still leave the technical report renderable."""
+        with (
+            patch.object(naked_k_news_enhanced, "load_company_names", return_value={}),
+            patch.object(naked_k_news_enhanced, "collect_finnhub_news", return_value=[]),
+            patch.object(naked_k_news_enhanced, "collect_akshare_news", return_value=[]),
+            patch.object(
+                naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
+            ),
+            patch.object(
+                naked_k_news_enhanced,
+                "collect_sec_filings",
+                side_effect=RuntimeError("EDGAR timeout"),
+            ),
+            patch.object(
+                naked_k_news_enhanced,
+                "collect_news",
+                return_value={"items": [], "source_errors": []},
+            ),
+        ):
+            result = naked_k_news_enhanced.collect_news_enhanced(
+                "特斯拉", "TSLA", now=NOW
+            )
+
+        # One provider failure is insufficient, not unavailable (needs >=2).
+        self.assertEqual(result["status"], "insufficient")
+        self.assertIn("RuntimeError", result["source_errors"])
+
     def test_sina_failure_does_not_abort_collection(self) -> None:
         """A newswire outage must still leave the technical report renderable."""
         with (

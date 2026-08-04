@@ -109,7 +109,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
         )
 
         self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["title"], "Form 8-K filing on 2026-07-30")
+        self.assertIn("Form 8-K filing on 2026-07-30", items[0]["title"])
 
     def test_foreign_private_issuers_are_collected_via_6k(self) -> None:
         """FPIs report material events on 6-K and never file 8-K.
@@ -140,7 +140,7 @@ class SecEdgarCollectionTests(unittest.TestCase):
         )
 
         self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["title"], "Form 6-K filing on 2026-07-30")
+        self.assertIn("Form 6-K filing on 2026-07-30", items[0]["title"])
         self.assertIn("tm2615739d1_6k.htm", items[0]["url"])
         self.assertEqual(items[0]["source_provider"], "sec_edgar")
 
@@ -163,10 +163,10 @@ class SecEdgarCollectionTests(unittest.TestCase):
             "TEST", now=NOW, lookback_days=30, get=fake_get
         )
 
-        self.assertEqual(
-            [item["title"] for item in items],
-            ["Form 6-K filing on 2026-07-30", "Form 8-K filing on 2026-07-28"],
-        )
+        self.assertEqual(len(items), 2)
+        # Newest first
+        self.assertIn("Form 6-K filing on 2026-07-30", items[0]["title"])
+        self.assertIn("Form 8-K filing on 2026-07-28", items[1]["title"])
 
     def test_max_items_truncates_after_windowing(self) -> None:
         def fake_get(url: str, **kwargs: object) -> FakeResponse:
@@ -350,6 +350,53 @@ class SecEdgarCollectionTests(unittest.TestCase):
 
         self.assertEqual(len(items), 1)
         self.assertEqual(len(calls), 2)
+
+    def test_same_date_filings_produce_distinct_titles(self) -> None:
+        """Multiple filings on the same date must not collapse in deduplication.
+
+        Common scenario: a company files one 8-K for earnings (item 2.02) and
+        another for an officer change (item 5.02) the same day. The accession
+        numbers and URLs differ, so they are distinct events. A date-only title
+        produces identical strings that deduplication treats as one story.
+
+        Observed live: PDD filed two 6-K on 2025-12-19 with accessions
+        000110465925122766 and 000110465925122765. The collector returned both,
+        but _deduplicate_ranked dropped one because the titles matched.
+        """
+
+        def fake_get(url: str, **kwargs: object) -> FakeResponse:
+            if "company_tickers.json" in url:
+                return FakeResponse(ticker_index([("TEST", 1234567, "Test Inc")]))
+            return FakeResponse(
+                submissions_payload(
+                    [
+                        filing(
+                            filing_date="2026-07-30",
+                            accession="0001234567-26-000010",
+                            primary_doc="earnings-8k.htm",
+                        ),
+                        filing(
+                            filing_date="2026-07-30",
+                            accession="0001234567-26-000009",
+                            primary_doc="officer-8k.htm",
+                        ),
+                    ]
+                )
+            )
+
+        items = naked_k_news_sec.collect_sec_filings(
+            "TEST", now=NOW, lookback_days=7, get=fake_get
+        )
+
+        self.assertEqual(len(items), 2)
+        # Titles must differ so downstream deduplication keeps both.
+        self.assertNotEqual(items[0]["title"], items[1]["title"])
+        # Both must contain the date so they are still human-readable.
+        for item in items:
+            self.assertIn("2026-07-30", item["title"])
+        # The accession suffix makes them unique.
+        self.assertIn("000010", items[0]["title"])
+        self.assertIn("000009", items[1]["title"])
 
 
 class SecCikResolutionTests(unittest.TestCase):

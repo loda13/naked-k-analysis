@@ -137,9 +137,16 @@ def collect_sec_filings(
             document=primary_doc,
         )
 
+        # Include the accession suffix so same-date filings produce distinct
+        # titles — a company filing earnings and an officer change the same day
+        # should not collapse in deduplication. The accession format is
+        # NNNNNNNNNN-YY-NNNNNN; the suffix is enough to distinguish them.
+        accession_suffix = accession.split("-")[-1] if "-" in accession else accession[-6:]
+        title = f"Form {form} filing on {filing_date} #{accession_suffix}"
+
         candidates.append(
             _candidate(
-                title=f"Form {form} filing on {filing_date}",
+                title=title,
                 published_at=timestamp,
                 url=doc_url,
                 summary="",

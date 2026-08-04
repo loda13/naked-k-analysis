@@ -163,13 +163,16 @@ def collect_news_enhanced(
             source_errors_all.append(type(exc).__name__)
 
     # Priority 4: SEC EDGAR material-event filings (8-K domestic, 6-K foreign).
+    # These are event-driven and cluster around earnings — a company may report
+    # once a quarter, leaving 60+ day gaps. The window is extended to match the
+    # cadence of the slowest low-frequency sources (Finnhub, AkShare).
     if use_sec:
         try:
             all_candidates.extend(
                 collect_sec_filings(
                     ticker,
                     now=as_of,
-                    lookback_days=lookback_days,
+                    lookback_days=max(lookback_days, 60),
                     max_items=max_items * 2,
                     get=sec_get,
                 )
