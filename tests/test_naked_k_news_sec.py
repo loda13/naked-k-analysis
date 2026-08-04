@@ -219,6 +219,43 @@ class SecEdgarCollectionTests(unittest.TestCase):
 
         self.assertEqual(calls, [])
 
+    def test_non_us_listings_skip_the_network_entirely(self) -> None:
+        """A suffixed ticker has no CIK, so downloading the index is pure waste.
+
+        The index is a ~2MB download and the default ticker pool is all-HK, so
+        without this guard every run pays for four round trips that can only
+        ever answer ``None``.
+        """
+        calls: list[str] = []
+
+        def fake_get(url: str, **kwargs: object) -> FakeResponse:
+            calls.append(url)
+            return FakeResponse({})
+
+        for ticker in ("0700.HK", "600519.SS", "000001.SZ", "430047.BJ", "005930.KS"):
+            with self.subTest(ticker=ticker):
+                items = naked_k_news_sec.collect_sec_8k_filings(
+                    ticker, now=NOW, get=fake_get
+                )
+                self.assertEqual(items, [])
+
+        self.assertEqual(calls, [])
+
+    def test_plain_us_symbols_still_reach_the_network(self) -> None:
+        """The skip must key on the suffix, not reject every unresolved ticker."""
+        calls: list[str] = []
+
+        def fake_get(url: str, **kwargs: object) -> FakeResponse:
+            calls.append(url)
+            if "company_tickers" in url:
+                return FakeResponse(ticker_index([("PDD", 1737806, "PDD Holdings")]))
+            return FakeResponse(submissions_payload([filing()]))
+
+        items = naked_k_news_sec.collect_sec_8k_filings("PDD", now=NOW, get=fake_get)
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(len(calls), 2)
+
 
 class SecCikResolutionTests(unittest.TestCase):
     def test_resolves_ticker_to_zero_padded_cik(self) -> None:

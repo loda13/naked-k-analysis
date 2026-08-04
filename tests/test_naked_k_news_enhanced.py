@@ -45,6 +45,9 @@ def only_akshare(mapping: dict[str, object], items: list[dict[str, object]]):
             naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
         ),
         patch.object(
+            naked_k_news_enhanced, "collect_sec_8k_filings", return_value=[]
+        ),
+        patch.object(
             naked_k_news_enhanced,
             "collect_news",
             return_value={"items": [], "source_errors": []},
@@ -65,6 +68,9 @@ def only_sina(mapping: dict[str, object], items: list[dict[str, object]]):
         ),
         patch.object(naked_k_news_enhanced, "collect_akshare_news", return_value=[]),
         patch.object(
+            naked_k_news_enhanced, "collect_sec_8k_filings", return_value=[]
+        ),
+        patch.object(
             naked_k_news_enhanced,
             "collect_news",
             return_value={"items": [], "source_errors": []},
@@ -73,7 +79,42 @@ def only_sina(mapping: dict[str, object], items: list[dict[str, object]]):
         yield
 
 
-class EnhancedNewsCollectionTests(unittest.TestCase):
+class LiveNetworkAttempt(BaseException):
+    """Raised when a test reaches the real internet.
+
+    Derived from ``BaseException`` on purpose: every collector wraps its
+    fetches in ``except Exception`` so one dead provider cannot abort the
+    caller, and that same guard would silently swallow an ``AssertionError``
+    here, turning a missed stub back into an invisible pass.
+    """
+
+
+class NoNetworkMixin:
+    """Turn a missed provider stub into an immediate failure, not a hung run.
+
+    ``collect_news_enhanced`` enables every provider by default, so forgetting
+    one stub used to reach the live internet: the suite hung for tens of
+    seconds per test on SEC's ~2MB ticker index and only failed by timeout,
+    with nothing in the output naming the culprit. Patching ``requests.get``
+    where the collectors resolve it makes the omission loud and instant, and
+    keeps working when a new provider is added.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+
+        def forbidden(*args: object, **kwargs: object) -> None:
+            raise LiveNetworkAttempt(
+                f"test made a live HTTP request to {args[0] if args else '?'}; "
+                "stub the provider instead"
+            )
+
+        patcher = patch("requests.get", side_effect=forbidden)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class EnhancedNewsCollectionTests(NoNetworkMixin, unittest.TestCase):
     def test_rejects_invalid_limits_before_calling_any_provider(self) -> None:
         for kwargs in (
             {"lookback_days": 0},
@@ -136,6 +177,9 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
             patch.object(
                 naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
             ) as sina,
+            patch.object(
+                naked_k_news_enhanced, "collect_sec_8k_filings", return_value=[]
+            ),
             patch.object(
                 naked_k_news_enhanced,
                 "collect_news",
@@ -233,6 +277,9 @@ class EnhancedNewsCollectionTests(unittest.TestCase):
             ),
             patch.object(
                 naked_k_news_enhanced, "collect_sina_rolling_news", return_value=[]
+            ),
+            patch.object(
+                naked_k_news_enhanced, "collect_sec_8k_filings", return_value=[]
             ),
         ):
             result = naked_k_news_enhanced.collect_news_enhanced(

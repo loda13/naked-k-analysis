@@ -39,6 +39,11 @@ _DOCUMENT_URL_TEMPLATE = (
     "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{document}"
 )
 
+# Exchange suffixes that place a listing outside EDGAR by definition. Resolving
+# one still costs a ~2MB index download to learn what the suffix already says,
+# and the default ticker pool is all-HK, so the guard pays for itself per run.
+_NON_US_SUFFIXES = (".HK", ".SS", ".SZ", ".BJ", ".KS", ".KQ")
+
 
 def collect_sec_8k_filings(
     ticker: str,
@@ -51,12 +56,16 @@ def collect_sec_8k_filings(
     """Return normalized, newest-first SEC 8-K filings for the given ticker.
 
     The ticker must be US-listed with a CIK. OTC ADRs are not included in the
-    SEC database.
+    SEC database. Tickers carrying a non-US exchange suffix return empty
+    without any network call.
     """
     if lookback_days <= 0:
         raise ValueError("lookback_days must be positive")
     if max_items <= 0:
         raise ValueError("max_items must be positive")
+
+    if ticker.upper().endswith(_NON_US_SUFFIXES):
+        return []
 
     now_utc = _as_timestamp(now)
     cutoff = now_utc - pd.Timedelta(days=lookback_days)
