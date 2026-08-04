@@ -51,6 +51,14 @@ def _is_outside_edgar(ticker: str) -> bool:
     return "." in ticker
 
 
+# Domestic issuers report material events on 8-K; foreign private issuers file
+# 6-K instead and never file 8-K at all. Filtering on 8-K alone returned empty
+# forever for every China ADR — verified live: PDD 67 6-K / 0 8-K, BABA 339/0,
+# JD 188/0, NIO 268/0. Both forms carry the same filingDate / accessionNumber /
+# primaryDocument fields, so they share one parse path.
+_MATERIAL_EVENT_FORMS = frozenset({"8-K", "6-K"})
+
+
 def collect_sec_8k_filings(
     ticker: str,
     *,
@@ -96,7 +104,8 @@ def collect_sec_8k_filings(
 
     candidates: list[dict[str, Any]] = []
     for filing in filings:
-        if filing.get("form") != "8-K":
+        form = filing.get("form")
+        if form not in _MATERIAL_EVENT_FORMS:
             continue
         filing_date = filing.get("filingDate")
         if not filing_date:
@@ -110,13 +119,21 @@ def collect_sec_8k_filings(
         if not accession or not primary_doc:
             continue
 
+        # The two SEC hosts disagree on CIK format: data.sec.gov/submissions
+        # requires the zero-padded 10-digit form (unpadded is a 404), while
+        # www.sec.gov/Archives requires it unpadded (padded is a 301 to the
+        # unpadded path). Emitting the padded form here made every document URL
+        # a redirect — reachable with -L, but a wasted round trip and a non-200
+        # for any consumer that does not follow redirects.
         doc_url = _DOCUMENT_URL_TEMPLATE.format(
-            cik=cik, accession=accession.replace("-", ""), document=primary_doc
+            cik=cik.lstrip("0"),
+            accession=accession.replace("-", ""),
+            document=primary_doc,
         )
 
         candidates.append(
             _candidate(
-                title=f"Form 8-K filing on {filing_date}",
+                title=f"Form {form} filing on {filing_date}",
                 published_at=timestamp,
                 url=doc_url,
                 summary="",

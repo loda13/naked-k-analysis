@@ -92,7 +92,8 @@ def collect_cls_breaking_news(ticker: str, lookback_hours: int = 24) -> list[dic
 #### 4. **SEC EDGAR (美股官方文件)**
 - **覆盖范围**：美股上市公司 SEC 文件
 - **内容类型**：
-  - Form 8-K（重大事件）
+  - Form 8-K（重大事件，美国本土发行人）
+  - Form 6-K（重大事件，外国私人发行人／在美上市的中概股）
   - Form 10-Q/10-K（季报/年报）
   - Form 4（内部人交易）
   - Form 13F（机构持仓）
@@ -112,14 +113,19 @@ def collect_cls_breaking_news(ticker: str, lookback_hours: int = 24) -> list[dic
   - 限流：10 次/秒（单次查询远低于此阈值）
 - **返回结构**：申报类型、申报日期、文档 URL
 - **实际能力边界**：
-  - 仅覆盖**美国本土上市公司**，OTC ADR（如 TCEHY、XIACF）不在 SEC 数据库中
-  - 当前接入 **Form 8-K**（重大事件：并购、高管变动、财报发布等）
+  - 仅覆盖在 SEC 有 CIK 的标的；OTC ADR（如 TCEHY、XIACF）不在 SEC 数据库中。
+    带交易所后缀（含点，如 `0700.HK`）的标的零网络短路
+  - 接入 **Form 8-K 与 6-K** 两种重大事件表单（并购、高管变动、财报发布等）。
+    美国本土发行人报 8-K；外国私人发行人报 6-K 且从不报 8-K，所以纽交所/纳斯达克
+    上市的中概股 ADR（PDD、BABA、JD、NIO）只能通过 6-K 拿到。周期报告
+    （10-Q/10-K）不算事件，仍排除
   - 文档是 HTML 法律文本，采集器仅返回元数据（标题、日期、URL），
     实际摘要留给下游 LLM 合成
-  - 标题格式为 "Form 8-K filing on YYYY-MM-DD"，不包含公司名，
+  - 标题格式为 "Form 8-K filing on YYYY-MM-DD"（6-K 同理），不包含公司名，
     因此设置了最高 `quality_weight=5.0` 和 `bypasses_gate=True`，
     确保官方申报优先级高于关键词匹配的新闻聚合源
-- **适用标的**：PDD、AAPL、TSLA 等美股（非 ADR）
+- **适用标的**：AAPL、TSLA、NVDA 等美国本土发行人（8-K）；
+  PDD、BABA、JD、NIO 等在美上市的中概股（6-K）
 - **优先级**：⭐⭐⭐
 
 ---

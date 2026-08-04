@@ -80,10 +80,17 @@ class SecEdgarCollectionTests(unittest.TestCase):
         self.assertEqual(items[1]["published_at"], "2026-07-26T00:00:00+00:00")
         self.assertEqual(items[0]["source_provider"], "sec_edgar")
         self.assertEqual(items[0]["publisher"], "SEC EDGAR")
-        self.assertIn("0001234567", items[0]["url"])
         self.assertIn("test-8k.htm", items[0]["url"])
+        # www.sec.gov/Archives wants the CIK unpadded; the padded form 301s.
+        # Assert the path segment, not a bare substring: "0001234567" also
+        # occurs inside the accession segment, so a substring check passes even
+        # when the CIK segment is wrong.
+        self.assertIn("/edgar/data/1234567/", items[0]["url"])
+        self.assertNotIn("/edgar/data/0001234567/", items[0]["url"])
 
-    def test_only_8k_filings_are_collected(self) -> None:
+    def test_periodic_reports_are_not_collected(self) -> None:
+        """Only material-event forms qualify; 10-Q/10-K are periodic, not news."""
+
         def fake_get(url: str, **kwargs: object) -> FakeResponse:
             if "company_tickers.json" in url:
                 return FakeResponse(ticker_index([("TEST", 1234567, "Test Inc")]))
@@ -103,6 +110,63 @@ class SecEdgarCollectionTests(unittest.TestCase):
 
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["title"], "Form 8-K filing on 2026-07-30")
+
+    def test_foreign_private_issuers_are_collected_via_6k(self) -> None:
+        """FPIs report material events on 6-K and never file 8-K.
+
+        Verified live: PDD has 67 recent 6-K and 0 8-K; BABA 339/0, JD 188/0,
+        NIO 268/0. Filtering on 8-K alone returned empty forever for every
+        China ADR, which is a large share of the tickers this repo follows.
+        """
+
+        def fake_get(url: str, **kwargs: object) -> FakeResponse:
+            if "company_tickers.json" in url:
+                return FakeResponse(ticker_index([("PDD", 1737806, "PDD Holdings")]))
+            return FakeResponse(
+                submissions_payload(
+                    [
+                        filing(
+                            form="6-K",
+                            filing_date="2026-07-30",
+                            primary_doc="tm2615739d1_6k.htm",
+                        ),
+                        filing(form="10-Q", filing_date="2026-07-29"),
+                    ]
+                )
+            )
+
+        items = naked_k_news_sec.collect_sec_8k_filings(
+            "PDD", now=NOW, lookback_days=30, get=fake_get
+        )
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["title"], "Form 6-K filing on 2026-07-30")
+        self.assertIn("tm2615739d1_6k.htm", items[0]["url"])
+        self.assertEqual(items[0]["source_provider"], "sec_edgar")
+
+    def test_both_material_event_forms_coexist_and_stay_sorted(self) -> None:
+        """A dual filer must not have one form silently outrank the other."""
+
+        def fake_get(url: str, **kwargs: object) -> FakeResponse:
+            if "company_tickers.json" in url:
+                return FakeResponse(ticker_index([("TEST", 1234567, "Test Inc")]))
+            return FakeResponse(
+                submissions_payload(
+                    [
+                        filing(form="8-K", filing_date="2026-07-28"),
+                        filing(form="6-K", filing_date="2026-07-30"),
+                    ]
+                )
+            )
+
+        items = naked_k_news_sec.collect_sec_8k_filings(
+            "TEST", now=NOW, lookback_days=30, get=fake_get
+        )
+
+        self.assertEqual(
+            [item["title"] for item in items],
+            ["Form 6-K filing on 2026-07-30", "Form 8-K filing on 2026-07-28"],
+        )
 
     def test_max_items_truncates_after_windowing(self) -> None:
         def fake_get(url: str, **kwargs: object) -> FakeResponse:

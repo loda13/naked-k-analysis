@@ -245,10 +245,23 @@ commit `6b676aa` 的财务白名单分支写成了
 `except Exception` 兜底以免单个源挂掉拖垮调用方，而那层兜底会把
 `AssertionError` 吞掉——这正是漏网当初没被发现的原因。
 
-美股实际抓取路径（`PDD` → CIK → submissions → 8-K）已有测试覆盖并断言恰好
-两次网络调用。真实 EDGAR 索引已实拉验证：`NVDA` / `TSLA` / `QQQ` / `PDD`
-四个均在索引中命中，即 CIK 解析这一步在真实数据上可用；后续 submissions →
-8-K 的端到端仍未实跑。
+真实 EDGAR 端到端**已实跑验证**（不再是待办），并因此发现两个真实缺陷：
+
+**a) 只收 8-K 会漏掉全部中概股 ADR。** 外国私人发行人（FPI）报重大事件用
+**6-K**，且根本不报 8-K。实测：PDD 近期 67 份 6-K / 0 份 8-K，BABA 339/0，
+JD 188/0，NIO 268/0。即这个 provider 对本仓库主要关注的一整类标的永远返回空。
+两种表单的 `filingDate` / `accessionNumber` / `primaryDocument` 字段完全一致，
+故共用同一解析路径，改为 `_MATERIAL_EVENT_FORMS = {"8-K", "6-K"}`。10-Q/10-K
+仍排除——那是周期报告，不是事件。
+
+**b) 文档 URL 少了一次跳转才能打开。** SEC 两个主机对 CIK 格式要求相反：
+`data.sec.gov/submissions` 必须零填充 10 位（不填充 404），
+`www.sec.gov/Archives` 必须不填充（填充则 301 跳到不填充路径）。
+原先两处共用填充格式，导致每个文档 URL 都是 301。已改为 `lstrip("0")`。
+
+修后实测：PDD 拿到 6-K、NVDA/BABA 正常，发出的 URL 在 `allow_redirects=False`
+下直接 **HTTP 200**。QQQ 返回 0 是真实情况——它作为 ETF 最近一次 8-K 在 2014 年，
+不在回溯窗口内。港股仍按含点规则零网络短路。
 
 ### 3. 假阴性追踪：已实现
 
