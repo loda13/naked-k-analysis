@@ -18,6 +18,7 @@ import naked_k_config
 import naked_k_llm
 import naked_k_analysis
 import naked_k_news_enhanced
+import naked_k_trade
 import naked_k_news_llm
 
 
@@ -2748,6 +2749,408 @@ class NakedKAnalysisTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["action"], "小仓试错")
             self.assertEqual(rows[0]["latest_closes"]["daily"], 76.5)
+
+
+class IntradayLocalTimeTests(unittest.TestCase):
+    """Intraday bar times were reported in UTC for every market.
+
+    Yahoo's intraday index is naive UTC, so the report showed a bar that closed
+    15:00 Beijing as "07:00:00" — measured live at 8h off for CN/HK and 4h for US.
+    The frames must stay UTC internally (that is what makes cross-source
+    comparison sound), so the conversion belongs at the display boundary.
+    """
+
+    def _frame(self, stamps):
+        return pd.DataFrame(
+            {
+                "Open": [100.0] * len(stamps),
+                "High": [106.0] * len(stamps),
+                "Low": [99.0] * len(stamps),
+                "Close": [105.5] * len(stamps),
+                "Volume": [1000] * len(stamps),
+            },
+            index=pd.to_datetime(stamps),
+        )
+
+    def test_china_bar_is_shown_in_beijing_time(self):
+        """07:00 UTC is the 15:00 Beijing close, the last A-share bar of the day."""
+        frame = self._frame(["2026-08-10 06:00:00", "2026-08-10 07:00:00"])
+
+        status = naked_k_analysis.build_intraday_status(
+            frame, "小仓试错", entry_trigger=1e9, stop_loss=0.0, market="cn"
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-10 15:00:00")
+
+    def test_hong_kong_bar_is_shown_in_hong_kong_time(self):
+        frame = self._frame(["2026-08-10 07:30:00"])
+
+        status = naked_k_analysis.build_intraday_status(
+            frame, "小仓试错", entry_trigger=1e9, stop_loss=0.0, market="hk"
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-10 15:30:00")
+
+    def test_us_bar_is_shown_in_new_york_time(self):
+        """20:00 UTC is 16:00 EDT — the US close, matching the live PDD reading."""
+        frame = self._frame(["2026-08-07 20:00:00"])
+
+        status = naked_k_analysis.build_intraday_status(
+            frame, "小仓试错", entry_trigger=1e9, stop_loss=0.0, market="us"
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-07 16:00:00")
+
+    def test_omitting_market_keeps_the_raw_timestamp(self):
+        """Existing callers pass no market; they must not silently shift by 8h."""
+        frame = self._frame(["2026-08-10 07:00:00"])
+
+        status = naked_k_analysis.build_intraday_status(
+            frame, "小仓试错", entry_trigger=1e9, stop_loss=0.0
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-10 07:00:00")
+
+    def test_beijing_exchange_ticker_uses_the_china_zone(self):
+        """`.BJ` is a mainland exchange, so it must not fall through to New York.
+
+        naked_k_analysis.classify_market omits `.BJ` and returns "us" for it, while
+        naked_k_portfolio.classify_market handles it. The intraday clock reuses the
+        portfolio one rather than adding a third copy of this rule.
+        """
+        frame = self._frame(["2026-08-10 07:00:00"])
+
+        status = naked_k_analysis.build_intraday_status(
+            frame,
+            "小仓试错",
+            entry_trigger=1e9,
+            stop_loss=0.0,
+            market=naked_k_trade.classify_market("430139.BJ"),
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-10 15:00:00")
+
+    def test_crypto_falls_back_to_utc_rather_than_a_wrong_exchange_clock(self):
+        """Crypto has no single local session; UTC is the honest default."""
+        frame = self._frame(["2026-08-10 07:00:00"])
+
+        status = naked_k_analysis.build_intraday_status(
+            frame,
+            "小仓试错",
+            entry_trigger=1e9,
+            stop_loss=0.0,
+            market=naked_k_trade.classify_market("BTC-USD"),
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-10 07:00:00")
+        self.assertEqual(status["timezone"], "UTC")
+
+    def test_status_records_which_zone_was_used(self):
+        frame = self._frame(["2026-08-10 07:00:00"])
+
+        status = naked_k_analysis.build_intraday_status(
+            frame, "小仓试错", entry_trigger=1e9, stop_loss=0.0, market="cn"
+        )
+
+        self.assertEqual(status["timezone"], "Asia/Shanghai")
+
+    def test_a_tz_aware_index_is_converted_not_rejected(self):
+        frame = self._frame(["2026-08-10 07:00:00"])
+        frame.index = frame.index.tz_localize("UTC")
+
+        status = naked_k_analysis.build_intraday_status(
+            frame, "小仓试错", entry_trigger=1e9, stop_loss=0.0, market="cn"
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-10 15:00:00")
+
+    def test_planner_passes_the_market_through_from_the_ticker(self):
+        daily = pd.DataFrame(
+            {
+                "Open": [10.0, 11.0, 10.5, 12.0, 11.5, 14.0, 13.0, 15.0, 14.5, 17.0],
+                "High": [12.0, 13.0, 12.5, 14.0, 13.5, 16.0, 15.0, 17.0, 16.5, 19.0],
+                "Low": [8.0, 9.0, 8.5, 10.0, 9.5, 12.0, 11.0, 13.0, 12.5, 15.0],
+                "Close": [9.0, 11.0, 10.0, 13.0, 12.0, 15.0, 14.0, 16.0, 15.0, 18.5],
+                "Volume": [1000, 1200, 950, 1300, 980, 1400, 1000, 1500, 1050, 1800],
+            },
+            index=pd.date_range("2026-06-01", periods=10, freq="D"),
+        )
+        intraday = self._frame(["2026-08-10 06:00:00", "2026-08-10 07:00:00"])
+
+        report = naked_k_analysis.build_trade_plan(
+            "寒武纪", "688256.SS", daily, daily.copy(), previous=None, intraday=intraday
+        )
+
+        self.assertEqual(report.intraday_status["latest_time"], "2026-08-10 15:00:00")
+
+
+class AdjustmentConsistencyTests(unittest.TestCase):
+    """Each timeframe runs its own fallback chain, so bases can diverge per run."""
+
+    def _frame(self, adjustment, source="tencent"):
+        frame = pd.DataFrame(
+            {"Open": [1.0], "High": [2.0], "Low": [0.5], "Close": [1.5], "Volume": [10.0]},
+            index=pd.to_datetime(["2026-06-01"]),
+        )
+        frame.attrs.update({"source": source, "adjustment": adjustment})
+        return frame
+
+    def test_audit_payload_records_the_adjustment_basis(self):
+        payload = naked_k_analysis.build_data_audit_payload(
+            "0700.HK", "1d", "18mo", self._frame("qfq")
+        )
+
+        self.assertEqual(payload["adjustment"], "qfq")
+
+    def test_audit_payload_defaults_adjustment_to_unknown(self):
+        frame = pd.DataFrame(
+            {"Open": [1.0], "High": [2.0], "Low": [0.5], "Close": [1.5], "Volume": [10.0]},
+            index=pd.to_datetime(["2026-06-01"]),
+        )
+
+        payload = naked_k_analysis.build_data_audit_payload("NVDA", "1d", "18mo", frame)
+
+        self.assertEqual(payload["adjustment"], "unknown")
+
+    def test_uniform_basis_produces_no_conflict(self):
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {
+                "daily": self._frame("qfq"),
+                "weekly": self._frame("qfq"),
+                "monthly": self._frame("qfq"),
+            }
+        )
+
+        self.assertIsNone(conflict)
+
+    def test_mixed_basis_across_timeframes_is_reported(self):
+        """The real failure: daily from Tencent qfq, weekly fell through to Yahoo."""
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {
+                "daily": self._frame("qfq", source="tencent"),
+                "weekly": self._frame("split_only", source="yahoo_chart"),
+            }
+        )
+
+        self.assertIsNotNone(conflict)
+        self.assertEqual(conflict["bases"], {"daily": "qfq", "weekly": "split_only"})
+        self.assertIn("日线", conflict["message"])
+        self.assertIn("周线", conflict["message"])
+        # The message must name the human-readable basis, not just the label.
+        self.assertIn("前复权", conflict["message"])
+        self.assertIn("仅拆股复权", conflict["message"])
+
+    def test_unknown_from_two_different_sources_is_reported(self):
+        """Two *different* silent sources are not evidence of a shared basis."""
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {
+                "daily": self._frame("unknown", source="westock"),
+                "weekly": self._frame("unknown", source="some_other_provider"),
+            }
+        )
+
+        self.assertIsNotNone(conflict)
+        self.assertIn("未知", conflict["message"])
+
+    def test_unknown_from_one_single_source_is_not_reported(self):
+        """westock-data is first in the chain, so when present it serves all three.
+
+        Its basis is undocumented and tagged `unknown`, but one source cannot
+        disagree with itself — whatever the CLI returns, it returns the same thing
+        for daily, weekly and monthly. Warning here would fire on every ticker on
+        every run in exactly the environment where the primary source works, which
+        is the failure mode this warning exists to avoid.
+        """
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {
+                "daily": self._frame("unknown", source="westock"),
+                "weekly": self._frame("unknown", source="westock"),
+                "monthly": self._frame("unknown", source="westock"),
+            }
+        )
+
+        self.assertIsNone(conflict)
+
+    def test_unknown_mixed_with_a_known_basis_is_still_reported(self):
+        """westock daily + Tencent qfq weekly: genuinely unverifiable, must warn."""
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {
+                "daily": self._frame("unknown", source="westock"),
+                "weekly": self._frame("qfq", source="tencent"),
+            }
+        )
+
+        self.assertIsNotNone(conflict)
+
+    def test_intraday_alone_does_not_raise_a_conflict(self):
+        """Intraday sits on an unobservable basis while daily/weekly are qfq.
+
+        A-share 1h comes from Tencent's minute endpoint, which caps at 120 bars
+        (~30 sessions), and HK 1h comes from Yahoo. Neither can reach past an
+        ex-date within a 5d window, so the basis is unobservable — measured live,
+        qfq and un-adjusted daily closes were identical to 0.0000% over it. The
+        minute fetcher therefore reports `unknown`, and since `unknown` never
+        compares equal, including intraday would warn on every A-share every run.
+        Divergence only appears deeper in history (600519 hit 8.9% at 2y), which is
+        why the structural timeframes below are still checked against each other.
+        """
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {
+                "daily": self._frame("qfq", source="tencent"),
+                "weekly": self._frame("qfq", source="tencent"),
+                "monthly": self._frame("qfq", source="tencent"),
+                # What production actually produces now: A-share 1h on Tencent's
+                # minute endpoint, self-labelled unknown.
+                "intraday": self._frame("unknown", source="tencent"),
+            }
+        )
+
+        self.assertIsNone(conflict)
+
+    def test_hk_intraday_on_yahoo_also_raises_no_conflict(self):
+        """HK cannot use Tencent's minute endpoint, so 1h stays on Yahoo."""
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {
+                "daily": self._frame("split_only", source="tencent"),
+                "weekly": self._frame("split_only", source="tencent"),
+                "monthly": self._frame("split_only", source="tencent"),
+                "intraday": self._frame("split_only", source="yahoo_chart"),
+            }
+        )
+
+        self.assertIsNone(conflict)
+
+    def test_structural_timeframes_are_still_checked_against_each_other(self):
+        """Monthly disagreeing with daily is the dangerous case and must warn."""
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {
+                "daily": self._frame("qfq", source="tencent"),
+                "weekly": self._frame("qfq", source="tencent"),
+                "monthly": self._frame("split_only", source="yahoo_chart"),
+                "intraday": self._frame("split_only", source="yahoo_chart"),
+            }
+        )
+
+        self.assertIsNotNone(conflict)
+        self.assertIn("月线", conflict["message"])
+        # Intraday is out of scope, so it must not appear in the message either.
+        self.assertNotIn("小时线", conflict["message"])
+        self.assertNotIn("intraday", conflict["bases"])
+
+    def test_missing_timeframes_are_skipped_not_flagged(self):
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {
+                "daily": self._frame("qfq"),
+                "weekly": self._frame("qfq"),
+                "monthly": None,
+                "intraday": None,
+            }
+        )
+
+        self.assertIsNone(conflict)
+
+    def test_empty_frames_are_skipped_not_flagged(self):
+        empty = pd.DataFrame()
+        empty.attrs["adjustment"] = "split_only"
+
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {"daily": self._frame("qfq"), "weekly": self._frame("qfq"), "monthly": empty}
+        )
+
+        self.assertIsNone(conflict)
+
+    def test_conflict_lists_the_source_behind_each_basis(self):
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {
+                "daily": self._frame("qfq", source="tencent"),
+                "weekly": self._frame("split_only", source="yfinance"),
+            }
+        )
+
+        self.assertEqual(
+            conflict["sources"], {"daily": "tencent", "weekly": "yfinance"}
+        )
+
+    def test_report_renders_the_adjustment_warning_when_bases_diverge(self):
+        conflict = {
+            "bases": {"daily": "qfq", "weekly": "split_only"},
+            "sources": {"daily": "tencent", "weekly": "yahoo_chart"},
+            "message": "日线 前复权（tencent）与 周线 仅拆股复权（yahoo_chart）口径不一致",
+        }
+
+        line = naked_k_analysis.format_adjustment_warning(conflict)
+
+        self.assertIn("⚠️", line)
+        self.assertIn("复权口径", line)
+        self.assertIn("口径不一致", line)
+
+    def test_report_renders_nothing_when_there_is_no_conflict(self):
+        self.assertEqual(naked_k_analysis.format_adjustment_warning(None), "")
+
+    def _plan_frame(self):
+        return pd.DataFrame(
+            {
+                "Open": [10.0, 11.0, 10.5, 12.0, 11.5, 14.0, 13.0, 15.0, 14.5, 17.0],
+                "High": [12.0, 13.0, 12.5, 14.0, 13.5, 16.0, 15.0, 17.0, 16.5, 19.0],
+                "Low": [8.0, 9.0, 8.5, 10.0, 9.5, 12.0, 11.0, 13.0, 12.5, 15.0],
+                "Close": [9.0, 11.0, 10.0, 13.0, 12.0, 15.0, 14.0, 16.0, 15.0, 18.5],
+                "Volume": [1000, 1200, 950, 1300, 980, 1400, 1000, 1500, 1050, 1800],
+            },
+            index=pd.date_range("2026-06-01", periods=10, freq="D"),
+        )
+
+    def test_end_to_end_report_shows_the_warning_under_the_data_source_line(self):
+        daily = self._plan_frame()
+        weekly = daily.copy()
+        report = naked_k_analysis.build_trade_plan("测试", "TEST", daily, weekly, previous=None)
+
+        text = naked_k_analysis.format_report(
+            "2026-06-12 16:00:00 CST",
+            [report],
+            naked_k_analysis.DEFAULT_JOURNAL_PATH,
+            adjustment_conflicts={
+                "TEST": {
+                    "bases": {"daily": "qfq", "weekly": "split_only"},
+                    "sources": {"daily": "tencent", "weekly": "yahoo_chart"},
+                    "message": "日线 前复权（tencent）；周线 仅拆股复权（yahoo_chart） —— 口径不一致",
+                }
+            },
+        )
+
+        lines = text.splitlines()
+        source_index = next(i for i, line in enumerate(lines) if line.startswith("- 数据源："))
+        self.assertIn("复权口径警告", lines[source_index + 1])
+        self.assertIn("⚠️", lines[source_index + 1])
+
+    def test_end_to_end_report_omits_the_line_entirely_when_bases_agree(self):
+        daily = self._plan_frame()
+        weekly = daily.copy()
+        report = naked_k_analysis.build_trade_plan("测试", "TEST", daily, weekly, previous=None)
+
+        text = naked_k_analysis.format_report(
+            "2026-06-12 16:00:00 CST",
+            [report],
+            naked_k_analysis.DEFAULT_JOURNAL_PATH,
+            adjustment_conflicts={"TEST": None},
+        )
+
+        self.assertNotIn("复权口径警告", text)
+        # No blank line smuggled in where the warning would have been.
+        lines = text.splitlines()
+        source_index = next(i for i, line in enumerate(lines) if line.startswith("- 数据源："))
+        self.assertTrue(lines[source_index + 1].startswith("- 最新K线："))
+
+    def test_end_to_end_report_tolerates_absent_conflict_mapping(self):
+        """format_report is called without the kwarg in a dozen existing tests."""
+        daily = self._plan_frame()
+        weekly = daily.copy()
+        report = naked_k_analysis.build_trade_plan("测试", "TEST", daily, weekly, previous=None)
+
+        text = naked_k_analysis.format_report(
+            "2026-06-12 16:00:00 CST", [report], naked_k_analysis.DEFAULT_JOURNAL_PATH
+        )
+
+        self.assertNotIn("复权口径警告", text)
 
 
 if __name__ == "__main__":

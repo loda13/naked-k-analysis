@@ -171,7 +171,13 @@ def build_trade_plan(
         else naked_k_trade.build_position_guidance(action, entry_trigger, stop_loss)
     )
     signal_state = naked_k_trade.build_signal_state(action)
-    intraday_status = naked_k_trade.build_intraday_status(intraday, action, entry_trigger, stop_loss)
+    intraday_status = naked_k_trade.build_intraday_status(
+        intraday,
+        action,
+        entry_trigger,
+        stop_loss,
+        market=naked_k_trade.classify_market(ticker),
+    )
     timeframe_context = naked_k_timeframes.build_timeframe_context(
         monthly=monthly,
         weekly=weekly,
