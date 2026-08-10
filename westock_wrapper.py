@@ -24,6 +24,10 @@ _MIN_HOURLY_BARS_PER_DAY = 4
 # without demanding more than a short window can hold.
 _INTRADAY_STUB_CEILING = 2
 
+# Headroom kept between the gate and the minute endpoint's hard row cap, so a
+# holiday-shortened window still clears the threshold. Roughly one A-share session.
+_INTRADAY_CAP_MARGIN = 8
+
 # Tencent serves minute bars from a different host and path than day/week/month.
 # fqkline/get returns 1 row for HK m60 and code=1 for A-share m60 — it has no
 # minute data at all.
@@ -341,12 +345,20 @@ def min_intraday_rows(period):
             days = int(period[:-1])
         else:
             days = 5
-    except (TypeError, ValueError):
+    except (AttributeError, TypeError, ValueError):
+        # download() is a public yfinance-compatible shim, so a caller can pass
+        # anything. Fall back to the shortest sane window rather than raising.
         days = 5
     days = max(1, days)
     # Half the theoretical minimum: tolerates holidays and half-days inside the
     # window while still discarding a frame that holds almost nothing.
-    return max(_INTRADAY_STUB_CEILING, days * _MIN_HOURLY_BARS_PER_DAY // 2)
+    scaled = days * _MIN_HOURLY_BARS_PER_DAY // 2
+    # Never demand more than the minute endpoint can physically return. mkline
+    # hard-caps at TENCENT_MINUTE_MAX_ROWS, so a threshold at or above the cap
+    # rejects even a complete frame — for period='60d' the scaled value landed on
+    # exactly 120, equal to the cap, so a single holiday would have re-broken it.
+    ceiling = TENCENT_MINUTE_MAX_ROWS - _INTRADAY_CAP_MARGIN
+    return max(_INTRADAY_STUB_CEILING, min(scaled, ceiling))
 
 
 def fetch_tencent_minute_kline(ticker, period='m60', limit=TENCENT_MINUTE_MAX_ROWS):

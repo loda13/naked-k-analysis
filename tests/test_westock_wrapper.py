@@ -559,6 +559,26 @@ class IntradayRowGateTests(unittest.TestCase):
         expected_minimum = westock_wrapper.min_intraday_rows("60d")
         self.assertGreater(expected_minimum, westock_wrapper.min_intraday_rows("5d"))
 
+    def test_threshold_never_exceeds_what_the_minute_endpoint_can_return(self):
+        """mkline hard-caps at 120 bars, so a gate above that rejects a full frame.
+
+        For period='60d' the scaled threshold landed on exactly 120 — equal to the
+        cap, leaving zero margin. One holiday in the window and Tencent would be
+        discarded again, which is the bug this gate was rewritten to remove.
+        """
+        for period in ("5d", "60d", "18mo", "5y", "10y", "max"):
+            with self.subTest(period=period):
+                self.assertLess(
+                    westock_wrapper.min_intraday_rows(period),
+                    westock_wrapper.TENCENT_MINUTE_MAX_ROWS,
+                )
+
+    def test_threshold_tolerates_a_malformed_period(self):
+        """download() is a public shim; a bad period must not raise from the gate."""
+        for period in (None, "", "bogus", "2wk", 5):
+            with self.subTest(period=period):
+                self.assertGreaterEqual(westock_wrapper.min_intraday_rows(period), 2)
+
     def test_threshold_for_5d_is_reachable_in_a_5d_session_window(self):
         """Whatever the rule, it must be satisfiable by real 5d data."""
         self.assertLessEqual(westock_wrapper.min_intraday_rows("5d"), 20)

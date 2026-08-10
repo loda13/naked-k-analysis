@@ -335,6 +335,15 @@ def detect_adjustment_conflict(
     if len(present) < 2:
         return None
 
+    # One source cannot disagree with itself. This matters for the westock-data
+    # CLI, which is first in the fallback chain and so serves all three timeframes
+    # when it is installed, yet exposes no adjustment mode and is tagged `unknown`.
+    # Since `unknown` never compares equal, checking labels alone would warn on
+    # every ticker on every run in exactly the environment where the primary source
+    # works — the false-alarm failure this warning exists to avoid.
+    if len(set(sources.values())) == 1:
+        return None
+
     reference_timeframe, reference_basis = next(iter(present.items()))
     if all(
         yf.adjustments_comparable(reference_basis, basis)

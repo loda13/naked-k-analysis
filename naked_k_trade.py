@@ -5,6 +5,7 @@ from typing import Any
 import pandas as pd
 
 import naked_k_patterns
+import naked_k_portfolio
 
 
 BULLISH_PATTERN_KEYS = ("看涨吸收", "看涨Pin", "锤子线", "早晨星", "蜻蜓十字", "阴孕阳")
@@ -137,8 +138,40 @@ def _to_float(value: Any) -> float:
     return round(float(value), 2)
 
 
-def _format_ts(value: Any) -> str:
-    return pd.Timestamp(value).strftime("%Y-%m-%d %H:%M:%S")
+def _format_ts(value: Any, tz: str | None = None) -> str:
+    """Render a bar timestamp, optionally converted to a market's local zone.
+
+    Intraday frames are held in UTC so that Tencent's minute bars (naive Beijing
+    at the source) and Yahoo's (naive UTC) can be compared on one axis. That makes
+    UTC wrong for display: a bar closing 15:00 Beijing reads 07:00. The conversion
+    belongs here, at the boundary, rather than in the frames.
+    """
+    timestamp = pd.Timestamp(value)
+    if tz is None:
+        return timestamp.strftime("%Y-%m-%d %H:%M:%S")
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    return timestamp.tz_convert(tz).strftime("%Y-%m-%d %H:%M:%S")
+
+
+# Display zone per market. Crypto is deliberately absent: it has no single local
+# session, so it falls back to UTC rather than borrowing an exchange's clock.
+_MARKET_TIMEZONES = {
+    "cn": "Asia/Shanghai",
+    "hk": "Asia/Hong_Kong",
+    "kr": "Asia/Seoul",
+    "us": "America/New_York",
+}
+
+
+def classify_market(ticker: str) -> str:
+    """Market for a ticker, reusing the portfolio rule rather than a third copy.
+
+    naked_k_portfolio's version is the more complete one — it maps `.BJ` to cn and
+    recognises crypto, where naked_k_analysis.classify_market returns "us" for
+    `.BJ`. naked_k_portfolio imports only naked_k_config, so this adds no cycle.
+    """
+    return naked_k_portfolio.classify_market(ticker)
 
 
 def build_intraday_status(
@@ -147,6 +180,7 @@ def build_intraday_status(
     entry_trigger: float,
     stop_loss: float,
     proximity_pct: float = 1.0,
+    market: str | None = None,
 ) -> dict[str, Any]:
     if frame is None or getattr(frame, "empty", True):
         return {
@@ -154,6 +188,8 @@ def build_intraday_status(
             "note": "未获取到1h盘中K线",
         }
 
+    # Omitted market leaves the raw stamp, so existing callers do not shift.
+    tz = _MARKET_TIMEZONES.get(market) if market else None
     latest = frame.iloc[-1]
     latest_volume = _to_float(latest.get("Volume", 0))
     payload = {
@@ -161,7 +197,8 @@ def build_intraday_status(
         "note": "未接近触发位或失效位",
         "source": str(frame.attrs.get("source", "unknown")),
         "interval": str(frame.attrs.get("interval", "1h")),
-        "latest_time": _format_ts(frame.index[-1]),
+        "latest_time": _format_ts(frame.index[-1], tz),
+        "timezone": tz or "UTC",
         "latest_close": _to_float(latest["Close"]),
         "latest_high": _to_float(latest["High"]),
         "latest_low": _to_float(latest["Low"]),

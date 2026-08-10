@@ -18,6 +18,7 @@ import naked_k_config
 import naked_k_llm
 import naked_k_analysis
 import naked_k_news_enhanced
+import naked_k_trade
 import naked_k_news_llm
 
 
@@ -2750,6 +2751,139 @@ class NakedKAnalysisTests(unittest.TestCase):
             self.assertEqual(rows[0]["latest_closes"]["daily"], 76.5)
 
 
+class IntradayLocalTimeTests(unittest.TestCase):
+    """Intraday bar times were reported in UTC for every market.
+
+    Yahoo's intraday index is naive UTC, so the report showed a bar that closed
+    15:00 Beijing as "07:00:00" — measured live at 8h off for CN/HK and 4h for US.
+    The frames must stay UTC internally (that is what makes cross-source
+    comparison sound), so the conversion belongs at the display boundary.
+    """
+
+    def _frame(self, stamps):
+        return pd.DataFrame(
+            {
+                "Open": [100.0] * len(stamps),
+                "High": [106.0] * len(stamps),
+                "Low": [99.0] * len(stamps),
+                "Close": [105.5] * len(stamps),
+                "Volume": [1000] * len(stamps),
+            },
+            index=pd.to_datetime(stamps),
+        )
+
+    def test_china_bar_is_shown_in_beijing_time(self):
+        """07:00 UTC is the 15:00 Beijing close, the last A-share bar of the day."""
+        frame = self._frame(["2026-08-10 06:00:00", "2026-08-10 07:00:00"])
+
+        status = naked_k_analysis.build_intraday_status(
+            frame, "小仓试错", entry_trigger=1e9, stop_loss=0.0, market="cn"
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-10 15:00:00")
+
+    def test_hong_kong_bar_is_shown_in_hong_kong_time(self):
+        frame = self._frame(["2026-08-10 07:30:00"])
+
+        status = naked_k_analysis.build_intraday_status(
+            frame, "小仓试错", entry_trigger=1e9, stop_loss=0.0, market="hk"
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-10 15:30:00")
+
+    def test_us_bar_is_shown_in_new_york_time(self):
+        """20:00 UTC is 16:00 EDT — the US close, matching the live PDD reading."""
+        frame = self._frame(["2026-08-07 20:00:00"])
+
+        status = naked_k_analysis.build_intraday_status(
+            frame, "小仓试错", entry_trigger=1e9, stop_loss=0.0, market="us"
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-07 16:00:00")
+
+    def test_omitting_market_keeps_the_raw_timestamp(self):
+        """Existing callers pass no market; they must not silently shift by 8h."""
+        frame = self._frame(["2026-08-10 07:00:00"])
+
+        status = naked_k_analysis.build_intraday_status(
+            frame, "小仓试错", entry_trigger=1e9, stop_loss=0.0
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-10 07:00:00")
+
+    def test_beijing_exchange_ticker_uses_the_china_zone(self):
+        """`.BJ` is a mainland exchange, so it must not fall through to New York.
+
+        naked_k_analysis.classify_market omits `.BJ` and returns "us" for it, while
+        naked_k_portfolio.classify_market handles it. The intraday clock reuses the
+        portfolio one rather than adding a third copy of this rule.
+        """
+        frame = self._frame(["2026-08-10 07:00:00"])
+
+        status = naked_k_analysis.build_intraday_status(
+            frame,
+            "小仓试错",
+            entry_trigger=1e9,
+            stop_loss=0.0,
+            market=naked_k_trade.classify_market("430139.BJ"),
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-10 15:00:00")
+
+    def test_crypto_falls_back_to_utc_rather_than_a_wrong_exchange_clock(self):
+        """Crypto has no single local session; UTC is the honest default."""
+        frame = self._frame(["2026-08-10 07:00:00"])
+
+        status = naked_k_analysis.build_intraday_status(
+            frame,
+            "小仓试错",
+            entry_trigger=1e9,
+            stop_loss=0.0,
+            market=naked_k_trade.classify_market("BTC-USD"),
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-10 07:00:00")
+        self.assertEqual(status["timezone"], "UTC")
+
+    def test_status_records_which_zone_was_used(self):
+        frame = self._frame(["2026-08-10 07:00:00"])
+
+        status = naked_k_analysis.build_intraday_status(
+            frame, "小仓试错", entry_trigger=1e9, stop_loss=0.0, market="cn"
+        )
+
+        self.assertEqual(status["timezone"], "Asia/Shanghai")
+
+    def test_a_tz_aware_index_is_converted_not_rejected(self):
+        frame = self._frame(["2026-08-10 07:00:00"])
+        frame.index = frame.index.tz_localize("UTC")
+
+        status = naked_k_analysis.build_intraday_status(
+            frame, "小仓试错", entry_trigger=1e9, stop_loss=0.0, market="cn"
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-10 15:00:00")
+
+    def test_planner_passes_the_market_through_from_the_ticker(self):
+        daily = pd.DataFrame(
+            {
+                "Open": [10.0, 11.0, 10.5, 12.0, 11.5, 14.0, 13.0, 15.0, 14.5, 17.0],
+                "High": [12.0, 13.0, 12.5, 14.0, 13.5, 16.0, 15.0, 17.0, 16.5, 19.0],
+                "Low": [8.0, 9.0, 8.5, 10.0, 9.5, 12.0, 11.0, 13.0, 12.5, 15.0],
+                "Close": [9.0, 11.0, 10.0, 13.0, 12.0, 15.0, 14.0, 16.0, 15.0, 18.5],
+                "Volume": [1000, 1200, 950, 1300, 980, 1400, 1000, 1500, 1050, 1800],
+            },
+            index=pd.date_range("2026-06-01", periods=10, freq="D"),
+        )
+        intraday = self._frame(["2026-08-10 06:00:00", "2026-08-10 07:00:00"])
+
+        report = naked_k_analysis.build_trade_plan(
+            "寒武纪", "688256.SS", daily, daily.copy(), previous=None, intraday=intraday
+        )
+
+        self.assertEqual(report.intraday_status["latest_time"], "2026-08-10 15:00:00")
+
+
 class AdjustmentConsistencyTests(unittest.TestCase):
     """Each timeframe runs its own fallback chain, so bases can diverge per run."""
 
@@ -2806,17 +2940,47 @@ class AdjustmentConsistencyTests(unittest.TestCase):
         self.assertIn("前复权", conflict["message"])
         self.assertIn("仅拆股复权", conflict["message"])
 
-    def test_unknown_basis_is_reported_even_when_labels_match(self):
-        """Two silent sources are not evidence of a shared basis."""
+    def test_unknown_from_two_different_sources_is_reported(self):
+        """Two *different* silent sources are not evidence of a shared basis."""
         conflict = naked_k_analysis.detect_adjustment_conflict(
             {
                 "daily": self._frame("unknown", source="westock"),
-                "weekly": self._frame("unknown", source="westock"),
+                "weekly": self._frame("unknown", source="some_other_provider"),
             }
         )
 
         self.assertIsNotNone(conflict)
         self.assertIn("未知", conflict["message"])
+
+    def test_unknown_from_one_single_source_is_not_reported(self):
+        """westock-data is first in the chain, so when present it serves all three.
+
+        Its basis is undocumented and tagged `unknown`, but one source cannot
+        disagree with itself — whatever the CLI returns, it returns the same thing
+        for daily, weekly and monthly. Warning here would fire on every ticker on
+        every run in exactly the environment where the primary source works, which
+        is the failure mode this warning exists to avoid.
+        """
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {
+                "daily": self._frame("unknown", source="westock"),
+                "weekly": self._frame("unknown", source="westock"),
+                "monthly": self._frame("unknown", source="westock"),
+            }
+        )
+
+        self.assertIsNone(conflict)
+
+    def test_unknown_mixed_with_a_known_basis_is_still_reported(self):
+        """westock daily + Tencent qfq weekly: genuinely unverifiable, must warn."""
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {
+                "daily": self._frame("unknown", source="westock"),
+                "weekly": self._frame("qfq", source="tencent"),
+            }
+        )
+
+        self.assertIsNotNone(conflict)
 
     def test_intraday_alone_does_not_raise_a_conflict(self):
         """Intraday sits on an unobservable basis while daily/weekly are qfq.
