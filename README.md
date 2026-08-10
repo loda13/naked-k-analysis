@@ -394,4 +394,6 @@ python -m unittest discover -v
 
 ## License
 
-MIT
+MIT — 见 [LICENSE](LICENSE)。
+
+依赖均为宽松许可（pandas / numpy BSD-3-Clause，requests / yfinance Apache-2.0，可选 akshare MIT），与 MIT 分发无冲突。
