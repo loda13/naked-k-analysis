@@ -288,7 +288,76 @@ def build_data_audit_payload(ticker: str, interval: str, period: str, frame: pd.
         "rows": len(frame),
         "latest": latest,
         "source": str(frame.attrs.get("source", "unknown")),
+        "adjustment": str(frame.attrs.get("adjustment", yf.ADJUSTMENT_UNKNOWN)),
     }
+
+
+_TIMEFRAME_LABELS = {
+    "daily": "日线",
+    "weekly": "周线",
+    "monthly": "月线",
+    "intraday": "小时线",
+}
+
+# Only the timeframes that carry structural levels are compared. Intraday is
+# excluded on purpose: Tencent's m60 never clears MIN_INTRADAY_ROWS, so 1h always
+# falls to Yahoo split_only while A-share daily/weekly stay on Tencent qfq. That
+# pairing is harmless because qfq restates *history* onto the latest price scale,
+# so the recent 5d intraday window matches qfq daily to a 0.13% mean / 0.29% max
+# (measured live across four A-shares) — while a daily-vs-monthly mismatch spans
+# years and reached 8.9% on 600519. Including intraday would fire the warning on
+# every A-share on every run and train the reader to ignore it.
+_ADJUSTMENT_CHECKED_TIMEFRAMES = ("daily", "weekly", "monthly")
+
+
+def detect_adjustment_conflict(
+    frames: dict[str, pd.DataFrame | None],
+) -> dict[str, Any] | None:
+    """Report when the timeframes of one ticker do not share a price basis.
+
+    Every timeframe runs `load_ohlcv` independently, so each walks the whole
+    westock → Tencent → Yahoo chain on its own. Daily can land on Tencent qfq
+    while weekly falls through to Yahoo's split-only OHLC; the candles then sit
+    on different price axes, and any level read off one and applied to the other
+    is wrong. Returns None when every present timeframe agrees.
+    """
+    present: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    for timeframe in _ADJUSTMENT_CHECKED_TIMEFRAMES:
+        frame = frames.get(timeframe)
+        if frame is None or getattr(frame, "empty", True):
+            continue
+        present[timeframe] = str(frame.attrs.get("adjustment", yf.ADJUSTMENT_UNKNOWN))
+        sources[timeframe] = str(frame.attrs.get("source", "unknown"))
+
+    if len(present) < 2:
+        return None
+
+    reference_timeframe, reference_basis = next(iter(present.items()))
+    if all(
+        yf.adjustments_comparable(reference_basis, basis)
+        for timeframe, basis in present.items()
+        if timeframe != reference_timeframe
+    ):
+        return None
+
+    parts = [
+        f"{_TIMEFRAME_LABELS.get(timeframe, timeframe)} "
+        f"{yf.describe_adjustment(basis)}（{sources[timeframe]}）"
+        for timeframe, basis in present.items()
+    ]
+    return {
+        "bases": present,
+        "sources": sources,
+        "message": "；".join(parts) + " —— 口径不一致",
+    }
+
+
+def format_adjustment_warning(conflict: dict[str, Any] | None) -> str:
+    """Render an adjustment conflict as a Markdown report line."""
+    if not conflict:
+        return ""
+    return f"- ⚠️ 复权口径警告：{conflict['message']}，跨周期价位不可直接比较"
 
 
 def _single_line(value: Any) -> str:
@@ -671,6 +740,7 @@ def format_report(
     reports: list[InstrumentReport],
     journal_path: Path,
     config: naked_k_config.TradingConfig | None = None,
+    adjustment_conflicts: dict[str, dict[str, Any] | None] | None = None,
 ) -> str:
     sections = [
         f"# 裸K收盘报告",
@@ -695,10 +765,16 @@ def format_report(
             intraday_line += f"（{'，'.join(intraday_detail)}）"
         if intraday_note:
             intraday_line += f"；{intraday_note}"
+        adjustment_warning = format_adjustment_warning(
+            (adjustment_conflicts or {}).get(report.ticker)
+        )
         sections.extend(
             [
                 f"## {report.name} {report.ticker}",
                 f"- 数据源：日线 `{report.data_sources['daily']}`，周线 `{report.data_sources['weekly']}`",
+                # Sits directly under 数据源 so a basis mismatch is read before any
+                # price level below it. Unpacked, so no blank line when absent.
+                *([adjustment_warning] if adjustment_warning else []),
                 f"- 最新K线：日线 {report.latest_k_dates['daily']} 收 {report.latest_closes['daily']}；周线 {report.latest_k_dates['weekly']} 收 {report.latest_closes['weekly']}",
                 f"- 当前动作：{report.action}",
                 f"- 信号状态：{report.signal_state}",
@@ -1121,6 +1197,7 @@ def run_analysis(
     news_enabled = bool(news_config is not None and news_config.enabled)
     daily_by_ticker: dict[str, pd.DataFrame] = {}
     intraday_by_ticker: dict[str, pd.DataFrame | None] = {}
+    adjustment_conflicts: dict[str, dict[str, Any] | None] = {}
     run_date = pd.Timestamp.now(tz="Asia/Shanghai").strftime("%Y-%m-%d %H:%M:%S %Z")
     audit.info("run_started", ticker_count=len(tickers), journal_path=journal_path, run_date=run_date)
 
@@ -1166,6 +1243,24 @@ def run_analysis(
                 error=str(exc),
             )
             intraday = None
+        adjustment_conflict = detect_adjustment_conflict(
+            {
+                "daily": daily,
+                "weekly": weekly,
+                "monthly": monthly,
+                "intraday": intraday,
+            }
+        )
+        if adjustment_conflict is not None:
+            audit.warning(
+                "adjustment_basis_conflict",
+                ticker=ticker,
+                name=name,
+                bases=adjustment_conflict["bases"],
+                sources=adjustment_conflict["sources"],
+                message=adjustment_conflict["message"],
+            )
+        adjustment_conflicts[ticker] = adjustment_conflict
         previous = latest_journal_entry(
             journal_rows,
             ticker,
@@ -1290,7 +1385,16 @@ def run_analysis(
     portfolio_level = "warning" if portfolio_exposure.get("status") == "over_limit" else "info"
     audit.log("portfolio_exposure", level=portfolio_level, **portfolio_exposure)
     audit.info("run_completed", report_count=len(reports), actions=[report.action for report in reports])
-    return format_report(run_date, reports, journal_path, config=config), reports
+    return (
+        format_report(
+            run_date,
+            reports,
+            journal_path,
+            config=config,
+            adjustment_conflicts=adjustment_conflicts,
+        ),
+        reports,
+    )
 
 
 def parse_args() -> argparse.Namespace:
