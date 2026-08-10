@@ -11,7 +11,25 @@ from datetime import datetime
 import sys
 
 DEFAULT_WESTOCK_DATA_SCRIPT = '/root/.openclaw/workspace/skills/westock-data/scripts/index.js'
-MIN_INTRADAY_ROWS = 120
+
+# Fewest hourly bars a session can produce: A-shares trade 4h/day (9:30-11:30 +
+# 13:00-15:00). Used to size the intraday sanity gate against the *requested*
+# window. The old flat MIN_INTRADAY_ROWS=120 was unsatisfiable for production's
+# `5d` call — 5 days can hold at most 20 A-share / ~30 HK bars — so westock and
+# Tencent were discarded for intraday every time while Yahoo skipped the gate
+# entirely and a 1-row stub passed as valid.
+_MIN_HOURLY_BARS_PER_DAY = 4
+
+# Reject obvious stubs (fqkline/get answers minute requests with a single bar)
+# without demanding more than a short window can hold.
+_INTRADAY_STUB_CEILING = 2
+
+# Tencent serves minute bars from a different host and path than day/week/month.
+# fqkline/get returns 1 row for HK m60 and code=1 for A-share m60 — it has no
+# minute data at all.
+_TENCENT_MINUTE_URL = 'https://ifzq.gtimg.cn/appstock/app/kline/mkline'
+# mkline caps a single response at 120 bars (~30 A-share sessions).
+TENCENT_MINUTE_MAX_ROWS = 120
 
 # Tencent serves rows for limit<=2000 and an empty payload for limit>=2001
 # (binary-searched live on sh600519 month). Asking for more loses the source.
@@ -305,6 +323,85 @@ def fetch_tencent_kline(ticker, period='day', limit=500):
         print(f"Error fetching Tencent kline {ticker}: {str(last_error)}", file=sys.stderr)
     return pd.DataFrame()
 
+def min_intraday_rows(period):
+    """Fewest intraday bars a frame must carry to be trusted for `period`.
+
+    Scaled to the requested window instead of a flat constant, so it rejects the
+    1-row stub that fqkline/get returns for minute requests without demanding
+    more bars than the window can physically hold.
+    """
+    try:
+        if period == 'max':
+            days = 60
+        elif period.endswith('mo'):
+            days = int(period[:-2]) * 21
+        elif period.endswith('y'):
+            days = int(period[:-1]) * 250
+        elif period.endswith('d'):
+            days = int(period[:-1])
+        else:
+            days = 5
+    except (TypeError, ValueError):
+        days = 5
+    days = max(1, days)
+    # Half the theoretical minimum: tolerates holidays and half-days inside the
+    # window while still discarding a frame that holds almost nothing.
+    return max(_INTRADAY_STUB_CEILING, days * _MIN_HOURLY_BARS_PER_DAY // 2)
+
+
+def fetch_tencent_minute_kline(ticker, period='m60', limit=TENCENT_MINUTE_MAX_ROWS):
+    """Fetch intraday OHLCV from Tencent's minute-kline endpoint.
+
+    Serves A-shares only — HK answers code=-1 on m60/m30/m15, so HK intraday still
+    has to come from Yahoo. Rows are
+    ``[time, open, close, high, low, volume]`` (close before high, verified live)
+    and timestamps are naive Beijing time.
+    """
+    import pandas as pd
+    import requests
+
+    ws_ticker = convert_ticker(ticker)
+    if not ws_ticker.startswith(('sh', 'sz', 'bj')):
+        return pd.DataFrame()
+
+    params = {'param': f'{ws_ticker},{period},,{min(limit, TENCENT_MINUTE_MAX_ROWS)}'}
+    try:
+        response = requests.get(
+            _TENCENT_MINUTE_URL, params=params, timeout=10,
+            headers={'User-Agent': 'Mozilla/5.0'},
+        )
+        response.raise_for_status()
+        payload = json.loads(response.text)
+        if payload.get('code') != 0:
+            return pd.DataFrame()
+
+        rows = ((payload.get('data') or {}).get(ws_ticker) or {}).get(period) or []
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame([row[:6] for row in rows],
+                          columns=['time', 'open', 'close', 'high', 'low', 'volume'])
+        # Yahoo's intraday index is naive UTC (0700.HK's 16:00 close reads 06:07),
+        # so Beijing timestamps are shifted to match rather than left 8h ahead.
+        stamps = pd.to_datetime(df['time'], format='%Y%m%d%H%M', errors='coerce')
+        df.index = stamps.dt.tz_localize('Asia/Shanghai').dt.tz_convert('UTC').dt.tz_localize(None)
+        df.index.name = 'date'
+        for column in ('open', 'high', 'low', 'close', 'volume'):
+            df[column] = pd.to_numeric(df[column], errors='coerce')
+        df = df.rename(columns={
+            'open': 'Open', 'high': 'High', 'low': 'Low',
+            'close': 'Close', 'volume': 'Volume',
+        })
+        df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
+        # 120 bars is ~30 A-share sessions, which cannot span an ex-date, so qfq
+        # and un-adjusted are identical over the reachable window (measured 0.0000%).
+        # The basis is therefore unobservable — labelling it would be a guess.
+        return _tag_adjustment(df.dropna().sort_index(), ADJUSTMENT_UNKNOWN)
+    except Exception as e:
+        print(f"Error fetching Tencent minute kline {ticker}: {str(e)}", file=sys.stderr)
+        return pd.DataFrame()
+
+
 def _annotate_download(df, source, ticker, period, interval):
     if not hasattr(df, 'attrs'):
         return df
@@ -372,37 +469,52 @@ def download(ticker, period='1y', start=None, end=None, interval='1d', progress=
     else:
         ws_period = 'day'
     
+    minimum_intraday = min_intraday_rows(period)
+
     def _has_enough_rows(frame):
         if getattr(frame, 'empty', True):
             return False
         if interval == '1h':
             try:
-                return len(frame) >= MIN_INTRADAY_ROWS
+                return len(frame) >= minimum_intraday
             except TypeError:
                 return True
         return True
 
+    def _accept(frame):
+        """Drop a frame that failed the gate so the next source is tried."""
+        if _has_enough_rows(frame):
+            return frame, True
+        return (type(frame)() if hasattr(frame, 'empty') else frame), False
+
     source = 'yfinance'
-    df = fetch_kline(ticker, ws_period, limit)
-    if not _has_enough_rows(df):
-        df = type(df)() if hasattr(df, 'empty') else df
-    elif not getattr(df, 'empty', True):
+    df, ok = _accept(fetch_kline(ticker, ws_period, limit))
+    if ok:
         source = 'westock'
     ws_ticker = convert_ticker(ticker)
     if getattr(df, 'empty', True) and ws_ticker.startswith(('hk', 'sh', 'sz', 'bj')):
-        df = fetch_tencent_kline(ticker, ws_period, limit)
-        if not _has_enough_rows(df):
-            df = type(df)() if hasattr(df, 'empty') else df
-        elif not getattr(df, 'empty', True):
+        # Minute bars are on a different endpoint; fqkline/get has none.
+        if interval == '1h':
+            candidate = fetch_tencent_minute_kline(ticker, ws_period, limit)
+        else:
+            candidate = fetch_tencent_kline(ticker, ws_period, limit)
+        df, ok = _accept(candidate)
+        if ok:
             source = 'tencent'
     if getattr(df, 'empty', True):
-        df = fetch_yahoo_chart(ticker, period=period, start=start, end=end, interval=interval)
-        if not getattr(df, 'empty', True):
+        # The gate applies here too. Yahoo used to bypass it, so a 1-row intraday
+        # stub was accepted as a real frame.
+        df, ok = _accept(
+            fetch_yahoo_chart(ticker, period=period, start=start, end=end, interval=interval)
+        )
+        if ok:
             source = 'yahoo_chart'
     if getattr(df, 'empty', True):
-        df = fetch_yfinance(ticker, period=period, start=start, end=end, interval=interval, progress=progress)
+        df, ok = _accept(
+            fetch_yfinance(ticker, period=period, start=start, end=end, interval=interval, progress=progress)
+        )
         source = 'yfinance'
-    
+
     # 如果指定了 start/end，过滤数据
     if not df.empty:
         if start:

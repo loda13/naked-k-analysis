@@ -2819,21 +2819,37 @@ class AdjustmentConsistencyTests(unittest.TestCase):
         self.assertIn("未知", conflict["message"])
 
     def test_intraday_alone_does_not_raise_a_conflict(self):
-        """A-share intraday is permanently split_only while daily/weekly are qfq.
+        """Intraday sits on an unobservable basis while daily/weekly are qfq.
 
-        Tencent's m60 returns too few rows to clear MIN_INTRADAY_ROWS, so 1h always
-        falls to Yahoo. Warning on that would fire on every A-share on every run.
-        It is safe to ignore because qfq restates *history* onto the latest scale:
-        measured live, the 5d intraday window agrees with qfq daily to a 0.13% mean
-        / 0.29% max across four A-shares — tick noise. Divergence only appears
-        deeper in history (600519 hit 8.9% at 2y), which is why the structural
-        timeframes below are still checked against each other.
+        A-share 1h comes from Tencent's minute endpoint, which caps at 120 bars
+        (~30 sessions), and HK 1h comes from Yahoo. Neither can reach past an
+        ex-date within a 5d window, so the basis is unobservable — measured live,
+        qfq and un-adjusted daily closes were identical to 0.0000% over it. The
+        minute fetcher therefore reports `unknown`, and since `unknown` never
+        compares equal, including intraday would warn on every A-share every run.
+        Divergence only appears deeper in history (600519 hit 8.9% at 2y), which is
+        why the structural timeframes below are still checked against each other.
         """
         conflict = naked_k_analysis.detect_adjustment_conflict(
             {
                 "daily": self._frame("qfq", source="tencent"),
                 "weekly": self._frame("qfq", source="tencent"),
                 "monthly": self._frame("qfq", source="tencent"),
+                # What production actually produces now: A-share 1h on Tencent's
+                # minute endpoint, self-labelled unknown.
+                "intraday": self._frame("unknown", source="tencent"),
+            }
+        )
+
+        self.assertIsNone(conflict)
+
+    def test_hk_intraday_on_yahoo_also_raises_no_conflict(self):
+        """HK cannot use Tencent's minute endpoint, so 1h stays on Yahoo."""
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {
+                "daily": self._frame("split_only", source="tencent"),
+                "weekly": self._frame("split_only", source="tencent"),
+                "monthly": self._frame("split_only", source="tencent"),
                 "intraday": self._frame("split_only", source="yahoo_chart"),
             }
         )

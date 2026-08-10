@@ -352,7 +352,7 @@ class WestockWrapperTests(unittest.TestCase):
         )
 
         with patch.object(westock_wrapper, "fetch_kline", return_value=empty_df), patch.object(
-            westock_wrapper, "fetch_tencent_kline", return_value=hourly_df
+            westock_wrapper, "fetch_tencent_minute_kline", return_value=hourly_df
         ) as tencent, patch.object(westock_wrapper, "fetch_yahoo_chart") as yahoo:
             result = westock_wrapper.download("0700.HK", period="60d", interval="1h")
 
@@ -374,6 +374,226 @@ class WestockWrapperTests(unittest.TestCase):
         self.assertFalse(download.call_args.kwargs["auto_adjust"])
 
 
+class TencentMinuteKlineTests(unittest.TestCase):
+    """Minute bars live on a different endpoint than day/week/month.
+
+    `fqkline/get` serves no minute data at all: verified live, hk00700 m60/m30/m15
+    return exactly 1 row and sh688256 returns 0 with code=1. Minute bars come from
+    `kline/mkline`, which production never queried — so A-share intraday could only
+    ever arrive from Yahoo.
+    """
+
+    def _payload(self, symbol, rows):
+        return {"code": 0, "data": {symbol: {"m60": rows}}}
+
+    def test_parses_open_close_high_low_volume_order(self):
+        """Row layout is [time, open, close, high, low, volume] — close before high.
+
+        Confirmed live on sh688256: field 3 was the row max and field 4 the row min
+        on all 10 sampled bars, which only holds for this ordering.
+        """
+        rows = [
+            ["202608061400", "1145.01", "1150.00", "1158.00", "1141.69", "1554234.00", {}],
+            ["202608061500", "1150.00", "1168.15", "1168.15", "1141.01", "2204478.00", {}],
+        ]
+        response = SimpleNamespace(
+            text=json.dumps(self._payload("sh688256", rows)), raise_for_status=lambda: None
+        )
+
+        with patch("requests.get", return_value=response):
+            df = westock_wrapper.fetch_tencent_minute_kline("688256.SS", "m60", 120)
+
+        self.assertEqual(list(df.columns), ["Open", "High", "Low", "Close", "Volume"])
+        latest = df.iloc[-1]
+        self.assertEqual(float(latest["Open"]), 1150.00)
+        self.assertEqual(float(latest["Close"]), 1168.15)
+        self.assertEqual(float(latest["High"]), 1168.15)
+        self.assertEqual(float(latest["Low"]), 1141.01)
+        self.assertEqual(float(latest["Volume"]), 2204478.0)
+
+    def test_converts_beijing_timestamps_to_naive_utc(self):
+        """mkline returns naive Beijing time; Yahoo intraday is naive UTC.
+
+        Verified live: Yahoo's 0700.HK 1h index ends at 06:07 for a session that
+        closes 16:00 Beijing, i.e. UTC with no tzinfo. Leaving mkline in Beijing
+        would put the two sources 8h apart on the same bar — the same skew CLAUDE.md
+        records for AkShare and Sina. Normalising to naive UTC keeps one convention.
+        """
+        rows = [["202608061400", "1145.01", "1150.00", "1158.00", "1141.69", "1554234.00", {}]]
+        response = SimpleNamespace(
+            text=json.dumps(self._payload("sh688256", rows)), raise_for_status=lambda: None
+        )
+
+        with patch("requests.get", return_value=response):
+            df = westock_wrapper.fetch_tencent_minute_kline("688256.SS", "m60", 120)
+
+        # 14:00 Beijing == 06:00 UTC.
+        self.assertIsNone(df.index.tz)
+        self.assertEqual(df.index[-1].strftime("%Y-%m-%d %H:%M"), "2026-08-06 06:00")
+
+    def test_labels_adjustment_unknown_because_the_window_cannot_reach_an_ex_date(self):
+        """mkline caps at 120 bars ~= 30 A-share days, so its basis is unobservable.
+
+        Live check over that reachable window: qfq and un-adjusted daily closes were
+        identical to 0.0000%, so no evidence distinguishes them. Claiming either
+        label would be a guess, and a wrong label warns on every run.
+        """
+        rows = [["202608061400", "1145.01", "1150.00", "1158.00", "1141.69", "1554234.00", {}]]
+        response = SimpleNamespace(
+            text=json.dumps(self._payload("sh688256", rows)), raise_for_status=lambda: None
+        )
+
+        with patch("requests.get", return_value=response):
+            df = westock_wrapper.fetch_tencent_minute_kline("688256.SS", "m60", 120)
+
+        self.assertEqual(df.attrs["adjustment"], westock_wrapper.ADJUSTMENT_UNKNOWN)
+
+    def test_returns_empty_for_hk_rather_than_pretending(self):
+        """HK is not served: mkline answers code=-1 for hk00700 on m60/m30/m15."""
+        response = SimpleNamespace(
+            text=json.dumps({"code": -1, "data": {}}), raise_for_status=lambda: None
+        )
+
+        with patch("requests.get", return_value=response):
+            df = westock_wrapper.fetch_tencent_minute_kline("0700.HK", "m60", 120)
+
+        self.assertTrue(df.empty)
+
+    def test_survives_a_transport_failure(self):
+        with patch("requests.get", side_effect=RuntimeError("dns")):
+            df = westock_wrapper.fetch_tencent_minute_kline("688256.SS", "m60", 120)
+
+        self.assertTrue(df.empty)
+
+    def test_download_routes_1h_to_the_minute_endpoint_not_fqkline(self):
+        """The regression that hid this: 1h asked fqkline/get, which has no m60."""
+        parsed = pd.DataFrame(
+            {"Open": [1.0] * 20, "High": [2.0] * 20, "Low": [0.5] * 20, "Close": [1.5] * 20, "Volume": [9.0] * 20},
+            index=pd.date_range("2026-08-03 01:30", periods=20, freq="h"),
+        )
+
+        with patch.object(westock_wrapper, "fetch_kline", return_value=pd.DataFrame()), patch.object(
+            westock_wrapper, "fetch_tencent_kline"
+        ) as daily_endpoint, patch.object(
+            westock_wrapper, "fetch_tencent_minute_kline", return_value=parsed
+        ) as minute_endpoint, patch.object(
+            westock_wrapper, "fetch_yahoo_chart"
+        ) as yahoo:
+            result = westock_wrapper.download("688256.SS", period="5d", interval="1h")
+
+        self.assertIs(result, parsed)
+        self.assertEqual(result.attrs["source"], "tencent")
+        minute_endpoint.assert_called_once()
+        daily_endpoint.assert_not_called()
+        yahoo.assert_not_called()
+
+    def test_download_still_uses_fqkline_for_daily(self):
+        parsed = pd.DataFrame(
+            {"Open": [1.0], "High": [2.0], "Low": [0.5], "Close": [1.5], "Volume": [9.0]},
+            index=pd.to_datetime(["2026-08-10"]),
+        )
+
+        with patch.object(westock_wrapper, "fetch_kline", return_value=pd.DataFrame()), patch.object(
+            westock_wrapper, "fetch_tencent_kline", return_value=parsed
+        ) as daily_endpoint, patch.object(
+            westock_wrapper, "fetch_tencent_minute_kline"
+        ) as minute_endpoint:
+            westock_wrapper.download("688256.SS", period="18mo", interval="1d")
+
+        daily_endpoint.assert_called_once()
+        minute_endpoint.assert_not_called()
+
+    def test_hk_1h_falls_through_to_yahoo(self):
+        """A-shares get Tencent intraday, HK cannot — so HK must still reach Yahoo."""
+        yahoo_df = pd.DataFrame(
+            {"Open": [1.0] * 30, "High": [2.0] * 30, "Low": [0.5] * 30, "Close": [1.5] * 30, "Volume": [9.0] * 30},
+            index=pd.date_range("2026-08-03 01:30", periods=30, freq="h"),
+        )
+
+        with patch.object(westock_wrapper, "fetch_kline", return_value=pd.DataFrame()), patch.object(
+            westock_wrapper, "fetch_tencent_minute_kline", return_value=pd.DataFrame()
+        ), patch.object(westock_wrapper, "fetch_yahoo_chart", return_value=yahoo_df) as yahoo:
+            result = westock_wrapper.download("0700.HK", period="5d", interval="1h")
+
+        self.assertIs(result, yahoo_df)
+        self.assertEqual(result.attrs["source"], "yahoo_chart")
+        yahoo.assert_called_once()
+
+
+class IntradayRowGateTests(unittest.TestCase):
+    """MIN_INTRADAY_ROWS=120 was unsatisfiable for the period production requests.
+
+    A-shares trade 4h/day and HK ~5.5h, so a 5d window holds at most 20 and ~30
+    hourly bars. The gate demanded 120 and was applied only to westock/Tencent,
+    never to Yahoo — so the two China sources were guaranteed to be discarded for
+    intraday while a 5-row Yahoo frame was accepted. The threshold must scale with
+    the requested window.
+    """
+
+    def _accepted(self, rows, ticker="688256.SS", period="5d"):
+        frame = pd.DataFrame(
+            {"Open": [1.0] * rows, "High": [2.0] * rows, "Low": [0.5] * rows,
+             "Close": [1.5] * rows, "Volume": [9.0] * rows},
+            index=pd.date_range("2026-08-03 01:30", periods=rows, freq="h"),
+        )
+        with patch.object(westock_wrapper, "fetch_kline", return_value=pd.DataFrame()), patch.object(
+            westock_wrapper, "fetch_tencent_minute_kline", return_value=frame
+        ), patch.object(westock_wrapper, "fetch_yahoo_chart", return_value=pd.DataFrame()), patch.object(
+            westock_wrapper, "fetch_yfinance", return_value=pd.DataFrame()
+        ):
+            result = westock_wrapper.download(ticker, period=period, interval="1h")
+        return result.attrs.get("source") == "tencent"
+
+    def test_a_realistic_5d_a_share_frame_is_accepted(self):
+        """20 bars is the physical maximum for 5d A-share; it must not be rejected."""
+        self.assertTrue(self._accepted(20))
+
+    def test_a_realistic_5d_hk_frame_is_accepted(self):
+        self.assertTrue(self._accepted(30, ticker="0700.HK"))
+
+    def test_a_single_stub_bar_is_still_rejected(self):
+        """The gate's real job: reject the 1-row stub fqkline/get returns."""
+        self.assertFalse(self._accepted(1))
+
+    def test_threshold_scales_with_the_requested_window(self):
+        expected_minimum = westock_wrapper.min_intraday_rows("60d")
+        self.assertGreater(expected_minimum, westock_wrapper.min_intraday_rows("5d"))
+
+    def test_threshold_for_5d_is_reachable_in_a_5d_session_window(self):
+        """Whatever the rule, it must be satisfiable by real 5d data."""
+        self.assertLessEqual(westock_wrapper.min_intraday_rows("5d"), 20)
+
+    def test_gate_applies_to_yahoo_too(self):
+        """Yahoo bypassed the gate entirely, so a 1-row stub was accepted as valid."""
+        stub = pd.DataFrame(
+            {"Open": [1.0], "High": [2.0], "Low": [0.5], "Close": [1.5], "Volume": [9.0]},
+            index=pd.to_datetime(["2026-08-10 01:30"]),
+        )
+
+        with patch.object(westock_wrapper, "fetch_kline", return_value=pd.DataFrame()), patch.object(
+            westock_wrapper, "fetch_tencent_minute_kline", return_value=pd.DataFrame()
+        ), patch.object(westock_wrapper, "fetch_yahoo_chart", return_value=stub), patch.object(
+            westock_wrapper, "fetch_yfinance", return_value=pd.DataFrame()
+        ):
+            result = westock_wrapper.download("0700.HK", period="5d", interval="1h")
+
+        self.assertTrue(result.empty)
+
+    def test_daily_requests_are_unaffected_by_the_intraday_gate(self):
+        single_bar = pd.DataFrame(
+            {"Open": [1.0], "High": [2.0], "Low": [0.5], "Close": [1.5], "Volume": [9.0]},
+            index=pd.to_datetime(["2026-08-10"]),
+        )
+
+        with patch.object(westock_wrapper, "fetch_kline", return_value=pd.DataFrame()), patch.object(
+            westock_wrapper, "fetch_tencent_kline", return_value=single_bar
+        ):
+            result = westock_wrapper.download("688256.SS", period="18mo", interval="1d")
+
+        self.assertEqual(result.attrs["source"], "tencent")
+        self.assertFalse(result.empty)
+
+
 class TencentRowLimitTests(unittest.TestCase):
     """The limit sent to Tencent was computed in trading days for every interval.
 
@@ -392,8 +612,12 @@ class TencentRowLimitTests(unittest.TestCase):
             captured['ws_period'] = ws_period
             return pd.DataFrame()
 
+        # 1h routes to the minute endpoint and everything else to fqkline/get, so
+        # both are stubbed to capture whichever one the interval selects.
         with patch.object(westock_wrapper, "fetch_kline", return_value=pd.DataFrame()), patch.object(
             westock_wrapper, "fetch_tencent_kline", side_effect=fake_tencent
+        ), patch.object(
+            westock_wrapper, "fetch_tencent_minute_kline", side_effect=fake_tencent
         ), patch.object(westock_wrapper, "fetch_yahoo_chart", return_value=pd.DataFrame()), patch.object(
             westock_wrapper, "fetch_yfinance", return_value=pd.DataFrame()
         ):

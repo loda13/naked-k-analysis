@@ -300,13 +300,15 @@ _TIMEFRAME_LABELS = {
 }
 
 # Only the timeframes that carry structural levels are compared. Intraday is
-# excluded on purpose: Tencent's m60 never clears MIN_INTRADAY_ROWS, so 1h always
-# falls to Yahoo split_only while A-share daily/weekly stay on Tencent qfq. That
-# pairing is harmless because qfq restates *history* onto the latest price scale,
-# so the recent 5d intraday window matches qfq daily to a 0.13% mean / 0.29% max
-# (measured live across four A-shares) — while a daily-vs-monthly mismatch spans
-# years and reached 8.9% on 600519. Including intraday would fire the warning on
-# every A-share on every run and train the reader to ignore it.
+# excluded because its basis is *unobservable*, not merely different: the 1h window
+# is ~5 days, and Tencent's minute endpoint caps at 120 bars (~30 sessions), so
+# neither source can reach back past an ex-date. Over that window qfq and
+# un-adjusted daily closes measured identical to 0.0000%, which is why the minute
+# fetcher labels itself `unknown` rather than guessing. Since `unknown` never
+# compares equal, including intraday would fire the warning on every A-share on
+# every run and train the reader to ignore it. The structural timeframes below do
+# span years — a daily-vs-monthly mismatch reached 8.9% on 600519 — so they are
+# checked against each other.
 _ADJUSTMENT_CHECKED_TIMEFRAMES = ("daily", "weekly", "monthly")
 
 
