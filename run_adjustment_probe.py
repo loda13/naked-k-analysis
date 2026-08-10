@@ -57,7 +57,9 @@ def yahoo_both(ticker: str) -> pd.DataFrame:
     return df.apply(pd.to_numeric, errors="coerce").dropna().sort_index()
 
 
-TENCENT_MARKETS = ("hk", "sh", "sz", "bj")
+# Mirror the production routing guard exactly rather than re-declaring it, so the
+# probe cannot drift from the code whose numbers it is generating.
+TENCENT_MARKETS = ww.TENCENT_MARKETS
 
 # Divergence between bases only appears across an ex-date, so a comparison drawn
 # from a couple of bars proves nothing either way.

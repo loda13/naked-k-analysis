@@ -196,16 +196,6 @@ class WestockWrapperTests(unittest.TestCase):
 
         self.assertEqual(df.attrs["adjustment"], "split_only")
 
-    def test_hk_tencent_and_yahoo_share_one_basis_so_no_conflict_is_raised(self):
-        """The common HK fallback (tencent -> yahoo) must not warn spuriously.
-
-        Both are split_only, so a mid-run switch is safe and must stay quiet;
-        otherwise the warning fires on every ordinary run and gets ignored.
-        """
-        self.assertTrue(
-            westock_wrapper.adjustments_comparable("split_only", "split_only")
-        )
-
     def test_fetch_yahoo_chart_reports_split_only_adjustment(self):
         """Yahoo's quote OHLC is split-adjusted but not dividend-adjusted."""
         payload = {
@@ -519,6 +509,27 @@ class TencentMinuteKlineTests(unittest.TestCase):
         self.assertEqual(result.attrs["source"], "yahoo_chart")
         yahoo.assert_called_once()
 
+    def test_tiny_minute_frame_falls_back_to_yahoo_via_the_scaled_gate(self):
+        """The scaled row gate applies to the minute endpoint too, not just fqkline."""
+        empty_df = pd.DataFrame()
+        tiny_minute_df = pd.DataFrame(
+            {"Open": [1.0], "High": [2.0], "Low": [0.5], "Close": [1.5], "Volume": [100.0]},
+            index=pd.to_datetime(["2026-06-01 10:00"]),
+        )
+        # 60d * 4 bars/day / 2 = 120, capped at 119, so 119+ passes the gate.
+        yahoo_df = pd.DataFrame(
+            {"Open": [1.0] * 119, "High": [2.0] * 119, "Low": [0.5] * 119, "Close": [1.5] * 119, "Volume": [100.0] * 119},
+            index=pd.date_range("2026-05-01 10:00", periods=119, freq="h"),
+        )
+
+        with patch.object(westock_wrapper, "fetch_kline", return_value=empty_df), patch.object(
+            westock_wrapper, "fetch_tencent_minute_kline", return_value=tiny_minute_df
+        ), patch.object(westock_wrapper, "fetch_yahoo_chart", return_value=yahoo_df) as yahoo:
+            result = westock_wrapper.download("688256.SS", period="60d", interval="1h")
+
+        self.assertIs(result, yahoo_df)
+        yahoo.assert_called_once()
+
 
 class IntradayRowGateTests(unittest.TestCase):
     """MIN_INTRADAY_ROWS=120 was unsatisfiable for the period production requests.
@@ -689,18 +700,19 @@ class TencentRowLimitTests(unittest.TestCase):
 class AdjustmentConventionTests(unittest.TestCase):
     """The fallback chain may hand different price bases to different timeframes."""
 
-    def test_known_adjustments_declare_split_and_dividend_handling(self):
+    def test_every_basis_a_fetcher_can_report_is_a_known_label(self):
+        """ADJUSTMENT_LABELS is the set of known bases, so it gates comparability."""
         self.assertEqual(
-            westock_wrapper.ADJUSTMENT_PROPERTIES["raw"], (False, False)
+            set(westock_wrapper.ADJUSTMENT_LABELS),
+            {"raw", "split_only", "qfq", "hfq"},
         )
-        self.assertEqual(
-            westock_wrapper.ADJUSTMENT_PROPERTIES["split_only"], (True, False)
+        self.assertNotIn(
+            westock_wrapper.ADJUSTMENT_UNKNOWN, westock_wrapper.ADJUSTMENT_LABELS
         )
-        self.assertEqual(westock_wrapper.ADJUSTMENT_PROPERTIES["qfq"], (True, True))
-        self.assertEqual(westock_wrapper.ADJUSTMENT_PROPERTIES["hfq"], (True, True))
 
     def test_same_label_is_comparable(self):
         self.assertTrue(westock_wrapper.adjustments_comparable("qfq", "qfq"))
+        self.assertTrue(westock_wrapper.adjustments_comparable("split_only", "split_only"))
 
     def test_differing_labels_are_not_comparable(self):
         """qfq and hfq both adjust, but anchor the scale at opposite ends."""
@@ -708,10 +720,30 @@ class AdjustmentConventionTests(unittest.TestCase):
         self.assertFalse(westock_wrapper.adjustments_comparable("qfq", "split_only"))
         self.assertFalse(westock_wrapper.adjustments_comparable("raw", "split_only"))
 
-    def test_unknown_is_never_comparable_even_with_itself(self):
-        """Two silent sources may still disagree; absence of a label is not a match."""
+    def test_unknown_needs_a_matching_source_to_be_comparable(self):
+        """Source identity is what resolves an unlabelled basis.
+
+        Two *different* silent providers are not evidence of agreement, but one
+        provider cannot disagree with itself — which is the westock-data case,
+        since it is first in the chain and supplies every timeframe when present.
+        """
+        self.assertTrue(
+            westock_wrapper.adjustments_comparable("unknown", "unknown", "westock", "westock")
+        )
+        self.assertFalse(
+            westock_wrapper.adjustments_comparable("unknown", "unknown", "westock", "other")
+        )
         self.assertFalse(westock_wrapper.adjustments_comparable("unknown", "unknown"))
         self.assertFalse(westock_wrapper.adjustments_comparable("unknown", "qfq"))
+
+    def test_a_known_label_ignores_source_identity(self):
+        """qfq from two providers is still qfq; only `unknown` needs the source."""
+        self.assertTrue(
+            westock_wrapper.adjustments_comparable("qfq", "qfq", "tencent", "westock")
+        )
+        self.assertFalse(
+            westock_wrapper.adjustments_comparable("qfq", "hfq", "tencent", "tencent")
+        )
 
     def test_describe_adjustment_is_human_readable_for_the_report(self):
         self.assertIn("未复权", westock_wrapper.describe_adjustment("raw"))
@@ -722,22 +754,3 @@ class AdjustmentConventionTests(unittest.TestCase):
 
     def test_describe_adjustment_tolerates_unrecognized_label(self):
         self.assertIn("未知", westock_wrapper.describe_adjustment("something-else"))
-
-    def test_download_falls_back_to_yahoo_when_tencent_hourly_is_too_short(self):
-        empty_df = pd.DataFrame()
-        tiny_tencent_df = pd.DataFrame(
-            {"Open": [1.0], "High": [2.0], "Low": [0.5], "Close": [1.5], "Volume": [100.0]},
-            index=pd.to_datetime(["2026-06-01 10:00"]),
-        )
-        yahoo_df = pd.DataFrame(
-            {"Open": [1.0] * 180, "High": [2.0] * 180, "Low": [0.5] * 180, "Close": [1.5] * 180, "Volume": [100.0] * 180},
-            index=pd.date_range("2026-05-01 10:00", periods=180, freq="h"),
-        )
-
-        with patch.object(westock_wrapper, "fetch_kline", return_value=empty_df), patch.object(
-            westock_wrapper, "fetch_tencent_kline", return_value=tiny_tencent_df
-        ), patch.object(westock_wrapper, "fetch_yahoo_chart", return_value=yahoo_df) as yahoo:
-            result = westock_wrapper.download("0700.HK", period="60d", interval="1h")
-
-        self.assertIs(result, yahoo_df)
-        yahoo.assert_called_once()

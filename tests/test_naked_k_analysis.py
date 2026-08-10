@@ -2801,8 +2801,25 @@ class IntradayLocalTimeTests(unittest.TestCase):
 
         self.assertEqual(status["latest_time"], "2026-08-07 16:00:00")
 
-    def test_omitting_market_keeps_the_raw_timestamp(self):
-        """Existing callers pass no market; they must not silently shift by 8h."""
+    def test_zone_is_derived_from_the_frames_own_ticker(self):
+        """No caller should have to remember to pass `market`.
+
+        naked_k_synthesis calls build_intraday_status without it on the post-news
+        path, which reverted every `--news` run's intraday clock to UTC. `download`
+        records the ticker on the frame and it survives load_ohlcv's reshape, so the
+        zone is read from there instead of threaded through three signatures.
+        """
+        frame = self._frame(["2026-08-10 07:00:00"])
+        frame.attrs["ticker"] = "688256.SS"
+
+        status = naked_k_analysis.build_intraday_status(
+            frame, "小仓试错", entry_trigger=1e9, stop_loss=0.0
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-10 15:00:00")
+
+    def test_an_untagged_frame_keeps_the_raw_timestamp(self):
+        """With neither a market nor a ticker there is nothing to convert against."""
         frame = self._frame(["2026-08-10 07:00:00"])
 
         status = naked_k_analysis.build_intraday_status(
@@ -2810,6 +2827,16 @@ class IntradayLocalTimeTests(unittest.TestCase):
         )
 
         self.assertEqual(status["latest_time"], "2026-08-10 07:00:00")
+
+    def test_explicit_market_overrides_the_frame_ticker(self):
+        frame = self._frame(["2026-08-10 07:00:00"])
+        frame.attrs["ticker"] = "688256.SS"
+
+        status = naked_k_analysis.build_intraday_status(
+            frame, "小仓试错", entry_trigger=1e9, stop_loss=0.0, market="us"
+        )
+
+        self.assertEqual(status["latest_time"], "2026-08-10 03:00:00")
 
     def test_beijing_exchange_ticker_uses_the_china_zone(self):
         """`.BJ` is a mainland exchange, so it must not fall through to New York.
@@ -2951,6 +2978,36 @@ class AdjustmentConsistencyTests(unittest.TestCase):
 
         self.assertIsNotNone(conflict)
         self.assertIn("未知", conflict["message"])
+
+    def test_one_source_returning_two_bases_is_still_reported(self):
+        """Same source is not a licence to skip the check.
+
+        fetch_tencent_kline picks its label from whichever key answered, per
+        request — so a symbol served `qfqday` but only a plain `week` yields qfq
+        daily and split_only weekly, both tagged source='tencent'. Suppressing on
+        source identity alone hid exactly the mismatch the labels exist to catch.
+        """
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {
+                "daily": self._frame("qfq", source="tencent"),
+                "weekly": self._frame("qfq", source="tencent"),
+                "monthly": self._frame("split_only", source="tencent"),
+            }
+        )
+
+        self.assertIsNotNone(conflict)
+        self.assertIn("月线", conflict["message"])
+
+    def test_qfq_and_hfq_from_one_source_are_still_reported(self):
+        """Both adjust fully, but anchor the price scale at opposite ends."""
+        conflict = naked_k_analysis.detect_adjustment_conflict(
+            {
+                "daily": self._frame("qfq", source="tencent"),
+                "weekly": self._frame("hfq", source="tencent"),
+            }
+        )
+
+        self.assertIsNotNone(conflict)
 
     def test_unknown_from_one_single_source_is_not_reported(self):
         """westock-data is first in the chain, so when present it serves all three.

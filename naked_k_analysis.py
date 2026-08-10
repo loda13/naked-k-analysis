@@ -91,11 +91,14 @@ def classify_market(ticker: str) -> str:
 
 
 def market_timezone(market: str) -> ZoneInfo:
-    if market == "us":
-        return ZoneInfo("America/New_York")
-    if market == "kr":
-        return ZoneInfo("Asia/Seoul")
-    return ZoneInfo("Asia/Shanghai")
+    """Session zone for a market, from the one map in naked_k_portfolio.
+
+    Behaviour-neutral against the previous if-chain: the only changed answer is
+    hk, which now resolves to Asia/Hong_Kong instead of the Asia/Shanghai
+    fallback. Both are UTC+8 with no DST — checked every day from 2015 to 2027
+    for a differing offset and found none.
+    """
+    return ZoneInfo(naked_k_portfolio.market_timezone_name(market))
 
 
 def market_close_hour(market: str) -> int:
@@ -296,7 +299,6 @@ _TIMEFRAME_LABELS = {
     "daily": "日线",
     "weekly": "周线",
     "monthly": "月线",
-    "intraday": "小时线",
 }
 
 # Only the timeframes that carry structural levels are compared. Intraday is
@@ -335,20 +337,18 @@ def detect_adjustment_conflict(
     if len(present) < 2:
         return None
 
-    # One source cannot disagree with itself. This matters for the westock-data
-    # CLI, which is first in the fallback chain and so serves all three timeframes
-    # when it is installed, yet exposes no adjustment mode and is tagged `unknown`.
-    # Since `unknown` never compares equal, checking labels alone would warn on
-    # every ticker on every run in exactly the environment where the primary source
-    # works — the false-alarm failure this warning exists to avoid.
-    if len(set(sources.values())) == 1:
-        return None
-
+    # Compare every timeframe against the first. Sources are passed through
+    # because `unknown` resolves only against an identical source: the westock-data
+    # CLI is first in the fallback chain and so supplies every timeframe when
+    # installed, and one provider cannot disagree with itself. Judging that by
+    # source *identity alone* would be too coarse — Tencent picks its label per
+    # request from whichever key answered, so it can legitimately return qfq daily
+    # and split_only weekly, and that mismatch must still be reported.
     reference_timeframe, reference_basis = next(iter(present.items()))
+    reference_source = sources[reference_timeframe]
     if all(
-        yf.adjustments_comparable(reference_basis, basis)
+        yf.adjustments_comparable(reference_basis, basis, reference_source, sources[timeframe])
         for timeframe, basis in present.items()
-        if timeframe != reference_timeframe
     ):
         return None
 

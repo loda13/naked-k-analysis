@@ -20,13 +20,19 @@ DEFAULT_WESTOCK_DATA_SCRIPT = '/root/.openclaw/workspace/skills/westock-data/scr
 # entirely and a 1-row stub passed as valid.
 _MIN_HOURLY_BARS_PER_DAY = 4
 
-# Reject obvious stubs (fqkline/get answers minute requests with a single bar)
-# without demanding more than a short window can hold.
-_INTRADAY_STUB_CEILING = 2
+# Absolute floor for the intraday gate. Rejects the obvious stub (fqkline/get
+# answers minute requests with a single bar) without demanding more than a very
+# short window can hold.
+_INTRADAY_MIN_ROWS = 2
 
 # Headroom kept between the gate and the minute endpoint's hard row cap, so a
 # holiday-shortened window still clears the threshold. Roughly one A-share session.
 _INTRADAY_CAP_MARGIN = 8
+
+# Symbol prefixes Tencent serves. The minute endpoint covers a strict subset:
+# HK answers code=-1 there on m60/m30/m15, so HK intraday must come from Yahoo.
+TENCENT_MARKETS = ('hk', 'sh', 'sz', 'bj')
+TENCENT_MINUTE_MARKETS = ('sh', 'sz', 'bj')
 
 # Tencent serves minute bars from a different host and path than day/week/month.
 # fqkline/get returns 1 row for HK m60 and code=1 for A-share m60 — it has no
@@ -51,46 +57,49 @@ _BARS_PER_PERIOD = {
     '1mo': (12, 1),
 }
 
-# Corporate-action adjustment conventions, as (split_adjusted, dividend_adjusted).
-# A naked-K engine reads candle shape directly, so a source that leaves ex-rights
-# gaps in place manufactures engulfing bars and BOS breaks that never happened.
-# Every fetcher must label its frame so a fallback switch is visible downstream.
-ADJUSTMENT_PROPERTIES = {
-    'raw': (False, False),
-    'split_only': (True, False),
-    'qfq': (True, True),   # 前复权: history restated onto the latest price scale
-    'hfq': (True, True),   # 后复权: history kept, latest price scaled up
-}
-ADJUSTMENT_UNKNOWN = 'unknown'
-
-_ADJUSTMENT_LABELS = {
+# Corporate-action adjustment conventions a fetcher may report. A naked-K engine
+# reads candle shape directly, so a source that leaves ex-rights gaps in place
+# manufactures engulfing bars and BOS breaks that never happened. Every fetcher
+# must label its frame so a fallback switch is visible downstream.
+#
+# This map is also the set of *known* bases: `adjustments_comparable` admits only
+# labels appearing here. An earlier version carried (split, dividend) tuples
+# alongside, but nothing ever read them — comparison is by label equality, since
+# qfq and hfq share those properties yet sit on opposite price scales.
+ADJUSTMENT_LABELS = {
     'raw': '未复权（除权跳空保留在K线里）',
     'split_only': '仅拆股复权（分红除权跳空保留）',
     'qfq': '前复权（按最新价格轴还原历史）',
     'hfq': '后复权（保留历史价格轴，抬升最新价）',
 }
+ADJUSTMENT_UNKNOWN = 'unknown'
 _ADJUSTMENT_UNKNOWN_LABEL = '未知复权口径'
 
 
 def describe_adjustment(adjustment):
     """Return a report-ready Chinese description of an adjustment label."""
-    return _ADJUSTMENT_LABELS.get(adjustment, _ADJUSTMENT_UNKNOWN_LABEL)
+    return ADJUSTMENT_LABELS.get(adjustment, _ADJUSTMENT_UNKNOWN_LABEL)
 
 
-def adjustments_comparable(left, right):
+def adjustments_comparable(left, right, left_source=None, right_source=None):
     """Whether two frames share one price basis and may be read together.
 
-    Deliberately stricter than comparing (split, dividend) properties: qfq and
-    hfq both adjust for everything yet sit on opposite price scales, so mixing
-    them would keep candle shapes while moving every trigger and stop level.
-    ``unknown`` never matches, including itself — two unlabelled sources are not
-    evidence of agreement.
+    Deliberately stricter than comparing split/dividend properties: qfq and hfq
+    both adjust for everything yet sit on opposite price scales, so mixing them
+    would keep candle shapes while moving every trigger and stop level. Equal
+    labels are therefore the requirement, not equivalent properties.
+
+    ``unknown`` is the exception, and source identity is what resolves it: an
+    unlabelled basis matches only itself *from the same source*. Two different
+    silent providers are not evidence of agreement, but one provider cannot
+    disagree with itself — which matters for the westock-data CLI, first in the
+    fallback chain and so the supplier of every timeframe when it is installed.
     """
-    if left == ADJUSTMENT_UNKNOWN or right == ADJUSTMENT_UNKNOWN:
+    if left != right:
         return False
-    if left not in ADJUSTMENT_PROPERTIES or right not in ADJUSTMENT_PROPERTIES:
-        return False
-    return left == right
+    if left == ADJUSTMENT_UNKNOWN:
+        return left_source is not None and left_source == right_source
+    return left in ADJUSTMENT_LABELS
 
 
 def _tag_adjustment(df, adjustment):
@@ -271,7 +280,7 @@ def fetch_tencent_kline(ticker, period='day', limit=500):
     import requests
 
     ws_ticker = convert_ticker(ticker)
-    if not ws_ticker.startswith(('hk', 'sh', 'sz', 'bj')):
+    if not ws_ticker.startswith(TENCENT_MARKETS):
         return pd.DataFrame()
     urls = [
         'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get',
@@ -349,16 +358,16 @@ def min_intraday_rows(period):
         # download() is a public yfinance-compatible shim, so a caller can pass
         # anything. Fall back to the shortest sane window rather than raising.
         days = 5
-    days = max(1, days)
     # Half the theoretical minimum: tolerates holidays and half-days inside the
-    # window while still discarding a frame that holds almost nothing.
+    # window while still discarding a frame that holds almost nothing. No need to
+    # floor `days` first — the outer max() already handles zero and negatives.
     scaled = days * _MIN_HOURLY_BARS_PER_DAY // 2
     # Never demand more than the minute endpoint can physically return. mkline
     # hard-caps at TENCENT_MINUTE_MAX_ROWS, so a threshold at or above the cap
     # rejects even a complete frame — for period='60d' the scaled value landed on
     # exactly 120, equal to the cap, so a single holiday would have re-broken it.
     ceiling = TENCENT_MINUTE_MAX_ROWS - _INTRADAY_CAP_MARGIN
-    return max(_INTRADAY_STUB_CEILING, min(scaled, ceiling))
+    return max(_INTRADAY_MIN_ROWS, min(scaled, ceiling))
 
 
 def fetch_tencent_minute_kline(ticker, period='m60', limit=TENCENT_MINUTE_MAX_ROWS):
@@ -373,7 +382,7 @@ def fetch_tencent_minute_kline(ticker, period='m60', limit=TENCENT_MINUTE_MAX_RO
     import requests
 
     ws_ticker = convert_ticker(ticker)
-    if not ws_ticker.startswith(('sh', 'sz', 'bj')):
+    if not ws_ticker.startswith(TENCENT_MINUTE_MARKETS):
         return pd.DataFrame()
 
     params = {'param': f'{ws_ticker},{period},,{min(limit, TENCENT_MINUTE_MAX_ROWS)}'}
@@ -504,7 +513,7 @@ def download(ticker, period='1y', start=None, end=None, interval='1d', progress=
     if ok:
         source = 'westock'
     ws_ticker = convert_ticker(ticker)
-    if getattr(df, 'empty', True) and ws_ticker.startswith(('hk', 'sh', 'sz', 'bj')):
+    if getattr(df, 'empty', True) and ws_ticker.startswith(TENCENT_MARKETS):
         # Minute bars are on a different endpoint; fqkline/get has none.
         if interval == '1h':
             candidate = fetch_tencent_minute_kline(ticker, ws_period, limit)

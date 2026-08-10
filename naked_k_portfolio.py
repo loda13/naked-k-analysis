@@ -18,6 +18,25 @@ def classify_market(ticker: str) -> str:
     return "us"
 
 
+# Single market -> IANA zone map for the whole repo. Lives here beside
+# classify_market because this module imports only naked_k_config, so both the
+# data layer and the CLI can reach it without a cycle. Crypto is deliberately
+# absent: it has no local session, so callers fall back to UTC rather than
+# borrowing an exchange's clock.
+_MARKET_TIMEZONES = {
+    "cn": "Asia/Shanghai",
+    "hk": "Asia/Hong_Kong",
+    "kr": "Asia/Seoul",
+    "us": "America/New_York",
+}
+_DEFAULT_TIMEZONE = "Asia/Shanghai"
+
+
+def market_timezone_name(market: str) -> str:
+    """IANA zone name for a market, defaulting to the mainland session."""
+    return _MARKET_TIMEZONES.get(market, _DEFAULT_TIMEZONE)
+
+
 def _value(item: Any, field: str, default: Any = None) -> Any:
     if isinstance(item, dict):
         return item.get(field, default)

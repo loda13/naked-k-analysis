@@ -154,16 +154,6 @@ def _format_ts(value: Any, tz: str | None = None) -> str:
     return timestamp.tz_convert(tz).strftime("%Y-%m-%d %H:%M:%S")
 
 
-# Display zone per market. Crypto is deliberately absent: it has no single local
-# session, so it falls back to UTC rather than borrowing an exchange's clock.
-_MARKET_TIMEZONES = {
-    "cn": "Asia/Shanghai",
-    "hk": "Asia/Hong_Kong",
-    "kr": "Asia/Seoul",
-    "us": "America/New_York",
-}
-
-
 def classify_market(ticker: str) -> str:
     """Market for a ticker, reusing the portfolio rule rather than a third copy.
 
@@ -172,6 +162,29 @@ def classify_market(ticker: str) -> str:
     `.BJ`. naked_k_portfolio imports only naked_k_config, so this adds no cycle.
     """
     return naked_k_portfolio.classify_market(ticker)
+
+
+def _display_timezone(frame: pd.DataFrame, market: str | None) -> str | None:
+    """Zone to render this frame's stamps in, or None to leave them raw.
+
+    Read from the frame's own `attrs['ticker']` when the caller does not name a
+    market. `download` records the ticker and it survives the reshape in
+    `load_ohlcv`, so the frame carries everything needed — the same "label the
+    frame, read it downstream" pattern used for `adjustment`. Deriving it here
+    rather than threading a parameter means a caller cannot forget it: the
+    post-news path in naked_k_synthesis did exactly that and silently reverted
+    every `--news` run's intraday clock to UTC.
+    """
+    if market is None:
+        ticker = frame.attrs.get("ticker")
+        if not ticker:
+            return None
+        market = classify_market(str(ticker))
+    if market == "crypto":
+        # No local session to render against, so leave the stamp in UTC rather
+        # than borrowing some exchange's clock.
+        return None
+    return naked_k_portfolio.market_timezone_name(market)
 
 
 def build_intraday_status(
@@ -188,8 +201,7 @@ def build_intraday_status(
             "note": "未获取到1h盘中K线",
         }
 
-    # Omitted market leaves the raw stamp, so existing callers do not shift.
-    tz = _MARKET_TIMEZONES.get(market) if market else None
+    tz = _display_timezone(frame, market)
     latest = frame.iloc[-1]
     latest_volume = _to_float(latest.get("Volume", 0))
     payload = {
