@@ -6,24 +6,7 @@ import unittest
 from pathlib import Path
 
 import naked_k_news_llm
-
-
-class FakeResponse:
-    def __init__(self, payload=None, status_code=200, error=None):
-        self.payload = payload
-        self.status_code = status_code
-        self.error = error
-
-    def raise_for_status(self):
-        if self.error is not None:
-            raise self.error
-        if self.status_code >= 400:
-            raise RuntimeError(f"HTTP {self.status_code}")
-
-    def json(self):
-        if isinstance(self.payload, Exception):
-            raise self.payload
-        return self.payload
+from tests.conftest import FakeResponse
 
 
 class AnthropicNewsConfigTests(unittest.TestCase):

@@ -7,17 +7,10 @@ import unittest
 import pandas as pd
 
 import naked_k_news_sina
+from tests.conftest import FakeResponse
 
 
 NOW = pd.Timestamp("2026-07-31T12:00:00+08:00")
-
-
-class FakeResponse:
-    def __init__(self, payload: object) -> None:
-        self.payload = payload
-
-    def json(self) -> object:
-        return self.payload
 
 
 def feed_payload(rows: list[dict[str, object]]) -> dict[str, object]:

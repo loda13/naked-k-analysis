@@ -20,6 +20,8 @@ import naked_k_analysis
 import naked_k_news_enhanced
 import naked_k_trade
 import naked_k_news_llm
+from naked_k_portfolio import classify_market
+from tests.conftest import LegacyResponse
 
 
 class NakedKAnalysisTests(unittest.TestCase):
@@ -369,21 +371,6 @@ class NakedKAnalysisTests(unittest.TestCase):
             self.assertTrue(technical.technical_conclusion)
             payload = self._round1() if len(request_bodies) == 1 else self._round2()
             return self._anthropic_response(payload)
-
-        class LegacyResponse:
-            def raise_for_status(self):
-                return None
-
-            def json(self):
-                return {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": '{"market_reading":"独立复盘","journal_note":"等待确认"}'
-                            }
-                        }
-                    ]
-                }
 
         legacy_config = naked_k_llm.LLMConfig(
             enabled=True,
@@ -1853,7 +1840,7 @@ class NakedKAnalysisTests(unittest.TestCase):
             index=pd.to_datetime(["2026-07-08", "2026-07-09"]),
         )
 
-        market = naked_k_analysis.classify_market("000660.KS")
+        market = classify_market("000660.KS")
         trimmed = naked_k_analysis.trim_to_closed_bars(
             frame,
             market=market,

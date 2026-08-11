@@ -9,22 +9,15 @@ import unittest
 import pandas as pd
 
 from naked_k_news import collect_news
+from tests.conftest import FakeResponse
 
 
 NOW = pd.Timestamp("2026-07-20T12:00:00+08:00")
 EMPTY_RSS = b"<?xml version='1.0'?><rss><channel></channel></rss>"
 
 
-class FakeResponse:
-    def __init__(self, content: bytes) -> None:
-        self.content = content
-
-    def raise_for_status(self) -> None:
-        return None
-
-
 def empty_get(*args: object, **kwargs: object) -> FakeResponse:
-    return FakeResponse(EMPTY_RSS)
+    return FakeResponse(content=EMPTY_RSS)
 
 
 def search_with(news: list[dict[str, Any]]):
@@ -97,7 +90,7 @@ class CollectNewsNormalizationTests(unittest.TestCase):
 
         def fake_get(url: str, **kwargs: object) -> FakeResponse:
             calls.append((url, kwargs))
-            return FakeResponse(rss)
+            return FakeResponse(content=rss)
 
         result = collect_news(
             "测试公司", "TEST", now=NOW, search_factory=search_with([]), get=fake_get
@@ -123,7 +116,7 @@ class CollectNewsNormalizationTests(unittest.TestCase):
         </item></channel></rss>"""
         result = collect_news(
             "测试公司", "TEST", now=NOW, search_factory=broken_search,
-            get=lambda *args, **kwargs: FakeResponse(rss),
+            get=lambda *args, **kwargs: FakeResponse(content=rss),
         )
 
         self.assertEqual(result["status"], "ok")
