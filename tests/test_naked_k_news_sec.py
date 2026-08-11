@@ -7,17 +7,10 @@ import unittest
 import pandas as pd
 
 import naked_k_news_sec
+from tests.conftest import FakeResponse
 
 
 NOW = pd.Timestamp("2026-08-01T12:00:00+00:00")
-
-
-class FakeResponse:
-    def __init__(self, payload: object) -> None:
-        self.payload = payload
-
-    def json(self) -> object:
-        return self.payload
 
 
 def ticker_index(entries: list[tuple[str, int, str]]) -> dict[str, dict[str, object]]:
