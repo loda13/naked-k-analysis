@@ -282,12 +282,19 @@ def _format_smart_money_summary(signals: dict[str, Any]) -> str:
     if not signals.get("enabled"):
         return "未启用"
 
-    if not signals.get("signals"):
+    # 优先使用 fresh_signals，避免显示过期信号标签
+    fresh_signals = signals.get("fresh_signals")
+    if fresh_signals is None:
+        # 向后兼容：手动过滤
+        all_signals = signals.get("signals", [])
+        fresh_signals = [s for s in all_signals if not s.get("stale", False)]
+
+    if not fresh_signals:
         return signals.get("overall_assessment", "无明显主力信号")
 
-    # 提取最高置信度的信号
+    # 提取最高置信度的新鲜信号
     top_signals = sorted(
-        signals["signals"],
+        fresh_signals,
         key=lambda s: s.get("confidence", 0),
         reverse=True
     )[:2]  # 只显示前2个
