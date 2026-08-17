@@ -207,7 +207,7 @@ def analyze_sweep_quality(
     }
 
 
-def detect_selling_exhaustion(frame: pd.DataFrame, lookback: int = 10, volume_window: int = 20) -> dict[str, Any]:
+def detect_selling_exhaustion(frame: pd.DataFrame, lookback: int = 10, volume_window: int = 20, volume_ratio_threshold: float = 0.8) -> dict[str, Any]:
     """
     识别卖压衰竭信号（抄底前兆）
 
@@ -220,6 +220,7 @@ def detect_selling_exhaustion(frame: pd.DataFrame, lookback: int = 10, volume_wi
         frame: OHLCV数据
         lookback: 判断新低的回溯窗口
         volume_window: 均量计算窗口
+        volume_ratio_threshold: 成交量萎缩阈值（默认0.8 = 80%）
 
     Returns:
         衰竭信号，包含强度和组成指标
@@ -247,7 +248,7 @@ def detect_selling_exhaustion(frame: pd.DataFrame, lookback: int = 10, volume_wi
         return {}
 
     volume_ratio = recent_volume / avg_volume
-    volume_dried = volume_ratio < 0.8
+    volume_dried = volume_ratio < volume_ratio_threshold
 
     # 下跌减速
     if len(clean) < lookback + 10:
@@ -288,7 +289,7 @@ def detect_selling_exhaustion(frame: pd.DataFrame, lookback: int = 10, volume_wi
     }
 
 
-def detect_buying_exhaustion(frame: pd.DataFrame, lookback: int = 10, volume_window: int = 20) -> dict[str, Any]:
+def detect_buying_exhaustion(frame: pd.DataFrame, lookback: int = 10, volume_window: int = 20, volume_ratio_threshold: float = 0.8) -> dict[str, Any]:
     """
     识别买盘衰竭信号（见顶前兆）
 
@@ -301,6 +302,7 @@ def detect_buying_exhaustion(frame: pd.DataFrame, lookback: int = 10, volume_win
         frame: OHLCV数据
         lookback: 判断新高的回溯窗口
         volume_window: 均量计算窗口
+        volume_ratio_threshold: 成交量萎缩阈值（默认0.8 = 80%）
 
     Returns:
         衰竭信号，包含强度和组成指标
@@ -328,7 +330,7 @@ def detect_buying_exhaustion(frame: pd.DataFrame, lookback: int = 10, volume_win
         return {}
 
     volume_ratio = recent_volume / avg_volume
-    volume_dried = volume_ratio < 0.8
+    volume_dried = volume_ratio < volume_ratio_threshold
 
     # 上涨减速
     if len(clean) < lookback + 10:
@@ -506,27 +508,28 @@ def analyze_smart_money_signals(
         volume_threshold=volume_threshold
     )
 
-    # 过滤过期信号
+    # 过滤过期信号，但保留用于审计
     for acc_signal in accumulation_signals:
         signal_date = pd.Timestamp(acc_signal["date"])
         days_old = (current_date - signal_date).days
+        is_stale = days_old > SIGNAL_MAX_AGE_DAYS
 
-        if days_old <= SIGNAL_MAX_AGE_DAYS:
-            signals.append(
-                {
-                    "category": "accumulation",
-                    "label": "吸筹信号",
-                    "strength": acc_signal["strength"],
-                    "confidence": acc_signal["confidence_score"],
-                    "thesis": acc_signal["thesis"],
-                    "date": acc_signal["date"],
-                    "days_old": days_old,
-                    "details": f"成交量放大{acc_signal['volume_ratio']}倍",
-                }
-            )
+        signals.append(
+            {
+                "category": "accumulation",
+                "label": "吸筹信号",
+                "strength": acc_signal["strength"],
+                "confidence": acc_signal["confidence_score"],
+                "thesis": acc_signal["thesis"],
+                "date": acc_signal["date"],
+                "days_old": days_old,
+                "stale": is_stale,
+                "details": f"成交量放大{acc_signal['volume_ratio']}倍",
+            }
+        )
 
     # 2. 卖压衰竭
-    exhaustion = detect_selling_exhaustion(daily_df, volume_window=20)
+    exhaustion = detect_selling_exhaustion(daily_df, volume_window=20, volume_ratio_threshold=exhaustion_ratio)
     if exhaustion:
         # 衰竭信号总是最新的（基于最近10日数据）
         signals.append(
@@ -537,12 +540,13 @@ def analyze_smart_money_signals(
                 "confidence": exhaustion["confidence_score"],
                 "thesis": exhaustion["thesis"],
                 "days_old": 0,
+                "stale": False,
                 "details": f"成交量萎缩至{exhaustion['components']['volume_ratio']*100:.0f}%",
             }
         )
 
     # 3. 买盘衰竭
-    buying_exhaustion = detect_buying_exhaustion(daily_df, volume_window=20)
+    buying_exhaustion = detect_buying_exhaustion(daily_df, volume_window=20, volume_ratio_threshold=exhaustion_ratio)
     if buying_exhaustion:
         signals.append(
             {
@@ -552,6 +556,7 @@ def analyze_smart_money_signals(
                 "confidence": buying_exhaustion["confidence_score"],
                 "thesis": buying_exhaustion["thesis"],
                 "days_old": 0,
+                "stale": False,
                 "details": f"成交量萎缩至{buying_exhaustion['components']['volume_ratio']*100:.0f}%",
             }
         )
@@ -594,36 +599,44 @@ def analyze_smart_money_signals(
     if not signals:
         return {"enabled": True, "signals": [], "overall_assessment": "无明显主力信号"}
 
-    # 计算综合概率
-    bullish_signals = [s for s in signals if s["category"] in ("accumulation", "exhaustion", "confluence")]
-    bearish_signals = [s for s in signals if s["category"] in ("buying_exhaustion")]
+    # 分离新鲜信号和过期信号
+    fresh_signals = [s for s in signals if not s.get("stale", False)]
+    stale_signals = [s for s in signals if s.get("stale", False)]
+
+    # 只用新鲜信号计算概率
+    if not fresh_signals:
+        return {
+            "enabled": True,
+            "signals": signals,  # 保留所有信号用于审计
+            "overall_assessment": "无明显主力信号（所有信号已过期）",
+            "direction": "neutral",
+            "probability": 0,
+            "stale": True,
+        }
+
+    # 计算综合概率（只使用新鲜信号）
+    bullish_signals = [s for s in fresh_signals if s["category"] in ("accumulation", "exhaustion", "confluence")]
+    bearish_signals = [s for s in fresh_signals if s["category"] in ("buying_exhaustion")]
 
     bullish_confidence = sum(s["confidence"] for s in bullish_signals) / len(bullish_signals) if bullish_signals else 0
     bearish_confidence = sum(s["confidence"] for s in bearish_signals) / len(bearish_signals) if bearish_signals else 0
 
-    # 检查是否所有信号都过期
-    all_stale = all(s.get("days_old", 0) > SIGNAL_MAX_AGE_DAYS for s in signals if "days_old" in s)
-
     if bullish_confidence > bearish_confidence:
         direction = "bullish"
         probability = int(bullish_confidence)
-        if all_stale:
-            assessment = f"主力抄底概率 {probability}% (信号已过期 >10日)"
-        else:
-            assessment = f"主力抄底概率 {probability}%"
+        assessment = f"主力抄底概率 {probability}%"
     else:
         direction = "bearish"
         probability = int(bearish_confidence)
-        if all_stale:
-            assessment = f"主力派发概率 {probability}% (信号已过期 >10日)"
-        else:
-            assessment = f"主力派发概率 {probability}%"
+        assessment = f"主力派发概率 {probability}%"
 
     return {
         "enabled": True,
-        "signals": signals,
+        "signals": signals,  # 返回所有信号（包括过期的）
+        "fresh_signals": fresh_signals,  # 新增：只包含新鲜信号
+        "stale_signals": stale_signals,  # 新增：只包含过期信号
         "overall_assessment": assessment,
         "direction": direction,
         "probability": probability,
-        "stale": all_stale,
+        "stale": False,
     }

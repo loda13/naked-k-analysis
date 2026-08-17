@@ -57,19 +57,24 @@ def _format_smart_money_brief(smart_money: dict[str, Any]) -> str:
         return "暂无明显主力信号"
 
     assessment = smart_money.get("overall_assessment", "")
-    signals = smart_money.get("signals", [])
-    is_stale = smart_money.get("stale", False)
 
-    if not signals:
+    # 优先使用 fresh_signals，如果没有则过滤 stale
+    fresh_signals = smart_money.get("fresh_signals")
+    if fresh_signals is None:
+        # 向后兼容：手动过滤
+        all_signals = smart_money.get("signals", [])
+        fresh_signals = [s for s in all_signals if not s.get("stale", False)]
+
+    stale_signals = smart_money.get("stale_signals", [])
+
+    if not fresh_signals and not stale_signals:
         return assessment or "暂无明显主力信号"
 
-    # 过滤掉过期信号（>10天）
-    fresh_signals = [s for s in signals if s.get("days_old", 0) <= 10]
-
     if not fresh_signals:
-        return f"{assessment}（所有信号已过期）"
+        # 只有过期信号
+        return f"无明显主力信号（{len(stale_signals)}个信号已过期）"
 
-    # 提取关键信号
+    # 提取关键的新鲜信号
     signal_texts = []
     for signal in fresh_signals[:3]:  # 最多显示3个
         label = signal.get("label", "")
@@ -82,7 +87,13 @@ def _format_smart_money_brief(smart_money: dict[str, Any]) -> str:
         else:
             signal_texts.append(f"{label}({strength}, {confidence}%)")
 
-    return f"{assessment}。检测到：{' + '.join(signal_texts)}"
+    result = f"{assessment}。检测到：{' + '.join(signal_texts)}"
+
+    # 如果有过期信号，追加说明
+    if stale_signals:
+        result += f"；另有{len(stale_signals)}个过期信号"
+
+    return result
 
 
 def build_trader_brief(report: Any) -> dict[str, Any]:
