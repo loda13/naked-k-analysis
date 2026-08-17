@@ -268,6 +268,7 @@ def append_journal(path: Path, run_date: str, report: InstrumentReport) -> None:
         "trader_brief": report.trader_brief,
         "candle_context": report.candle_context,
         "ai_assistant": report.ai_assistant,
+        "smart_money_signals": report.smart_money_signals,
     })
     rows = load_journal(path)
     match_key = (report.ticker, report.latest_k_dates["daily"])
@@ -1356,6 +1357,23 @@ def run_analysis(
             timeframe_alignment=(report.timeframe_context or {}).get("alignment"),
             reward_to_risk=report.reward_to_risk,
         )
+
+        # 审计主力资金信号
+        smart_money = report.smart_money_signals
+        if smart_money and smart_money.get("enabled"):
+            fresh_signals = smart_money.get("fresh_signals", [])
+            stale_signals = smart_money.get("stale_signals", [])
+            audit.info(
+                "smart_money_analyzed",
+                ticker=ticker,
+                name=name,
+                direction=smart_money.get("direction"),
+                probability=smart_money.get("probability"),
+                fresh_signal_count=len(fresh_signals),
+                stale_signal_count=len(stale_signals),
+                signal_categories=[s.get("category") for s in fresh_signals],
+                assessment=smart_money.get("overall_assessment"),
+            )
 
     if news_enabled and news_config is not None:
         pre_guard_reports = copy.deepcopy(reports)
