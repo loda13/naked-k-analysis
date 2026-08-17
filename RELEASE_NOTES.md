@@ -1,3 +1,60 @@
+# v3.4.0 - 主力资金行为识别 (2026-08-17)
+
+## 🎉 重大新增功能
+
+**主力资金行为识别 (Smart Money Detection)**
+
+新增 `naked_k_smart_money.py` 模块，识别机构/大资金的吸筹、扫单、卖压衰竭等行为模式，输出概率评分（如"主力抄底概率 92%"）。
+
+### 核心能力
+
+**识别的行为模式**：
+- **吸筹信号** - 异常成交量放大但价格窄幅震荡
+- **流动性扫荡** - 价格扫过关键区域后快速反转
+- **卖压衰竭** - 价格创新低但成交量萎缩、下跌减速
+- **买盘衰竭** - 价格创新高但成交量萎缩、上涨减速
+- **多周期共振** - 日/周/月需求区或供给区三重对齐
+
+**输出示例**：
+```
+主力：主力抄底概率 92%。检测到：吸筹信号(developing, 92%)
+```
+
+### 技术特性
+
+- ✅ 纯 OHLCV 分析，无外部数据依赖
+- ✅ 确定性可重现，无黑盒
+- ✅ 默认启用，可通过 config.json 配置
+- ✅ 447/447 测试通过，零破坏性变更
+
+### 配置支持
+
+新增 `SmartMoneyConfig` 配置类，支持调整阈值：
+
+```json
+{
+  "smart_money": {
+    "enabled": true,
+    "volume_anomaly_threshold": 2.0,
+    "sweep_recovery_threshold": 0.9,
+    "exhaustion_volume_ratio": 0.8,
+    "confluence_weight": 1.2
+  }
+}
+```
+
+参考 `config.example.json` 获取完整配置示例。
+
+### 文档
+
+- 用户指南: `docs/superpowers/smart-money-user-guide.md`
+- 设计文档: `docs/superpowers/specs/2026-08-17-smart-money-detection-design.md`
+- 集成报告: `docs/superpowers/2026-08-17-smart-money-integration-complete.md`
+
+**详细发布说明**: [RELEASE_NOTES_v3.4.0.md](./RELEASE_NOTES_v3.4.0.md)
+
+---
+
 # v3.3.1 - SEC EDGAR 采集修复 (2026-08-04)
 
 ## 🐛 Bug 修复
