@@ -2,7 +2,7 @@
 
 裸 K 交易计划生成器。纯价格结构驱动：识别 BOS/CHoCH、供需区、主力资金行为，生成触发位、止损、目标和风险计划。可选叠加多源新闻综合。零技术指标。
 
-当前版本：[v3.4.0](https://github.com/loda13/naked-k-analysis/releases/tag/v3.4.0)
+当前版本：[v3.4.1](https://github.com/loda13/naked-k-analysis/releases/tag/v3.4.1)
 
 ## 核心能力
 
