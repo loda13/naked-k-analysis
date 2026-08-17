@@ -11,6 +11,7 @@ import naked_k_context
 import naked_k_interpreter
 import naked_k_risk
 import naked_k_setups
+import naked_k_smart_money
 import naked_k_structure
 import naked_k_trade
 import naked_k_timeframes
@@ -55,6 +56,7 @@ class InstrumentReport:
     trader_brief: dict[str, Any] = field(default_factory=dict)
     candle_context: list[dict[str, Any]] = field(default_factory=list)
     ai_assistant: dict[str, Any] = field(default_factory=dict)
+    smart_money_signals: dict[str, Any] = field(default_factory=dict)
     technical_conclusion: dict[str, Any] = field(default_factory=dict)
     news_analysis: dict[str, Any] = field(default_factory=dict)
     combined_conclusion: dict[str, Any] = field(default_factory=dict)
@@ -187,6 +189,19 @@ def build_trade_plan(
         daily_structure=market_structure,
         daily_regime=market_regime,
     )
+
+    # 主力资金行为分析
+    monthly_zones = naked_k_zones.detect_price_zones(monthly, close=float(monthly["Close"].iloc[-1]), swing_window=2) if monthly is not None and not monthly.empty else None
+    weekly_zones = naked_k_zones.detect_price_zones(weekly, close=float(weekly_bar["Close"]), swing_window=1)
+    smart_money_signals = naked_k_smart_money.analyze_smart_money_signals(
+        daily_df=daily,
+        zones=price_zones.get("zones", []),
+        liquidity_pools=price_zones.get("liquidity_pools", []),
+        market_structure=market_structure,
+        monthly_zones=monthly_zones.get("zones") if monthly_zones else None,
+        weekly_zones=weekly_zones.get("zones"),
+    )
+
     review = naked_k_trade.review_previous_call(previous, daily_bar, float(daily_bar["Close"]))
     rationale_parts = [
         f"日线形态：{'、'.join(daily_patterns) if daily_patterns else '无明确信号'}",
@@ -199,6 +214,7 @@ def build_trade_plan(
         f"交易剧本：{naked_k_trade.format_trade_setup_summary(trade_setup)}",
         f"关键价格区域：{naked_k_trade.format_price_zones_summary(price_zones)}",
         f"行为上下文：{naked_k_context.format_candle_context_summary(candle_context)}",
+        f"主力行为：{_format_smart_money_summary(smart_money_signals)}",
         f"风险计划：{naked_k_trade.format_risk_plan_summary(risk_plan)}",
         f"ATR缓冲：{buffer_ratio * 100:.2f}%",
         "改进：多头/空头都要求先突破信号K极值再触发，减少无确认追价。",
@@ -249,7 +265,27 @@ def build_trade_plan(
         price_zones=price_zones,
         timeframe_context=timeframe_context,
         candle_context=candle_context,
+        smart_money_signals=smart_money_signals,
     )
     report.trader_brief = naked_k_interpreter.build_trader_brief(report)
     report.ai_assistant = naked_k_ai.build_ai_trading_assistant(report)
     return report
+
+
+def _format_smart_money_summary(signals: dict[str, Any]) -> str:
+    """格式化主力行为摘要"""
+    if not signals.get("enabled"):
+        return "未启用"
+
+    if not signals.get("signals"):
+        return signals.get("overall_assessment", "无明显主力信号")
+
+    # 提取最高置信度的信号
+    top_signals = sorted(
+        signals["signals"],
+        key=lambda s: s.get("confidence", 0),
+        reverse=True
+    )[:2]  # 只显示前2个
+
+    signal_labels = [s["label"] for s in top_signals]
+    return f"{signals.get('overall_assessment', '')} ({', '.join(signal_labels)})"

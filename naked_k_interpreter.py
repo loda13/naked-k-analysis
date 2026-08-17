@@ -51,6 +51,28 @@ def _zone_text(zone: dict[str, Any] | None) -> str:
     return f"{label} {lower}-{upper}"
 
 
+def _format_smart_money_brief(smart_money: dict[str, Any]) -> str:
+    """格式化主力行为简报"""
+    if not smart_money or not smart_money.get("enabled"):
+        return "暂无明显主力信号"
+
+    assessment = smart_money.get("overall_assessment", "")
+    signals = smart_money.get("signals", [])
+
+    if not signals:
+        return assessment or "暂无明显主力信号"
+
+    # 提取关键信号
+    signal_texts = []
+    for signal in signals[:3]:  # 最多显示3个
+        label = signal.get("label", "")
+        strength = signal.get("strength", "")
+        confidence = signal.get("confidence", 0)
+        signal_texts.append(f"{label}({strength}, {confidence}%)")
+
+    return f"{assessment}。检测到：{' + '.join(signal_texts)}"
+
+
 def build_trader_brief(report: Any) -> dict[str, Any]:
     price_action = _as_dict(report, "price_action")
     structure = _as_dict(report, "market_structure")
@@ -59,6 +81,7 @@ def build_trader_brief(report: Any) -> dict[str, Any]:
     zones = _as_dict(report, "price_zones")
     risk_plan = _as_dict(report, "risk_plan")
     timeframe = _as_dict(report, "timeframe_context")
+    smart_money = _as_dict(report, "smart_money_signals")
 
     action = str(_value(report, "action", "观望"))
     direction = _direction_text(str(setup.get("direction", "watch")))
@@ -80,6 +103,9 @@ def build_trader_brief(report: Any) -> dict[str, Any]:
     target_text = str(target) if target is not None else "暂无第一目标"
     reward_text = f"{reward_to_risk}R" if reward_to_risk is not None else "暂无"
 
+    # 主力行为分析
+    smart_money_text = _format_smart_money_brief(smart_money)
+
     risk_points = warnings[:]
     if timeframe.get("alignment") == "conflict":
         risk_points.append("日线机会与高周期方向冲突")
@@ -95,6 +121,7 @@ def build_trader_brief(report: Any) -> dict[str, Any]:
             f"{signals}。{thesis}；当前剧本方向为{direction}。"
             f"量价状态：{price_action.get('volume_pressure', '量能中性')}"
         ),
+        "主力行为研判": smart_money_text,
         "关键价格区域": f"下方：{support}；上方：{resistance}",
         "可能交易路径": [
             f"路径A：价格触发 {round(float(_value(report, 'entry_trigger', 0.0)), 2)} 后延续，先看 {target_text}",
@@ -121,6 +148,7 @@ def format_trader_brief(brief: dict[str, Any]) -> str:
     return (
         f"状态：{brief.get('当前市场状态', '暂无')}；"
         f"力量：{brief.get('多空力量分析', '暂无')}；"
+        f"主力：{brief.get('主力行为研判', '暂无')}；"
         f"区域：{brief.get('关键价格区域', '暂无')}；"
         f"路径：{path_text or '暂无'}；"
         f"计划：{brief.get('交易计划', '暂无')}；"

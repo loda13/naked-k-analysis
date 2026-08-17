@@ -39,8 +39,9 @@ The engine is organized as a **deterministic core** plus **optional LLM layers**
 - `naked_k_risk.py` — per-trade + account risk plan (1R/2R/3R, drawdown protection, consecutive-loss de-risking).
 - `naked_k_portfolio.py` — aggregate exposure (direction/market/symbol/account) and guardrails when limits are exceeded.
 - `naked_k_context.py` / `naked_k_interpreter.py` — contextualized candle-behavior objects and the trader-style brief (narrative, not "indicator crossed").
-- `naked_k_config.py` — `RiskConfig`/`PortfolioConfig`/`TradingConfig` dataclasses loaded from optional JSON (`--config-path`).
+- `naked_k_config.py` — `RiskConfig`/`PortfolioConfig`/`SmartMoneyConfig`/`TradingConfig` dataclasses loaded from optional JSON (`--config-path`).
 - `naked_k_planner.py` — assembles the above into an `InstrumentReport` via `build_trade_plan`.
+- `naked_k_smart_money.py` — **[v3.4.0]** Smart Money Concepts (SMC) detection: accumulation volume, liquidity sweeps, selling/buying exhaustion, multi-timeframe confluence. Pure OHLCV analysis, no external data. Returns probability scores and structured signals. Enabled by default, configurable via `SmartMoneyConfig`.
 - `naked_k_backtest.py` — event backtester (bar-by-bar), Walk Forward, R-multiple metrics, market-cycle bucketing, Monte Carlo reshuffle.
 - `naked_k_audit.py` — structured JSONL run-audit events (`AuditLogger`).
 

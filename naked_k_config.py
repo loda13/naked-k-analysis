@@ -34,9 +34,20 @@ class PortfolioConfig:
 
 
 @dataclass(frozen=True)
+class SmartMoneyConfig:
+    """主力行为识别配置"""
+    enabled: bool = True
+    volume_anomaly_threshold: float = 2.0
+    sweep_recovery_threshold: float = 0.9
+    exhaustion_volume_ratio: float = 0.8
+    confluence_weight: float = 1.2
+
+
+@dataclass(frozen=True)
 class TradingConfig:
     risk: RiskConfig = field(default_factory=RiskConfig)
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
+    smart_money: SmartMoneyConfig = field(default_factory=SmartMoneyConfig)
 
 
 def _merge_action_caps(overrides: dict[str, Any] | None) -> dict[str, float]:
@@ -50,6 +61,8 @@ def build_trading_config(payload: dict[str, Any] | None = None) -> TradingConfig
     data = payload or {}
     risk_data = dict(data.get("risk") or {})
     portfolio_data = dict(data.get("portfolio") or {})
+    smart_money_data = dict(data.get("smart_money") or {})
+
     action_caps = _merge_action_caps(risk_data.pop("action_gross_caps", None))
     risk = RiskConfig(
         account_risk_pct=float(risk_data.get("account_risk_pct", RiskConfig.account_risk_pct)),
@@ -73,7 +86,20 @@ def build_trading_config(payload: dict[str, Any] | None = None) -> TradingConfig
             portfolio_data.get("max_total_account_risk_pct", PortfolioConfig.max_total_account_risk_pct)
         ),
     )
-    return TradingConfig(risk=risk, portfolio=portfolio)
+    smart_money = SmartMoneyConfig(
+        enabled=bool(smart_money_data.get("enabled", SmartMoneyConfig.enabled)),
+        volume_anomaly_threshold=float(
+            smart_money_data.get("volume_anomaly_threshold", SmartMoneyConfig.volume_anomaly_threshold)
+        ),
+        sweep_recovery_threshold=float(
+            smart_money_data.get("sweep_recovery_threshold", SmartMoneyConfig.sweep_recovery_threshold)
+        ),
+        exhaustion_volume_ratio=float(
+            smart_money_data.get("exhaustion_volume_ratio", SmartMoneyConfig.exhaustion_volume_ratio)
+        ),
+        confluence_weight=float(smart_money_data.get("confluence_weight", SmartMoneyConfig.confluence_weight)),
+    )
+    return TradingConfig(risk=risk, portfolio=portfolio, smart_money=smart_money)
 
 
 def load_trading_config(path: str | Path | None = None) -> TradingConfig:
