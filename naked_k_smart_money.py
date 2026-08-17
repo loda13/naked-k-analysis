@@ -125,6 +125,7 @@ def analyze_sweep_quality(
     recovery_candles: list[dict[str, Any]],
     reference_zone: dict[str, Any],
     sweep_type: str = "bullish",
+    recovery_threshold: float = 0.9,
 ) -> dict[str, Any]:
     """
     评估流动性扫荡后的反转质量
@@ -139,6 +140,7 @@ def analyze_sweep_quality(
         recovery_candles: 后续1-2根恢复K线
         reference_zone: 参考需求区/供给区
         sweep_type: 'bullish' 或 'bearish'
+        recovery_threshold: 收回比例阈值（默认0.9 = 90%）
 
     Returns:
         质量评估结果，包含评分和组成部分
@@ -162,6 +164,11 @@ def analyze_sweep_quality(
         wick_recovery = (sweep_close - sweep_low) / candle_range
         quality_score += int(wick_recovery * 40)
 
+        # 检查是否达到阈值
+        meets_threshold = wick_recovery >= recovery_threshold
+        if meets_threshold:
+            quality_score += 10  # 奖励达到阈值
+
         # 后续确认：收盘站稳需求区上沿
         zone_upper = float(reference_zone.get("upper", sweep_close))
         reclaim_zone = all(float(c.get("Close", 0)) > zone_upper for c in recovery_candles)
@@ -172,6 +179,11 @@ def analyze_sweep_quality(
         # 反转力度：上影线收回比例
         wick_recovery = (sweep_high - sweep_close) / candle_range
         quality_score += int(wick_recovery * 40)
+
+        # 检查是否达到阈值
+        meets_threshold = wick_recovery >= recovery_threshold
+        if meets_threshold:
+            quality_score += 10  # 奖励达到阈值
 
         # 后续确认：收盘跌破供给区下沿
         zone_lower = float(reference_zone.get("lower", sweep_close))

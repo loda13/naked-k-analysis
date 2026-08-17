@@ -835,8 +835,8 @@ def format_report(
         [
             "## 今日结论",
             f"- 最值得试错：{best_trial_text}",
-            f"- 继续观察：{next((item.name for item in ranked if item.action == '观望'), ranked[1].name if len(ranked) > 1 else ranked[0].name)}",
-            f"- 需要回避：{next((item.name for item in ranked if item.action in {'回避', '减仓'}), ranked[-1].name)}",
+            f"- 继续观察：{next((item.name for item in ranked if item.action == '观望'), '无')}",
+            f"- 需要回避：{next((item.name for item in ranked if item.action in {'回避', '减仓'}), '无')}",
             f"- 组合风险：{naked_k_portfolio.format_portfolio_exposure(portfolio_exposure)}",
             "",
             "不构成投资建议；以上仅作交易辅助。",

@@ -103,6 +103,9 @@ def build_risk_plan(
 
     if status in {"blocked", "flat"} or risk_pct <= 0:
         suggested_gross_pct = 0.0
+        # flat 计划不分配风险预算（虽然有止损位，但未开仓）
+        if status == "flat":
+            effective_account_risk_pct = 0.0
     else:
         risk_budget_cap = effective_account_risk_pct / risk_pct * 100
         suggested_gross_pct = round(min(max_gross_pct, risk_budget_cap), 1)
