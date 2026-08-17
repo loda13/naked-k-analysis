@@ -289,7 +289,12 @@ class TestSmartMoneyAnalysis(unittest.TestCase):
 
     def test_comprehensive_bullish_signals(self):
         """测试综合多头信号分析"""
-        df = _create_fake_ohlcv(periods=50, base_price=100.0)
+        # 使用真实的日期，确保信号不会因为时效性被过滤
+        from datetime import datetime, timedelta
+        start_date = (datetime.now() - timedelta(days=50)).strftime("%Y-%m-%d")
+
+        df = _create_fake_ohlcv(periods=50, base_price=100.0, base_volume=1000000)
+        df.index = pd.date_range(start=start_date, periods=50, freq="D")
 
         # 制造下跌趋势（10-29）
         for i in range(10, 30):
@@ -302,17 +307,17 @@ class TestSmartMoneyAnalysis(unittest.TestCase):
 
         # 制造衰竭+吸筹模式（30-39）
         for i in range(30, 40):
-            price = 90.5 - (i - 30) * 0.1  # 新低但减速
+            price = 90.5 - (i - 30) * 0.1
             df.loc[df.index[i], "Open"] = price + 0.1
             df.loc[df.index[i], "Close"] = price
             df.loc[df.index[i], "High"] = price + 0.3
             df.loc[df.index[i], "Low"] = price - 0.2
-            df.loc[df.index[i], "Volume"] = 600000  # 缩量
+            df.loc[df.index[i], "Volume"] = 600000
 
-        # 最后3根吸筹K线（37-39）
-        for i in range(37, 40):
-            df.loc[df.index[i], "Volume"] = 2500000  # 放量
-            df.loc[df.index[i], "Close"] = 89.7  # 窄幅震荡
+        # 最后3根吸筹K线（47-49）- 最近几天
+        for i in range(47, 50):
+            df.loc[df.index[i], "Volume"] = 2500000
+            df.loc[df.index[i], "Close"] = 89.7
             df.loc[df.index[i], "High"] = 90.0
             df.loc[df.index[i], "Low"] = 89.3
             df.loc[df.index[i], "Open"] = 89.5
@@ -324,6 +329,7 @@ class TestSmartMoneyAnalysis(unittest.TestCase):
         result = analyze_smart_money_signals(df, zones, liquidity_pools, market_structure)
 
         self.assertTrue(result.get("enabled"))
+        # 至少应该有吸筹信号（最近3日）
         self.assertGreater(len(result.get("signals", [])), 0)
         self.assertIn(result.get("direction"), ("bullish", "neutral"))
 

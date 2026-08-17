@@ -10,13 +10,19 @@ naked_k_smart_money.py
 1. 纯价格+成交量分析，无黑盒指标
 2. 所有计算确定性可重现
 3. 返回结构化信号，附带置信度评分
+4. 信号包含日期，支持时效性过滤
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 
 import pandas as pd
+
+
+# 信号有效期（天数）
+SIGNAL_MAX_AGE_DAYS = 10
 
 
 def _clean_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
@@ -461,6 +467,7 @@ def analyze_smart_money_signals(
     market_structure: dict[str, Any],
     monthly_zones: list[dict[str, Any]] | None = None,
     weekly_zones: list[dict[str, Any]] | None = None,
+    config: Any = None,
 ) -> dict[str, Any]:
     """
     综合分析所有主力资金信号
@@ -472,34 +479,56 @@ def analyze_smart_money_signals(
         market_structure: 市场结构
         monthly_zones: 月线供需区（可选）
         weekly_zones: 周线供需区（可选）
+        config: SmartMoneyConfig配置对象（可选）
 
     Returns:
         主力信号汇总，包含各类信号和综合评估
     """
+    # 检查配置是否启用
+    if config and hasattr(config, 'enabled') and not config.enabled:
+        return {"enabled": False, "signals": [], "overall_assessment": "主力分析已禁用"}
+
     if daily_df.empty:
         return {"enabled": False, "signals": []}
 
+    # 使用配置中的阈值，如果有的话
+    volume_threshold = getattr(config, 'volume_anomaly_threshold', 2.0) if config else 2.0
+    sweep_threshold = getattr(config, 'sweep_recovery_threshold', 0.9) if config else 0.9
+    exhaustion_ratio = getattr(config, 'exhaustion_volume_ratio', 0.8) if config else 0.8
+    confluence_weight = getattr(config, 'confluence_weight', 1.2) if config else 1.2
+
     signals: list[dict[str, Any]] = []
+    current_date = pd.Timestamp(daily_df.index[-1])
 
     # 1. 吸筹成交量模式
-    accumulation_signals = detect_accumulation_volume(daily_df)
-    if accumulation_signals:
-        latest_acc = accumulation_signals[-1]  # 最近的吸筹信号
-        signals.append(
-            {
-                "category": "accumulation",
-                "label": "吸筹信号",
-                "strength": latest_acc["strength"],
-                "confidence": latest_acc["confidence_score"],
-                "thesis": latest_acc["thesis"],
-                "date": latest_acc["date"],
-                "details": f"成交量放大{latest_acc['volume_ratio']}倍",
-            }
-        )
+    accumulation_signals = detect_accumulation_volume(
+        daily_df,
+        volume_threshold=volume_threshold
+    )
+
+    # 过滤过期信号
+    for acc_signal in accumulation_signals:
+        signal_date = pd.Timestamp(acc_signal["date"])
+        days_old = (current_date - signal_date).days
+
+        if days_old <= SIGNAL_MAX_AGE_DAYS:
+            signals.append(
+                {
+                    "category": "accumulation",
+                    "label": "吸筹信号",
+                    "strength": acc_signal["strength"],
+                    "confidence": acc_signal["confidence_score"],
+                    "thesis": acc_signal["thesis"],
+                    "date": acc_signal["date"],
+                    "days_old": days_old,
+                    "details": f"成交量放大{acc_signal['volume_ratio']}倍",
+                }
+            )
 
     # 2. 卖压衰竭
-    exhaustion = detect_selling_exhaustion(daily_df)
+    exhaustion = detect_selling_exhaustion(daily_df, volume_window=20)
     if exhaustion:
+        # 衰竭信号总是最新的（基于最近10日数据）
         signals.append(
             {
                 "category": "exhaustion",
@@ -507,12 +536,13 @@ def analyze_smart_money_signals(
                 "strength": exhaustion["strength"],
                 "confidence": exhaustion["confidence_score"],
                 "thesis": exhaustion["thesis"],
+                "days_old": 0,
                 "details": f"成交量萎缩至{exhaustion['components']['volume_ratio']*100:.0f}%",
             }
         )
 
     # 3. 买盘衰竭
-    buying_exhaustion = detect_buying_exhaustion(daily_df)
+    buying_exhaustion = detect_buying_exhaustion(daily_df, volume_window=20)
     if buying_exhaustion:
         signals.append(
             {
@@ -521,6 +551,7 @@ def analyze_smart_money_signals(
                 "strength": buying_exhaustion["strength"],
                 "confidence": buying_exhaustion["confidence_score"],
                 "thesis": buying_exhaustion["thesis"],
+                "days_old": 0,
                 "details": f"成交量萎缩至{buying_exhaustion['components']['volume_ratio']*100:.0f}%",
             }
         )
@@ -530,26 +561,31 @@ def analyze_smart_money_signals(
     if monthly_zones and weekly_zones:
         bullish_confluence = detect_multi_tf_confluence(monthly_zones, weekly_zones, zones, current_price, "bullish")
         if bullish_confluence:
+            # 应用共振权重
+            confidence = int(bullish_confluence["confidence_score"] * confluence_weight)
             signals.append(
                 {
                     "category": "confluence",
                     "label": "多周期需求共振",
                     "strength": bullish_confluence["strength"],
-                    "confidence": bullish_confluence["confidence_score"],
+                    "confidence": min(95, confidence),
                     "thesis": bullish_confluence["thesis"],
+                    "days_old": 0,
                     "details": f"月线区间 {bullish_confluence['zones']['monthly']['range']}",
                 }
             )
 
         bearish_confluence = detect_multi_tf_confluence(monthly_zones, weekly_zones, zones, current_price, "bearish")
         if bearish_confluence:
+            confidence = int(bearish_confluence["confidence_score"] * confluence_weight)
             signals.append(
                 {
                     "category": "confluence",
                     "label": "多周期供给共振",
                     "strength": bearish_confluence["strength"],
-                    "confidence": bearish_confluence["confidence_score"],
+                    "confidence": min(95, confidence),
                     "thesis": bearish_confluence["thesis"],
+                    "days_old": 0,
                     "details": f"月线区间 {bearish_confluence['zones']['monthly']['range']}",
                 }
             )
@@ -565,14 +601,23 @@ def analyze_smart_money_signals(
     bullish_confidence = sum(s["confidence"] for s in bullish_signals) / len(bullish_signals) if bullish_signals else 0
     bearish_confidence = sum(s["confidence"] for s in bearish_signals) / len(bearish_signals) if bearish_signals else 0
 
+    # 检查是否所有信号都过期
+    all_stale = all(s.get("days_old", 0) > SIGNAL_MAX_AGE_DAYS for s in signals if "days_old" in s)
+
     if bullish_confidence > bearish_confidence:
         direction = "bullish"
         probability = int(bullish_confidence)
-        assessment = f"主力抄底概率 {probability}%"
+        if all_stale:
+            assessment = f"主力抄底概率 {probability}% (信号已过期 >10日)"
+        else:
+            assessment = f"主力抄底概率 {probability}%"
     else:
         direction = "bearish"
         probability = int(bearish_confidence)
-        assessment = f"主力派发概率 {probability}%"
+        if all_stale:
+            assessment = f"主力派发概率 {probability}% (信号已过期 >10日)"
+        else:
+            assessment = f"主力派发概率 {probability}%"
 
     return {
         "enabled": True,
@@ -580,4 +625,5 @@ def analyze_smart_money_signals(
         "overall_assessment": assessment,
         "direction": direction,
         "probability": probability,
+        "stale": all_stale,
     }

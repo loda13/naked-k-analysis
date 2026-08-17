@@ -193,6 +193,10 @@ def build_trade_plan(
     # 主力资金行为分析
     monthly_zones = naked_k_zones.detect_price_zones(monthly, close=float(monthly["Close"].iloc[-1]), swing_window=2) if monthly is not None and not monthly.empty else None
     weekly_zones = naked_k_zones.detect_price_zones(weekly, close=float(weekly_bar["Close"]), swing_window=1)
+
+    # 获取配置
+    smart_money_config = getattr(config, 'smart_money', None) if config else None
+
     smart_money_signals = naked_k_smart_money.analyze_smart_money_signals(
         daily_df=daily,
         zones=price_zones.get("zones", []),
@@ -200,6 +204,7 @@ def build_trade_plan(
         market_structure=market_structure,
         monthly_zones=monthly_zones.get("zones") if monthly_zones else None,
         weekly_zones=weekly_zones.get("zones"),
+        config=smart_money_config,
     )
 
     review = naked_k_trade.review_previous_call(previous, daily_bar, float(daily_bar["Close"]))

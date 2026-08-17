@@ -58,17 +58,29 @@ def _format_smart_money_brief(smart_money: dict[str, Any]) -> str:
 
     assessment = smart_money.get("overall_assessment", "")
     signals = smart_money.get("signals", [])
+    is_stale = smart_money.get("stale", False)
 
     if not signals:
         return assessment or "暂无明显主力信号"
 
+    # 过滤掉过期信号（>10天）
+    fresh_signals = [s for s in signals if s.get("days_old", 0) <= 10]
+
+    if not fresh_signals:
+        return f"{assessment}（所有信号已过期）"
+
     # 提取关键信号
     signal_texts = []
-    for signal in signals[:3]:  # 最多显示3个
+    for signal in fresh_signals[:3]:  # 最多显示3个
         label = signal.get("label", "")
         strength = signal.get("strength", "")
         confidence = signal.get("confidence", 0)
-        signal_texts.append(f"{label}({strength}, {confidence}%)")
+        days_old = signal.get("days_old", 0)
+
+        if days_old > 0:
+            signal_texts.append(f"{label}({strength}, {confidence}%, {days_old}日前)")
+        else:
+            signal_texts.append(f"{label}({strength}, {confidence}%)")
 
     return f"{assessment}。检测到：{' + '.join(signal_texts)}"
 
