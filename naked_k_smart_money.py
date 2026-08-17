@@ -488,7 +488,13 @@ def analyze_smart_money_signals(
     """
     # 检查配置是否启用
     if config and hasattr(config, 'enabled') and not config.enabled:
-        return {"enabled": False, "signals": [], "overall_assessment": "主力分析已禁用"}
+        return {
+            "enabled": False,
+            "signals": [],
+            "fresh_signals": [],
+            "stale_signals": [],
+            "overall_assessment": "主力分析已禁用"
+        }
 
     if daily_df.empty:
         return {"enabled": False, "signals": []}
@@ -597,7 +603,13 @@ def analyze_smart_money_signals(
 
     # 综合评估
     if not signals:
-        return {"enabled": True, "signals": [], "overall_assessment": "无明显主力信号"}
+        return {
+            "enabled": True,
+            "signals": [],
+            "fresh_signals": [],
+            "stale_signals": [],
+            "overall_assessment": "无明显主力信号"
+        }
 
     # 分离新鲜信号和过期信号
     fresh_signals = [s for s in signals if not s.get("stale", False)]
@@ -608,6 +620,8 @@ def analyze_smart_money_signals(
         return {
             "enabled": True,
             "signals": signals,  # 保留所有信号用于审计
+            "fresh_signals": [],  # 添加
+            "stale_signals": stale_signals,  # 添加
             "overall_assessment": "无明显主力信号（所有信号已过期）",
             "direction": "neutral",
             "probability": 0,
@@ -615,8 +629,24 @@ def analyze_smart_money_signals(
         }
 
     # 计算综合概率（只使用新鲜信号）
-    bullish_signals = [s for s in fresh_signals if s["category"] in ("accumulation", "exhaustion", "confluence")]
-    bearish_signals = [s for s in fresh_signals if s["category"] in ("buying_exhaustion")]
+    # 需要区分多周期需求共振（bullish）和多周期供给共振（bearish）
+    bullish_signals = []
+    bearish_signals = []
+
+    for s in fresh_signals:
+        category = s["category"]
+        label = s.get("label", "")
+
+        if category in ("accumulation", "exhaustion"):
+            bullish_signals.append(s)
+        elif category == "buying_exhaustion":
+            bearish_signals.append(s)
+        elif category == "confluence":
+            # 根据 label 区分方向
+            if "需求" in label or "bullish" in label.lower():
+                bullish_signals.append(s)
+            elif "供给" in label or "bearish" in label.lower():
+                bearish_signals.append(s)
 
     bullish_confidence = sum(s["confidence"] for s in bullish_signals) / len(bullish_signals) if bullish_signals else 0
     bearish_confidence = sum(s["confidence"] for s in bearish_signals) / len(bearish_signals) if bearish_signals else 0
