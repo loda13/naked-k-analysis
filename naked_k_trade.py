@@ -121,7 +121,7 @@ def build_position_guidance(
     elif action == "减仓":
         return "降至10%以内"
     elif action == "回避":
-        return "0%-5%"
+        return "不建仓"
     else:
         return "0%-10%"
 

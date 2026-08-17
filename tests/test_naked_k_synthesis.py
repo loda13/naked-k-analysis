@@ -1304,7 +1304,7 @@ class NakedKSynthesisTests(unittest.TestCase):
         )
 
         self.assertEqual(report.action, "回避")
-        self.assertEqual(report.position_size, "0%-5%")
+        self.assertEqual(report.position_size, "不建仓")
         self.assertEqual(report.risk_plan["status"], "flat")
         self.assertEqual(report.risk_plan["suggested_gross_pct"], 0.0)
         self.assertEqual(report.risk_plan["effective_account_risk_pct"], 0.0)
