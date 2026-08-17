@@ -64,7 +64,9 @@ def evaluate_portfolio_exposure(
         risk_plan = _risk_plan(report)
         gross_pct = round(float(risk_plan.get("suggested_gross_pct", 0.0) or 0.0), 2)
         account_risk_pct = round(float(risk_plan.get("effective_account_risk_pct", 0.0) or 0.0), 2)
-        if gross_pct <= 0 and account_risk_pct <= 0:
+        # 只有实际开仓（gross_pct > 0）时才计入组合风险
+        # 防守计划（gross=0, risk>0）不应计入组合暴露
+        if gross_pct <= 0:
             continue
         ticker = str(_value(report, "ticker", ""))
         direction = _direction_bucket(str(risk_plan.get("direction", "none")))
