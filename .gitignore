@@ -4,6 +4,7 @@ __pycache__/
 .env
 .omc/
 .superpowers/
+.worktrees/
 reports/*.md
 reports/*.jsonl
 reports/*.json
