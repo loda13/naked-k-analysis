@@ -1,7 +1,7 @@
 # 主力动作双证据识别设计
 
 **日期**：2026-08-17
-**状态**：设计方向已确认，独立复核通过，待用户审阅
+**状态**：用户已批准，实施计划独立复核通过
 **首期市场**：港股
 **首期标的**：0700.HK、1810.HK、9992.HK
 
@@ -453,15 +453,19 @@ OHLCV Volume 与逐笔成交来自同一批成交，不构成统计独立双源�
 
 审计中不得写入大体积逐笔原文，只记录 snapshot ID、统计摘要和校验结果。
 
-每个 ticker 必须有 collection started 与 collected/degraded 的 terminal 配对。report、journal、audit 均携带同一个 `run_id`、`snapshot_id`、`price_evidence_id` 和 `fusion_id`，并满足以下机器不变量：
+每个 ticker 必须有 collection started 与 collected/degraded 的 terminal 配对。report、journal、audit 均携带同一个当前 `invocation_run_id`、`snapshot_id`、`price_evidence_id` 和 `fusion_id`；bundle 回放另保留不进入 semantic hash 的 `source_run_id`/`source_bundle_id` provenance，并满足以下机器不变量：
 
+- 另保存 point-in-time daily OHLCV content ID、short-selling snapshot ID（若有）和完整 evidence bundle ID；bundle 锁定所有输入 ID、配置指纹与 decision time；
+- normalized market input、OHLCV input 与 evidence bundle 使用明确排除自引用 ID 和 acquisition envelope 的 canonical hash preimage；原始抓取时间以独立 retrieval envelope 追加记录；
 - fusion 的 direction/status/as_of/source IDs 三种产物完全一致；
-- smart-money 注入前后的 `action`、`signal_state`、`risk_plan`、`suggested_gross_pct` 和组合 exposure deep-equal；
+- smart-money 注入前后的完整 `naked_k_synthesis.TECHNICAL_SNAPSHOT_FIELDS`、`risk_plan` 内 gross/risk 数值和组合 exposure deep-equal；
 - 任一 terminal 缺失、ID 无法解析或 snapshot digest 不匹配，验收失败。
 
 ### 10.4 Orchestration 边界
 
 `run_analysis()` 负责：调用 provider、原子保存 snapshot、构造纯数据输入、生成 evidence、融合并写审计。`build_trade_plan()` 和 evidence 函数保持纯计算，禁止网络 I/O。
+
+用于 price evidence 的 daily OHLCV 必须以 immutable content-addressed snapshot 保存到 `reports/market_data/research_ohlcv/`，完整 layer/fusion bundle 保存到 `reports/market_data/evidence/`；二者均做 tamper 检测，作为 Phase 4 的输入生产路径。
 
 执行顺序固定为：
 
@@ -506,7 +510,7 @@ data_loaded
 - `smart_money.enabled=false` 时不得发起任何新增网络请求，也不得写 market-data snapshot；
 - `trade_flow.enabled=false` 时只运行 price-action 层；
 - 非港股首期直接返回 `UNAVAILABLE/unsupported_market`，不得错误调用港股 provider；
-- `--offline` 或显式 `replay_snapshot_id` 只读取已验证快照，不访问网络；相同 snapshot 与配置必须生成相同 evidence/fusion ID；
+- `--smart-money-offline` 只让 Eastmoney/HKEX 新增分支读取已验证快照，不访问这两个远端；它不承诺现有 OHLCV `load_ohlcv()` 离线。要保证 evidence/fusion ID 完全相同，必须回放同一个已验证 evidence bundle，其中同时锁定 trade-flow、short-selling（若有）、point-in-time OHLCV、配置指纹和 decision time；
 - 旧 `volume_anomaly_threshold`、`sweep_recovery_threshold`、`exhaustion_volume_ratio` 仅在一个兼容版本内映射到 price-action provisional 阈值并产生 deprecation warning；
 - 旧 `confluence_weight` 不再参与计算，读取到时产生 deprecation warning，下一 schema major 删除；
 - `probability` 从 report、brief、JSON、journal 和 audit 的新 schema 全部移除。首期不提供 `heuristic_score`、`strength_score` 或任何替代数字，只输出触发规则、原始统计、状态和 `validation_status=UNVALIDATED`；
@@ -543,7 +547,7 @@ data_loaded
 - 多空同分必须 conflict；
 - `UNAVAILABLE` 不得按零处理；
 - VALID、BOOTSTRAP、PARTIAL、STALE、UNAVAILABLE、DEFINITION_MISMATCH、INVALID、全部 lifecycle 与 LayerResult/Fusion 的完整状态矩阵；
-- `enabled=false` 和 `--offline` 的 zero-network 断言；非港股 zero-request 断言；
+- `enabled=false` 和 `--smart-money-offline` 对新增 provider 的 zero-network 断言；非港股 zero-request 断言；
 - 同日多次运行的 snapshot/manifest/latest lineage；snapshot tamper 必须拒绝；
 - 旧 journal/schema 只读兼容、旧配置 deprecation 和默认标的回归；
 - 新 schema 的所有表面均不存在 `probability`；
@@ -579,7 +583,7 @@ data_loaded
 - 事件记录 `signal_at`、`available_at` 和最早可交易时间；
 - 使用两根后续 K 确认的形态，最早只能在确认完成后的下一交易时点使用；
 - 周/月线必须从当时可见的 daily prefix 重采样；
-- 阈值只能在训练窗拟合，测试窗冻结；
+- 本期只评估预注册的唯一 `phase0-rules.v1`，所有窗口冻结且不做阈值搜索；未来若另开候选阈值规格，只能在训练窗拟合，测试窗冻结；
 - 标签最长观察 20 个交易日，窗口边界执行 purge/embargo。
 
 ### 13.2 固定研究协议
@@ -592,7 +596,7 @@ data_loaded
 - 风险尺度：`1R=median(High-Low, prior 20 complete sessions)`；precision 的正例定义为十日内先触及顺向 `+1R` 而非反向 `-1R`；同日两侧都触及时，若无 point-in-time 1H 数据则按失败处理；
 - matched baseline：同 ticker、同自然年、同方向结构、入场前 20 日振幅四分位相同且前后五日无 smart-money 事件的日期；一对一选择时间距离最近者；无匹配则该 lift `NOT_COMPUTABLE`；
 - walk-forward：至少 3 年训练、6 个月验证、6 个月测试，之后每 6 个月滚动；测试前后各 embargo 20 个交易日，跨边界标签 purge；历史不足时不启动资格升级；
-- 阈值只在训练窗选择，验证窗只做一次选择确认，测试窗完全冻结；
+- `phase0-rules.v1` 在训练、验证、测试窗完全一致；验证窗只冻结 A/B 最强单层 comparator，测试窗不得重选；
 - 置信区间按 ticker-month block bootstrap 10,000 次；多 kind 同时检验使用 Benjamini-Hochberg FDR 5%。
 
 收益统一转为方向调整值：`directional_excess=s*(stock_return-benchmark_return)`，bullish 的 `s=+1`，bearish 的 `s=-1`。matched baseline 的“同方向结构”指入场前一日现有 market-structure 模块输出的规范化状态完全相同；候选日沿用待匹配事件方向计算假想结果，不从未来价格反推方向。
@@ -671,7 +675,7 @@ data_loaded
 9. 报告、journal、audit 的结论和 lineage 一致；
 10. 全部现有测试和新增测试通过；
 11. 固定 fixture 三只通过，且交付验收至少完成一次三只均为 `OK` 的真实联网 smoke；
-12. `enabled=false`、offline replay 和非港股路径均有 zero-network 测试；
+12. `enabled=false`、smart-money provider-offline replay 和非港股路径对新增 provider 均有 zero-network 测试；同 evidence bundle 回放另有 identical-ID 验收；
 13. snapshot 使用内容摘要身份、append-only manifest、原子写和 tamper 检测；
 14. smart-money 注入前后第 10.3 节执行字段 deep-equal；
 15. `reports/market_data/**` 不进入版本库，测试 fixture 除外。
