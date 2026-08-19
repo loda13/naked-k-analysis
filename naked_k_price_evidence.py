@@ -669,21 +669,6 @@ def build_price_action_layer(
 
 def evidence_to_dict(evidence: PriceEvidence) -> dict[str, Any]:
     """将 PriceEvidence 转换为可序列化的字典"""
-    return {
-        "evidence_id": evidence.evidence_id,
-        "kind": evidence.kind,
-        "direction": evidence.direction,
-        "lifecycle": evidence.lifecycle,
-        "observed_at": evidence.observed_at.isoformat(),
-        "signal_bar_index": evidence.signal_bar_index,
-        "zone_id": evidence.zone_id,
-        "pool_id": evidence.pool_id,
-        "key_price": evidence.key_price,
-        "trigger_price": evidence.trigger_price,
-        "invalidation_price": evidence.invalidation_price,
-        "inputs": evidence.inputs,
-        "quality": evidence.quality,
-        "limitations": list(evidence.limitations),
-    }
+    return evidence.to_dict()
 
 __all__ = ["build_price_action_layer", "PriceEvidence"]

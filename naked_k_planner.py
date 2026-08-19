@@ -237,7 +237,25 @@ def build_trade_plan(
 
         if price_action_layer.availability == "available":
             price_evidences_list = [naked_k_price_evidence.evidence_to_dict(e) for e in price_action_layer.evidence]
-            price_layer = price_action_layer
+
+            # 构建 price_action layer - 照抄 trade_flow 同构写法
+            price_state, price_direction = naked_k_smart_money_fusion._compute_layer_state(
+                price_action_layer.evidence,
+                quality=price_action_layer.quality,
+                limitations=price_action_layer.limitations,
+            )
+            price_layer = naked_k_smart_money_fusion.LayerResult(
+                layer="price_action",
+                state=price_state,
+                direction=price_direction,
+                evidences=tuple(price_action_layer.evidence),
+                quality=price_action_layer.quality,
+                limitations=price_action_layer.limitations,
+                decision_time=price_action_layer.decision_time,
+                target_session=daily.index[-1].strftime('%Y-%m-%d'),
+                valid_from=price_action_layer.decision_time,
+                valid_until=price_action_layer.valid_until,
+            )
         else:
             price_layer = None
 
