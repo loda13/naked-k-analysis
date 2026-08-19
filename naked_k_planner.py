@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pandas as pd
@@ -9,9 +10,11 @@ import naked_k_ai
 import naked_k_config
 import naked_k_context
 import naked_k_interpreter
+import naked_k_price_evidence
 import naked_k_risk
 import naked_k_setups
 import naked_k_smart_money
+import naked_k_smart_money_fusion
 import naked_k_structure
 import naked_k_trade
 import naked_k_timeframes
@@ -57,6 +60,9 @@ class InstrumentReport:
     candle_context: list[dict[str, Any]] = field(default_factory=list)
     ai_assistant: dict[str, Any] = field(default_factory=dict)
     smart_money_signals: dict[str, Any] = field(default_factory=dict)
+    dual_evidence_fusion: dict[str, Any] | None = None
+    price_evidences: list[dict[str, Any]] = field(default_factory=list)
+    trade_flow_evidences: list[dict[str, Any]] = field(default_factory=list)
     technical_conclusion: dict[str, Any] = field(default_factory=dict)
     news_analysis: dict[str, Any] = field(default_factory=dict)
     combined_conclusion: dict[str, Any] = field(default_factory=dict)
@@ -207,6 +213,139 @@ def build_trade_plan(
         config=smart_money_config,
     )
 
+    # Dual-evidence 架构分析
+    dual_evidence_fusion = None
+    price_evidences_list = []
+    trade_flow_evidences_list = []
+
+    try:
+        # 1. 生成价格证据
+        current_price = float(daily_bar["Close"])
+        price_evidences = naked_k_price_evidence.generate_price_evidences(
+            daily_df=daily,
+            zones=price_zones.get("zones", []),
+            liquidity_pools=price_zones.get("liquidity_pools", []),
+            current_price=current_price,
+        )
+        price_evidences_list = [naked_k_price_evidence.evidence_to_dict(e) for e in price_evidences]
+
+        # 2. 获取逐笔成交数据（仅港股）
+        if ticker.endswith('.HK'):
+            try:
+                import naked_k_flow_eastmoney
+                import naked_k_trade_flow_evidence
+
+                today = pd.Timestamp.now().strftime('%Y-%m-%d')
+                snapshot = naked_k_flow_eastmoney.fetch_trade_flow(ticker, today)
+
+                if snapshot.status == "OK":
+                    trade_flow_evidences = naked_k_trade_flow_evidence.generate_trade_flow_evidence(snapshot)
+                    trade_flow_evidences_list = [
+                        {
+                            "evidence_id": e.evidence_id,
+                            "kind": e.kind,
+                            "direction": e.direction,
+                            "quality": e.quality,
+                            "lifecycle": e.lifecycle,
+                            "inputs": e.inputs,
+                            "thresholds": e.thresholds,
+                            "limitations": list(e.limitations),
+                        }
+                        for e in trade_flow_evidences
+                    ]
+            except (ImportError, Exception):
+                # 静默降级：trade_flow 不可用时不影响主流程
+                pass
+
+        # 3. 构建层结果
+        price_layer = None
+        trade_flow_layer = None
+
+        if price_evidences:
+            price_state, price_direction = naked_k_smart_money_fusion._compute_layer_state(
+                price_evidences,
+                quality="VALID",
+                limitations=(),
+            )
+            price_layer = naked_k_smart_money_fusion.LayerResult(
+                layer="price_action",
+                state=price_state,
+                direction=price_direction,
+                evidences=tuple(price_evidences),
+                quality="VALID",
+                limitations=(),
+                decision_time=datetime.now(timezone.utc),
+                target_session=daily.index[-1].strftime('%Y-%m-%d'),
+                valid_from=datetime.now(timezone.utc),
+                valid_until=datetime.now(timezone.utc) + timedelta(days=10),
+            )
+
+        if trade_flow_evidences_list:
+            from naked_k_trade_flow_evidence import TradeFlowEvidence
+            tf_evidences = [
+                TradeFlowEvidence(
+                    evidence_id=e["evidence_id"],
+                    schema_version="evidence.v1",
+                    family="trade_tape",
+                    kind=e["kind"],
+                    direction=e["direction"],
+                    observed_at=datetime.now(timezone.utc),
+                    available_at=datetime.now(timezone.utc),
+                    expires_at=None,
+                    target_session=daily.index[-1].strftime('%Y-%m-%d'),
+                    lifecycle=e["lifecycle"],
+                    quality=e["quality"],
+                    availability="available",
+                    lineage_ids=(),
+                    dependency_group="trade_tape",
+                    inputs=e["inputs"],
+                    thresholds=e["thresholds"],
+                    limitations=tuple(e["limitations"]),
+                    confirmation=None,
+                    invalidation=None,
+                    tradable_at=datetime.now(timezone.utc),
+                    validation_status="UNVALIDATED",
+                )
+                for e in trade_flow_evidences_list
+            ]
+
+            tf_state, tf_direction = naked_k_smart_money_fusion._compute_layer_state(
+                tf_evidences,
+                quality=trade_flow_evidences_list[0]["quality"] if trade_flow_evidences_list else "UNAVAILABLE",
+                limitations=tuple(trade_flow_evidences_list[0]["limitations"]) if trade_flow_evidences_list else (),
+            )
+            trade_flow_layer = naked_k_smart_money_fusion.LayerResult(
+                layer="trade_flow",
+                state=tf_state,
+                direction=tf_direction,
+                evidences=tuple(tf_evidences),
+                quality=trade_flow_evidences_list[0]["quality"] if trade_flow_evidences_list else "UNAVAILABLE",
+                limitations=tuple(trade_flow_evidences_list[0]["limitations"]) if trade_flow_evidences_list else (),
+                decision_time=datetime.now(timezone.utc),
+                target_session=daily.index[-1].strftime('%Y-%m-%d'),
+                valid_from=datetime.now(timezone.utc),
+                valid_until=datetime.now(timezone.utc) + timedelta(days=3),
+            )
+
+        # 4. 融合
+        if price_layer or trade_flow_layer:
+            fusion = naked_k_smart_money_fusion.fuse_dual_evidence(trade_flow_layer, price_layer)
+            dual_evidence_fusion = {
+                "result": fusion.result.value,
+                "direction": fusion.direction,
+                "quality": fusion.quality,
+                "confidence": fusion.confidence,
+                "aligned": fusion.aligned,
+                "explanation": fusion.explanation,
+                "limitations": list(fusion.limitations),
+                "advisory_only": fusion.advisory_only,
+                "confirmation_criteria": fusion.confirmation_criteria,
+                "invalidation_criteria": fusion.invalidation_criteria,
+            }
+    except Exception:
+        # 任何错误都静默降级，不影响主流程
+        pass
+
     review = naked_k_trade.review_previous_call(previous, daily_bar, float(daily_bar["Close"]))
     rationale_parts = [
         f"日线形态：{'、'.join(daily_patterns) if daily_patterns else '无明确信号'}",
@@ -271,6 +410,9 @@ def build_trade_plan(
         timeframe_context=timeframe_context,
         candle_context=candle_context,
         smart_money_signals=smart_money_signals,
+        dual_evidence_fusion=dual_evidence_fusion,
+        price_evidences=price_evidences_list,
+        trade_flow_evidences=trade_flow_evidences_list,
     )
     report.trader_brief = naked_k_interpreter.build_trader_brief(report)
     report.ai_assistant = naked_k_ai.build_ai_trading_assistant(report)

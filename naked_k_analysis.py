@@ -815,6 +815,51 @@ def format_report(
                 "",
             ]
         )
+
+        # 添加 dual-evidence 分析输出（如果可用）
+        if report.dual_evidence_fusion:
+            sections.extend([
+                "### 主力资金双证据分析 (实验性)",
+                "",
+                f"**融合结果**: {report.dual_evidence_fusion['result']}",
+                f"**方向**: {report.dual_evidence_fusion['direction'] or '无'}",
+                f"**置信度**: {report.dual_evidence_fusion['confidence']}",
+                f"**时间对齐**: {'是' if report.dual_evidence_fusion['aligned'] else '否'}",
+                f"**质量**: {report.dual_evidence_fusion['quality']}",
+                "",
+                f"**解释**: {report.dual_evidence_fusion['explanation']}",
+                "",
+            ])
+
+            if report.dual_evidence_fusion.get('confirmation_criteria'):
+                sections.append(f"**确认条件**: {report.dual_evidence_fusion['confirmation_criteria']}")
+            if report.dual_evidence_fusion.get('invalidation_criteria'):
+                sections.append(f"**失效条件**: {report.dual_evidence_fusion['invalidation_criteria']}")
+
+            if report.dual_evidence_fusion.get('limitations'):
+                sections.append(f"**限制**: {', '.join(report.dual_evidence_fusion['limitations'])}")
+
+            sections.append("")
+
+            # 价格证据层
+            if report.price_evidences:
+                sections.append("**价格证据层**:")
+                for ev in report.price_evidences:
+                    sections.append(f"- {ev['kind']} ({ev['direction']}, {ev['lifecycle']})")
+                sections.append("")
+
+            # 成交证据层
+            if report.trade_flow_evidences:
+                sections.append("**成交证据层** (仅港股):")
+                for ev in report.trade_flow_evidences:
+                    sections.append(f"- {ev['kind']} ({ev['direction']}, {ev['lifecycle']}, {ev['quality']})")
+                sections.append("")
+
+            sections.extend([
+                "⚠️ **重要提示**: 本分析处于实验阶段，未经事件研究验证，仅供参考。",
+                "",
+            ])
+
         sections.extend(_format_news_blocks(report))
 
     ranked = sorted(
