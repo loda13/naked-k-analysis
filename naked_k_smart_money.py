@@ -628,8 +628,14 @@ def analyze_smart_money_signals(
 
     # 只用近30天的信号计算概率，避免超老信号污染判断
     # 但保留所有信号用于显示和历史统计
-    thirty_days_ago = current_date - pd.Timedelta(days=30)
-    recent_signals = [s for s in signals if pd.Timestamp(s["date"]) >= thirty_days_ago]
+    # 显式 tz_localize(None) 防止 current_date (naive) 与 signal date (可能 aware) 混合比较炸
+    thirty_days_ago = (current_date.tz_localize(None) if current_date.tzinfo else current_date) - pd.Timedelta(days=30)
+    recent_signals = [
+        s for s in signals 
+        if (pd.Timestamp(s["date"]).tz_localize(None) 
+            if pd.Timestamp(s["date"]).tzinfo 
+            else pd.Timestamp(s["date"])) >= thirty_days_ago
+    ]
     
     # 标记过期信号（用于显示，不影响概率）
     for s in signals:

@@ -651,8 +651,12 @@ def build_price_action_layer(
 
     # 只用近30天的证据做方向判断，避免超老信号污染
     # 保留所有证据用于审计和显示
-    thirty_days_ago = decision_time - pd.Timedelta(days=30)
-    recent_evidences = [e for e in collected if e.signal_at >= thirty_days_ago]
+    # 显式 tz_localize(None) 防止 decision_time (naive) 与 signal_at (可能 aware) 混合比较炸
+    thirty_days_ago = (decision_time.tz_localize(None) if decision_time.tzinfo else decision_time) - pd.Timedelta(days=30)
+    recent_evidences = [
+        e for e in collected 
+        if (e.signal_at.tz_localize(None) if e.signal_at.tzinfo else e.signal_at) >= thirty_days_ago
+    ]
     
     # 如果没有近期证据，降为 NEUTRAL 但保留所有历史证据
     if not recent_evidences:

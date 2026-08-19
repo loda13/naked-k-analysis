@@ -190,6 +190,7 @@ class VolumeQuantileTests(unittest.TestCase):
     """成交量分位数与大量 bar 统计。"""
 
     def test_quartiles_are_monotonic(self):
+        """volume_q3 存在且合理（删除 q1/q2/max 后只验证 q3）。"""
         idx = pd.date_range("2026-08-19 09:30", periods=100, freq="1min", tz="Asia/Hong_Kong")
         df = pd.DataFrame(
             {
@@ -202,10 +203,9 @@ class VolumeQuantileTests(unittest.TestCase):
             index=idx,
         )
         snap = build_intraday_flow("T", "2026-08-19", df)
-        self.assertLessEqual(snap.volume_q1, snap.volume_q2)
-        self.assertLessEqual(snap.volume_q2, snap.volume_q3)
-        self.assertLessEqual(snap.volume_q3, snap.volume_max)
-        self.assertEqual(snap.volume_max, 100.0)
+        # Q3 对应 75% 分位，volume 1-100 中 Q3≈75
+        self.assertGreater(snap.volume_q3, 0.0)
+        self.assertLess(snap.volume_q3, 100.0)
 
     def test_uniform_volume_gives_no_large_bars(self):
         """全部等量时没有 bar 严格大于 Q3。"""
@@ -342,6 +342,56 @@ class NoNetworkTests(unittest.TestCase):
             self.assertEqual(called["n"], 0)
         finally:
             setattr(mod, "fetch_intraday_bars", original)
+
+
+class PublicEntryPointTests(unittest.TestCase):
+    """fetch_intraday_bars 和 collect_intraday_flow 的集成测试。"""
+
+    def test_fetch_intraday_bars_returns_none_on_network_failure(self):
+        """网络失败时 fetch 必须返回 None 不抛异常。"""
+        import naked_k_intraday_flow as mod
+        
+        def mock_fail(*args, **kwargs):
+            raise ConnectionError("simulated network failure")
+        
+        import yfinance
+        original = yfinance.Ticker
+        try:
+            yfinance.Ticker = mock_fail
+            result = mod.fetch_intraday_bars("0700.HK")
+            self.assertIsNone(result)
+        finally:
+            yfinance.Ticker = original
+
+    def test_collect_intraday_flow_returns_unavailable_on_fetch_failure(self):
+        """取数失败时 collect 返回 UNAVAILABLE 快照，不抛异常。"""
+        import naked_k_intraday_flow as mod
+        
+        original = mod.fetch_intraday_bars
+        try:
+            mod.fetch_intraday_bars = lambda ticker: None
+            snap = mod.collect_intraday_flow("0700.HK")
+            self.assertEqual(snap.status, "UNAVAILABLE")
+            self.assertIn("intraday_fetch_failed", snap.limitations)
+        finally:
+            mod.fetch_intraday_bars = original
+
+    def test_collect_intraday_flow_end_to_end_with_mock_bars(self):
+        """端到端：mock fetch 返回构造的 bars，验证快照正确生成。"""
+        import naked_k_intraday_flow as mod
+        
+        bars = make_bars(n=200, start="2026-08-19 10:00")
+        original = mod.fetch_intraday_bars
+        try:
+            mod.fetch_intraday_bars = lambda ticker: bars
+            snap = mod.collect_intraday_flow("TEST")
+            self.assertEqual(snap.status, "OK")
+            self.assertEqual(snap.quality, "PROXY")
+            self.assertEqual(snap.bar_count, 200)
+            self.assertEqual(snap.ticker, "TEST")
+            self.assertEqual(snap.session_date, "2026-08-19")
+        finally:
+            mod.fetch_intraday_bars = original
 
 
 if __name__ == "__main__":

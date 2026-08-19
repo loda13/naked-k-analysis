@@ -37,7 +37,6 @@ class IntradayFlowSnapshot:
     schema_version: str
     ticker: str
     session_date: str
-    provider: str
     status: str            # OK / PARTIAL / UNAVAILABLE
     quality: str           # PROXY / PARTIAL / UNAVAILABLE
     retrieved_at: datetime
@@ -49,10 +48,7 @@ class IntradayFlowSnapshot:
     uptick_volume_ratio: float     # 收阳分钟成交占比
     large_bar_volume_ratio: float  # 成交量 > Q3 的分钟占比
     large_bar_uptick_ratio: float  # 大量分钟里收阳的成交占比
-    volume_q1: float
-    volume_q2: float
     volume_q3: float
-    volume_max: float
     morning_volume_ratio: float
     afternoon_volume_ratio: float
     limitations: tuple[str, ...]
@@ -69,7 +65,6 @@ def _unavailable(ticker: str, session_date: str, reason: str) -> IntradayFlowSna
         schema_version=SCHEMA_VERSION,
         ticker=ticker,
         session_date=session_date,
-        provider="intraday_ohlcv",
         status="UNAVAILABLE",
         quality="UNAVAILABLE",
         retrieved_at=datetime.now(timezone.utc),
@@ -81,10 +76,7 @@ def _unavailable(ticker: str, session_date: str, reason: str) -> IntradayFlowSna
         uptick_volume_ratio=0.0,
         large_bar_volume_ratio=0.0,
         large_bar_uptick_ratio=0.0,
-        volume_q1=0.0,
-        volume_q2=0.0,
         volume_q3=0.0,
-        volume_max=0.0,
         morning_volume_ratio=0.0,
         afternoon_volume_ratio=0.0,
         limitations=(reason,),
@@ -134,10 +126,7 @@ def build_intraday_flow(
     last_close = float(df["Close"].iloc[-1])
     close_vs_vwap = (last_close - vwap) / vwap if vwap else 0.0
 
-    q1 = float(df["Volume"].quantile(0.25))
-    q2 = float(df["Volume"].quantile(0.50))
     q3 = float(df["Volume"].quantile(0.75))
-    qmax = float(df["Volume"].max())
 
     up_mask = df["Close"] > df["Open"]
     uptick_volume_ratio = float(df.loc[up_mask, "Volume"].sum() / total_volume)
@@ -166,7 +155,6 @@ def build_intraday_flow(
         schema_version=SCHEMA_VERSION,
         ticker=ticker,
         session_date=session_date,
-        provider="intraday_ohlcv",
         status=status,
         quality=quality,
         retrieved_at=datetime.now(timezone.utc),
@@ -178,10 +166,7 @@ def build_intraday_flow(
         uptick_volume_ratio=uptick_volume_ratio,
         large_bar_volume_ratio=large_bar_volume_ratio,
         large_bar_uptick_ratio=large_bar_uptick_ratio,
-        volume_q1=q1,
-        volume_q2=q2,
         volume_q3=q3,
-        volume_max=qmax,
         morning_volume_ratio=morning_ratio,
         afternoon_volume_ratio=afternoon_ratio,
         limitations=tuple(limitations),
