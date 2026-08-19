@@ -220,10 +220,19 @@ def build_trade_plan(
 
     try:
         # 1. 生成价格证据层
+        from naked_k_price_evidence import PriceActionEvidenceConfig
+
+        price_config = PriceActionEvidenceConfig()
+        decision_time = pd.Timestamp.now()
+
         price_action_layer = naked_k_price_evidence.build_price_action_layer(
-            daily_df=daily,
+            daily,
             zones=price_zones.get("zones", []),
             liquidity_pools=price_zones.get("liquidity_pools", []),
+            market_structure=market_structure,
+            patterns=daily_patterns,
+            decision_time=decision_time,
+            config=price_config,
         )
 
         if price_action_layer.availability == "available":
