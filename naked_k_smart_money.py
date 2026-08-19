@@ -626,12 +626,20 @@ def analyze_smart_money_signals(
     signals_3m = [s for s in signals if pd.Timestamp(s["date"]) >= three_months_ago]
     signal_dates_3m = sorted(list(set([s["date"] for s in signals_3m])), reverse=True)
 
-    # 使用所有信号计算概率
+    # 只用近30天的信号计算概率，避免超老信号污染判断
+    # 但保留所有信号用于显示和历史统计
+    thirty_days_ago = current_date - pd.Timedelta(days=30)
+    recent_signals = [s for s in signals if pd.Timestamp(s["date"]) >= thirty_days_ago]
+    
+    # 标记过期信号（用于显示，不影响概率）
+    for s in signals:
+        s["stale"] = pd.Timestamp(s["date"]) < thirty_days_ago
+
     # 需要区分多周期需求共振（bullish）和多周期供给共振（bearish）
     bullish_signals = []
     bearish_signals = []
 
-    for s in signals:
+    for s in recent_signals:  # 只用近期信号
         category = s["category"]
         label = s.get("label", "")
 
@@ -645,6 +653,18 @@ def analyze_smart_money_signals(
                 bullish_signals.append(s)
             elif "供给" in label or "bearish" in label.lower():
                 bearish_signals.append(s)
+
+    # 如果没有近期信号，返回中性（不用超老信号做方向判断）
+    if not recent_signals:
+        return {
+            "enabled": True,
+            "signals": signals,
+            "signal_count_3m": len(signal_dates_3m),
+            "signal_dates_3m": signal_dates_3m[:10],
+            "overall_assessment": "无明显主力信号（所有信号已过期超30天）",
+            "direction": "neutral",
+            "probability": 0,
+        }
 
     bullish_confidence = sum(s["confidence"] for s in bullish_signals) / len(bullish_signals) if bullish_signals else 0
     bearish_confidence = sum(s["confidence"] for s in bearish_signals) / len(bearish_signals) if bearish_signals else 0

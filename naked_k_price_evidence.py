@@ -649,21 +649,36 @@ def build_price_action_layer(
     for item in collected:
         lineage.extend(item.lineage_ids)
 
+    # 只用近30天的证据做方向判断，避免超老信号污染
+    # 保留所有证据用于审计和显示
+    thirty_days_ago = decision_time - pd.Timedelta(days=30)
+    recent_evidences = [e for e in collected if e.signal_at >= thirty_days_ago]
+    
+    # 如果没有近期证据，降为 NEUTRAL 但保留所有历史证据
+    if not recent_evidences:
+        direction_value = Direction.NEUTRAL.value
+        lifecycle_value = Lifecycle.EXPIRED.value
+        limitations_value = ("all_signals_expired_over_30d",)
+    else:
+        direction_value = _layer_direction(recent_evidences)
+        lifecycle_value = _layer_lifecycle(recent_evidences)
+        limitations_value = ()
+
     return LayerResult(
         schema_version=SCHEMA_VERSION,
         layer_id="price_action",
         availability="available",
-        direction=_layer_direction(collected),
-        lifecycle=_layer_lifecycle(collected),
+        direction=direction_value,
+        lifecycle=lifecycle_value,
         quality="VALID",
         as_of=decision_time,
         valid_from=min(item.available_at for item in collected),
         expires_at=None,
         target_session=str(clean.index[-1].date()),
-        evidence=tuple(collected),
+        evidence=tuple(collected),  # 保留所有证据
         evidence_ids=tuple(item.evidence_id for item in collected),
         lineage_ids=tuple(dict.fromkeys(lineage)),
-        limitations=(),
+        limitations=limitations_value,
     )
 
 

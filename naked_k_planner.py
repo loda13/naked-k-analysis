@@ -324,9 +324,25 @@ def build_trade_plan(
                 "confirmation_criteria": fusion.confirmation_criteria,
                 "invalidation_criteria": fusion.invalidation_criteria,
             }
-    except Exception:
-        # 任何错误都静默降级，不影响主流程
-        pass
+    except Exception as e:
+        # 记录失败但不影响主流程
+        try:
+            import naked_k_audit
+            from pathlib import Path
+            audit_path = Path("reports/naked_k_audit.jsonl")
+            event = naked_k_audit.build_audit_event(
+                "dual_evidence_error",
+                payload={
+                    "ticker": ticker,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                },
+                level="warning"
+            )
+            naked_k_audit.append_audit_event(audit_path, event)
+        except Exception:
+            # 如果 audit 本身失败，也不影响主流程
+            pass
 
     review = naked_k_trade.review_previous_call(previous, daily_bar, float(daily_bar["Close"]))
     rationale_parts = [
