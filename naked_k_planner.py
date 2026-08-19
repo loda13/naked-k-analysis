@@ -219,17 +219,21 @@ def build_trade_plan(
     trade_flow_evidences_list = []
 
     try:
-        # 1. 生成价格证据
-        current_price = float(daily_bar["Close"])
-        price_evidences = naked_k_price_evidence.generate_price_evidences(
+        # 1. 生成价格证据层
+        price_action_layer = naked_k_price_evidence.build_price_action_layer(
             daily_df=daily,
             zones=price_zones.get("zones", []),
             liquidity_pools=price_zones.get("liquidity_pools", []),
-            current_price=current_price,
         )
-        price_evidences_list = [naked_k_price_evidence.evidence_to_dict(e) for e in price_evidences]
+
+        if price_action_layer.availability == "available":
+            price_evidences_list = [naked_k_price_evidence.evidence_to_dict(e) for e in price_action_layer.evidence]
+            price_layer = price_action_layer
+        else:
+            price_layer = None
 
         # 2. 获取逐笔成交数据（仅港股）
+        trade_flow_layer = None
         if ticker.endswith('.HK'):
             try:
                 import naked_k_flow_eastmoney
@@ -253,81 +257,32 @@ def build_trade_plan(
                         }
                         for e in trade_flow_evidences
                     ]
+
+                    if trade_flow_evidences:
+                        # 构建 trade_flow layer
+                        from naked_k_trade_flow_evidence import TradeFlowEvidence
+                        tf_state, tf_direction = naked_k_smart_money_fusion._compute_layer_state(
+                            trade_flow_evidences,
+                            quality=trade_flow_evidences[0].quality,
+                            limitations=trade_flow_evidences[0].limitations,
+                        )
+                        trade_flow_layer = naked_k_smart_money_fusion.LayerResult(
+                            layer="trade_flow",
+                            state=tf_state,
+                            direction=tf_direction,
+                            evidences=tuple(trade_flow_evidences),
+                            quality=trade_flow_evidences[0].quality,
+                            limitations=trade_flow_evidences[0].limitations,
+                            decision_time=datetime.now(timezone.utc),
+                            target_session=daily.index[-1].strftime('%Y-%m-%d'),
+                            valid_from=datetime.now(timezone.utc),
+                            valid_until=datetime.now(timezone.utc) + timedelta(days=3),
+                        )
             except (ImportError, Exception):
                 # 静默降级：trade_flow 不可用时不影响主流程
                 pass
 
-        # 3. 构建层结果
-        price_layer = None
-        trade_flow_layer = None
-
-        if price_evidences:
-            price_state, price_direction = naked_k_smart_money_fusion._compute_layer_state(
-                price_evidences,
-                quality="VALID",
-                limitations=(),
-            )
-            price_layer = naked_k_smart_money_fusion.LayerResult(
-                layer="price_action",
-                state=price_state,
-                direction=price_direction,
-                evidences=tuple(price_evidences),
-                quality="VALID",
-                limitations=(),
-                decision_time=datetime.now(timezone.utc),
-                target_session=daily.index[-1].strftime('%Y-%m-%d'),
-                valid_from=datetime.now(timezone.utc),
-                valid_until=datetime.now(timezone.utc) + timedelta(days=10),
-            )
-
-        if trade_flow_evidences_list:
-            from naked_k_trade_flow_evidence import TradeFlowEvidence
-            tf_evidences = [
-                TradeFlowEvidence(
-                    evidence_id=e["evidence_id"],
-                    schema_version="evidence.v1",
-                    family="trade_tape",
-                    kind=e["kind"],
-                    direction=e["direction"],
-                    observed_at=datetime.now(timezone.utc),
-                    available_at=datetime.now(timezone.utc),
-                    expires_at=None,
-                    target_session=daily.index[-1].strftime('%Y-%m-%d'),
-                    lifecycle=e["lifecycle"],
-                    quality=e["quality"],
-                    availability="available",
-                    lineage_ids=(),
-                    dependency_group="trade_tape",
-                    inputs=e["inputs"],
-                    thresholds=e["thresholds"],
-                    limitations=tuple(e["limitations"]),
-                    confirmation=None,
-                    invalidation=None,
-                    tradable_at=datetime.now(timezone.utc),
-                    validation_status="UNVALIDATED",
-                )
-                for e in trade_flow_evidences_list
-            ]
-
-            tf_state, tf_direction = naked_k_smart_money_fusion._compute_layer_state(
-                tf_evidences,
-                quality=trade_flow_evidences_list[0]["quality"] if trade_flow_evidences_list else "UNAVAILABLE",
-                limitations=tuple(trade_flow_evidences_list[0]["limitations"]) if trade_flow_evidences_list else (),
-            )
-            trade_flow_layer = naked_k_smart_money_fusion.LayerResult(
-                layer="trade_flow",
-                state=tf_state,
-                direction=tf_direction,
-                evidences=tuple(tf_evidences),
-                quality=trade_flow_evidences_list[0]["quality"] if trade_flow_evidences_list else "UNAVAILABLE",
-                limitations=tuple(trade_flow_evidences_list[0]["limitations"]) if trade_flow_evidences_list else (),
-                decision_time=datetime.now(timezone.utc),
-                target_session=daily.index[-1].strftime('%Y-%m-%d'),
-                valid_from=datetime.now(timezone.utc),
-                valid_until=datetime.now(timezone.utc) + timedelta(days=3),
-            )
-
-        # 4. 融合
+        # 3. 融合
         if price_layer or trade_flow_layer:
             fusion = naked_k_smart_money_fusion.fuse_dual_evidence(trade_flow_layer, price_layer)
             dual_evidence_fusion = {
