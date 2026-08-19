@@ -528,11 +528,10 @@ def analyze_smart_money_signals(
         price_cluster_threshold=price_cluster_threshold
     )
 
-    # 过滤过期信号，但保留用于审计
+    # 保留所有信号，不标记过期
     for acc_signal in accumulation_signals:
         signal_date = pd.Timestamp(acc_signal["date"])
         days_old = (current_date - signal_date).days
-        is_stale = days_old > SIGNAL_MAX_AGE_DAYS
 
         signals.append(
             {
@@ -543,7 +542,6 @@ def analyze_smart_money_signals(
                 "thesis": acc_signal["thesis"],
                 "date": acc_signal["date"],
                 "days_old": days_old,
-                "stale": is_stale,
                 "details": f"成交量放大{acc_signal['volume_ratio']}倍",
             }
         )
@@ -560,7 +558,6 @@ def analyze_smart_money_signals(
                 "confidence": exhaustion["confidence_score"],
                 "thesis": exhaustion["thesis"],
                 "days_old": 0,
-                "stale": False,
                 "details": f"成交量萎缩至{exhaustion['components']['volume_ratio']*100:.0f}%",
             }
         )
@@ -576,7 +573,6 @@ def analyze_smart_money_signals(
                 "confidence": buying_exhaustion["confidence_score"],
                 "thesis": buying_exhaustion["thesis"],
                 "days_old": 0,
-                "stale": False,
                 "details": f"成交量萎缩至{buying_exhaustion['components']['volume_ratio']*100:.0f}%",
             }
         )
@@ -620,34 +616,22 @@ def analyze_smart_money_signals(
         return {
             "enabled": True,
             "signals": [],
-            "fresh_signals": [],
-            "stale_signals": [],
+            "signal_count_3m": 0,
+            "signal_dates_3m": [],
             "overall_assessment": "无明显主力信号"
         }
 
-    # 分离新鲜信号和过期信号
-    fresh_signals = [s for s in signals if not s.get("stale", False)]
-    stale_signals = [s for s in signals if s.get("stale", False)]
+    # 计算近3个月的信号统计
+    three_months_ago = current_date - pd.Timedelta(days=90)
+    signals_3m = [s for s in signals if pd.Timestamp(s["date"]) >= three_months_ago]
+    signal_dates_3m = sorted(list(set([s["date"] for s in signals_3m])), reverse=True)
 
-    # 只用新鲜信号计算概率
-    if not fresh_signals:
-        return {
-            "enabled": True,
-            "signals": signals,  # 保留所有信号用于审计
-            "fresh_signals": [],  # 添加
-            "stale_signals": stale_signals,  # 添加
-            "overall_assessment": "无明显主力信号（所有信号已过期）",
-            "direction": "neutral",
-            "probability": 0,
-            "stale": True,
-        }
-
-    # 计算综合概率（只使用新鲜信号）
+    # 使用所有信号计算概率
     # 需要区分多周期需求共振（bullish）和多周期供给共振（bearish）
     bullish_signals = []
     bearish_signals = []
 
-    for s in fresh_signals:
+    for s in signals:
         category = s["category"]
         label = s.get("label", "")
 
@@ -676,11 +660,10 @@ def analyze_smart_money_signals(
 
     return {
         "enabled": True,
-        "signals": signals,  # 返回所有信号（包括过期的）
-        "fresh_signals": fresh_signals,  # 新增：只包含新鲜信号
-        "stale_signals": stale_signals,  # 新增：只包含过期信号
+        "signals": signals,
+        "signal_count_3m": len(signal_dates_3m),
+        "signal_dates_3m": signal_dates_3m[:10],  # 最多显示10个日期
         "overall_assessment": assessment,
         "direction": direction,
         "probability": probability,
-        "stale": False,
     }

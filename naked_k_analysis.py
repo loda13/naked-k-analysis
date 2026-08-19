@@ -1406,17 +1406,19 @@ def run_analysis(
         # 审计主力资金信号
         smart_money = report.smart_money_signals
         if smart_money and smart_money.get("enabled"):
-            fresh_signals = smart_money.get("fresh_signals", [])
-            stale_signals = smart_money.get("stale_signals", [])
+            signals = smart_money.get("signals", [])
+            signal_count_3m = smart_money.get("signal_count_3m", 0)
+            signal_dates_3m = smart_money.get("signal_dates_3m", [])
             audit.info(
                 "smart_money_analyzed",
                 ticker=ticker,
                 name=name,
                 direction=smart_money.get("direction"),
                 probability=smart_money.get("probability"),
-                fresh_signal_count=len(fresh_signals),
-                stale_signal_count=len(stale_signals),
-                signal_categories=[s.get("category") for s in fresh_signals],
+                signal_count=len(signals),
+                signal_count_3m=signal_count_3m,
+                signal_dates_3m=signal_dates_3m,
+                signal_categories=[s.get("category") for s in signals],
                 assessment=smart_money.get("overall_assessment"),
             )
 

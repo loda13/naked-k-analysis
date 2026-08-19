@@ -388,22 +388,30 @@ def _format_smart_money_summary(signals: dict[str, Any]) -> str:
     if not signals.get("enabled"):
         return "未启用"
 
-    # 优先使用 fresh_signals，避免显示过期信号标签
-    fresh_signals = signals.get("fresh_signals")
-    if fresh_signals is None:
-        # 向后兼容：手动过滤
-        all_signals = signals.get("signals", [])
-        fresh_signals = [s for s in all_signals if not s.get("stale", False)]
-
-    if not fresh_signals:
+    all_signals = signals.get("signals", [])
+    if not all_signals:
         return signals.get("overall_assessment", "无明显主力信号")
 
-    # 提取最高置信度的新鲜信号
+    # 显示最高置信度的信号和3个月统计
     top_signals = sorted(
-        fresh_signals,
+        all_signals,
         key=lambda s: s.get("confidence", 0),
         reverse=True
     )[:2]  # 只显示前2个
 
-    signal_labels = [s["label"] for s in top_signals]
-    return f"{signals.get('overall_assessment', '')} ({', '.join(signal_labels)})"
+    signal_labels = []
+    for s in top_signals:
+        days_old = s.get("days_old", 0)
+        if days_old == 0:
+            signal_labels.append(s["label"])
+        else:
+            signal_labels.append(f"{s['label']}({days_old}天前)")
+
+    # 添加3个月统计
+    signal_count_3m = signals.get("signal_count_3m", 0)
+    if signal_count_3m > 0:
+        summary = f"{signals.get('overall_assessment', '')} ({', '.join(signal_labels)}) | 近3月{signal_count_3m}次"
+    else:
+        summary = f"{signals.get('overall_assessment', '')} ({', '.join(signal_labels)})"
+
+    return summary
