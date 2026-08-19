@@ -4,6 +4,21 @@ naked_k_flow_eastmoney.py
 东方财富逐笔成交数据采集 provider - 港股专用
 
 符合 docs/superpowers/specs/2026-08-17-smart-money-dual-evidence-design.md §5.2
+
+⚠️ DEPRECATED (2026-08-19)
+--------------------------
+`push2.eastmoney.com/api/qt/stock/details/get` 已对本机停止响应：DNS 正常、TCP 443
+可连、TLS 1.3 握手完整成功，请求发出后服务端直接关闭连接（curl HTTP:000）。
+已排除的可能：裸请求 / UA / UA+Referer / 完整浏览器头 / 带 ut 参数 / 明文 HTTP 六种
+组合全部失败；同域 emweb.securities.eastmoney.com 与东财 search API 均返回 200，
+故非网络或 DNS 问题，判定为该接口加了源 IP 或签名校验。
+
+主分析流程已改用 `naked_k_intraday_flow`（分钟线聚合代理）。本模块保留仅为：
+1. 接口若恢复可直接复用；
+2. 解析逻辑（_parse_eastmoney_response）本身仍受测试覆盖且正确。
+
+不要在 planner 里重新接入本模块，除非先用真实请求验证 fetch_trade_flow() 返回
+status == "OK"。
 """
 
 from __future__ import annotations
@@ -260,7 +275,10 @@ def _parse_eastmoney_response(
         timezone="Asia/Hong_Kong",
         provider="eastmoney",
         source_url=EASTMONEY_TRADE_FLOW_URL,
-        request_fingerprint="",  # TODO: 实现请求指纹
+        # 请求指纹留空：本 provider 已 deprecated（见模块 docstring），接口对本机
+        # 不再响应，指纹无从校验。若接口恢复需实现，应对 (secid, params, 日期) 做
+        # 稳定哈希，不要把 retrieved_at 掺进去，否则同一份数据每次指纹都不同。
+        request_fingerprint="",
         status="OK" if trade_count > 0 else "UNAVAILABLE",
         retrieved_at=retrieved_at,
         coverage_start=coverage_start,

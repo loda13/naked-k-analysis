@@ -20,8 +20,16 @@ def _json_safe(value: Any) -> Any:
         try:
             return value.item()
         except Exception:
-            pass
-    return value
+            # numpy/pandas scalar that refuses .item(): fall back to a string so
+            # json.dumps() can never fail on it. Returning the raw object here
+            # (the previous behaviour) pushed the TypeError into the caller's
+            # json.dumps and silently dropped the whole audit line.
+            return str(value)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    # Anything else (Decimal, datetime.date, custom objects) is stringified
+    # rather than risking a serialization failure in the audit writer.
+    return str(value)
 
 
 def build_audit_event(

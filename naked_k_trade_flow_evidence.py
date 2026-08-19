@@ -4,6 +4,19 @@ naked_k_trade_flow_evidence.py
 逐笔成交证据生成器 - 将 TradeFlowSnapshot 转换为智能资金证据
 
 符合 docs/superpowers/specs/2026-08-17-smart-money-dual-evidence-design.md §7
+
+⚠️ DEPRECATED (2026-08-19)
+--------------------------
+本模块的唯一数据来源 `naked_k_flow_eastmoney` 已 deprecated（接口对本机停止响应，
+详见该模块 docstring），因此当前没有任何调用方能拿到 status == "OK" 的
+TradeFlowSnapshot，本模块在主流程中不再被调用。
+
+主流程改用 `naked_k_intraday_flow`（分钟线聚合）。注意分钟线与日线 Volume 同源，
+按设计文档 §8.5 不构成独立双源，所以它**故意不生成** trade_flow evidence layer，
+dual-evidence 目前是 price_action 单层。
+
+阈值与分位数逻辑本身仍受 tests/test_naked_k_trade_flow_evidence.py 覆盖，
+接口恢复后可直接复用。
 """
 
 from __future__ import annotations
@@ -291,7 +304,11 @@ def generate_trade_flow_evidence(
             direction="bullish",
             observed_at=observed_at,
             available_at=available_at,
-            expires_at=None,  # TODO: 三个交易日后过期
+            # expires_at 留 None：设计文档 §9 规定 trade-flow 证据有效期为「次交易日
+            # 开盘至第三个交易日收盘」，需要交易日历而非自然日（+3 days 会把周末算进
+            # 去）。本模块已 deprecated，接口恢复时再接交易日历实现。当前 fusion 层用
+            # LayerResult.valid_until 兜底，不依赖单条证据的 expires_at。
+            expires_at=None,
             target_session=snapshot.session_date,
             lifecycle="confirmed" if snapshot.session_complete else "pending_confirmation",
             quality=quality,

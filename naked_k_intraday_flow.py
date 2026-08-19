@@ -188,15 +188,6 @@ def build_intraday_flow(
     )
 
 
-__all__ = [
-    "IntradayFlowSnapshot",
-    "build_intraday_flow",
-    "fetch_intraday_bars",
-    "collect_intraday_flow",
-    "SCHEMA_VERSION",
-]
-
-
 def fetch_intraday_bars(ticker: str) -> pd.DataFrame | None:
     """
     取当日分钟线。
@@ -226,3 +217,12 @@ def collect_intraday_flow(ticker: str, session_date: str | None = None) -> Intra
         session_date = str(bars.index[-1].date()) if isinstance(bars.index, pd.DatetimeIndex) else ""
 
     return build_intraday_flow(ticker, session_date, bars)
+
+
+__all__ = [
+    "IntradayFlowSnapshot",
+    "build_intraday_flow",
+    "fetch_intraday_bars",
+    "collect_intraday_flow",
+    "SCHEMA_VERSION",
+]
