@@ -21,9 +21,23 @@
   },
   "smart_money": {
     "enabled": true,
-    "volume_anomaly_threshold": 2.0,
-    "sweep_recovery_threshold": 0.9,
-    "exhaustion_volume_ratio": 0.8,
-    "confluence_weight": 1.2
+    "mode": "dual_evidence",
+    "price_action": {
+      "volume_anomaly_threshold": 1.5,
+      "sweep_close_position_threshold": 0.65,
+      "exhaustion_volume_ratio": 0.8
+    },
+    "trade_flow": {
+      "enabled": true,
+      "provider": "eastmoney_hk",
+      "timeout_seconds": 5.0,
+      "max_retries": 1,
+      "persist_raw": true,
+      "require_session_complete": true
+    },
+    "short_selling": {
+      "enabled": true,
+      "provider": "hkex"
+    }
   }
 }

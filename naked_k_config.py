@@ -34,13 +34,40 @@ class PortfolioConfig:
 
 
 @dataclass(frozen=True)
-class SmartMoneyConfig:
-    """主力行为识别配置"""
-    enabled: bool = True
-    volume_anomaly_threshold: float = 2.0
-    sweep_recovery_threshold: float = 0.9
+class PriceActionEvidenceConfig:
+    """Price action evidence detection thresholds."""
+    volume_anomaly_threshold: float = 1.5
+    sweep_close_position_threshold: float = 0.65
     exhaustion_volume_ratio: float = 0.8
-    confluence_weight: float = 1.2
+
+
+@dataclass(frozen=True)
+class TradeFlowConfig:
+    """Trade flow provider configuration."""
+    enabled: bool = True
+    provider: str = "eastmoney_hk"
+    timeout_seconds: float = 5.0
+    max_retries: int = 1
+    persist_raw: bool = True
+    require_session_complete: bool = True
+
+
+@dataclass(frozen=True)
+class ShortSellingConfig:
+    """Short selling provider configuration."""
+    enabled: bool = True
+    provider: str = "hkex"
+
+
+@dataclass(frozen=True)
+class SmartMoneyConfig:
+    """Dual-evidence smart money configuration."""
+    enabled: bool = True
+    mode: str = "dual_evidence"
+    price_action: PriceActionEvidenceConfig = field(default_factory=PriceActionEvidenceConfig)
+    trade_flow: TradeFlowConfig = field(default_factory=TradeFlowConfig)
+    short_selling: ShortSellingConfig = field(default_factory=ShortSellingConfig)
+    deprecation_warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -58,6 +85,8 @@ def _merge_action_caps(overrides: dict[str, Any] | None) -> dict[str, float]:
 
 
 def build_trading_config(payload: dict[str, Any] | None = None) -> TradingConfig:
+    import warnings
+
     data = payload or {}
     risk_data = dict(data.get("risk") or {})
     portfolio_data = dict(data.get("portfolio") or {})
@@ -86,19 +115,93 @@ def build_trading_config(payload: dict[str, Any] | None = None) -> TradingConfig
             portfolio_data.get("max_total_account_risk_pct", PortfolioConfig.max_total_account_risk_pct)
         ),
     )
-    smart_money = SmartMoneyConfig(
-        enabled=bool(smart_money_data.get("enabled", SmartMoneyConfig.enabled)),
+
+    # Build smart money config with legacy field migration
+    deprecation_warnings_list = []
+
+    # Check for legacy fields
+    legacy_volume = smart_money_data.get("volume_anomaly_threshold")
+    legacy_sweep = smart_money_data.get("sweep_recovery_threshold")
+    legacy_exhaustion = smart_money_data.get("exhaustion_volume_ratio")
+    legacy_confluence = smart_money_data.get("confluence_weight")
+
+    has_legacy = any([legacy_volume is not None, legacy_sweep is not None,
+                      legacy_exhaustion is not None, legacy_confluence is not None])
+
+    if has_legacy:
+        deprecation_warnings_list.append("LEGACY_FIELDS")
+        warnings.warn(
+            "Legacy smart_money fields (volume_anomaly_threshold, sweep_recovery_threshold, "
+            "exhaustion_volume_ratio, confluence_weight) are deprecated. "
+            "Use nested price_action/trade_flow/short_selling configuration.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
+    # Extract nested configs or use legacy mapping
+    price_action_data = smart_money_data.get("price_action", {})
+    if not price_action_data and has_legacy:
+        # Map legacy fields to price_action
+        price_action_data = {}
+        if legacy_volume is not None:
+            price_action_data["volume_anomaly_threshold"] = legacy_volume
+        if legacy_sweep is not None:
+            price_action_data["sweep_close_position_threshold"] = legacy_sweep
+        if legacy_exhaustion is not None:
+            price_action_data["exhaustion_volume_ratio"] = legacy_exhaustion
+
+    price_action = PriceActionEvidenceConfig(
         volume_anomaly_threshold=float(
-            smart_money_data.get("volume_anomaly_threshold", SmartMoneyConfig.volume_anomaly_threshold)
+            price_action_data.get("volume_anomaly_threshold", PriceActionEvidenceConfig.volume_anomaly_threshold)
         ),
-        sweep_recovery_threshold=float(
-            smart_money_data.get("sweep_recovery_threshold", SmartMoneyConfig.sweep_recovery_threshold)
+        sweep_close_position_threshold=float(
+            price_action_data.get("sweep_close_position_threshold", PriceActionEvidenceConfig.sweep_close_position_threshold)
         ),
         exhaustion_volume_ratio=float(
-            smart_money_data.get("exhaustion_volume_ratio", SmartMoneyConfig.exhaustion_volume_ratio)
+            price_action_data.get("exhaustion_volume_ratio", PriceActionEvidenceConfig.exhaustion_volume_ratio)
         ),
-        confluence_weight=float(smart_money_data.get("confluence_weight", SmartMoneyConfig.confluence_weight)),
     )
+
+    trade_flow_data = smart_money_data.get("trade_flow", {})
+    trade_flow_enabled = bool(trade_flow_data.get("enabled", TradeFlowConfig.enabled))
+    trade_flow_provider = str(trade_flow_data.get("provider", TradeFlowConfig.provider))
+    trade_flow_timeout = float(trade_flow_data.get("timeout_seconds", TradeFlowConfig.timeout_seconds))
+    trade_flow_retries = int(trade_flow_data.get("max_retries", TradeFlowConfig.max_retries))
+
+    # Validate
+    if trade_flow_timeout <= 0:
+        raise ValueError(f"trade_flow.timeout_seconds must be positive, got {trade_flow_timeout}")
+    if trade_flow_retries < 0:
+        raise ValueError(f"trade_flow.max_retries must be non-negative, got {trade_flow_retries}")
+
+    trade_flow = TradeFlowConfig(
+        enabled=trade_flow_enabled,
+        provider=trade_flow_provider,
+        timeout_seconds=trade_flow_timeout,
+        max_retries=trade_flow_retries,
+        persist_raw=bool(trade_flow_data.get("persist_raw", TradeFlowConfig.persist_raw)),
+        require_session_complete=bool(trade_flow_data.get("require_session_complete", TradeFlowConfig.require_session_complete)),
+    )
+
+    short_selling_data = smart_money_data.get("short_selling", {})
+    short_selling = ShortSellingConfig(
+        enabled=bool(short_selling_data.get("enabled", ShortSellingConfig.enabled)),
+        provider=str(short_selling_data.get("provider", ShortSellingConfig.provider)),
+    )
+
+    mode = str(smart_money_data.get("mode", SmartMoneyConfig.mode))
+    if mode not in ("dual_evidence",):
+        raise ValueError(f"Invalid smart_money.mode: {mode}. Expected 'dual_evidence'.")
+
+    smart_money = SmartMoneyConfig(
+        enabled=bool(smart_money_data.get("enabled", SmartMoneyConfig.enabled)),
+        mode=mode,
+        price_action=price_action,
+        trade_flow=trade_flow,
+        short_selling=short_selling,
+        deprecation_warnings=tuple(deprecation_warnings_list),
+    )
+
     return TradingConfig(risk=risk, portfolio=portfolio, smart_money=smart_money)
 
 
