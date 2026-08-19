@@ -251,10 +251,10 @@ def build_trade_plan(
                 evidences=tuple(price_action_layer.evidence),
                 quality=price_action_layer.quality,
                 limitations=price_action_layer.limitations,
-                decision_time=price_action_layer.decision_time,
+                decision_time=price_action_layer.as_of,
                 target_session=daily.index[-1].strftime('%Y-%m-%d'),
-                valid_from=price_action_layer.decision_time,
-                valid_until=price_action_layer.valid_until,
+                valid_from=price_action_layer.valid_from,
+                valid_until=price_action_layer.expires_at,
             )
         else:
             price_layer = None
