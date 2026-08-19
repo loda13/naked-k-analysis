@@ -27,6 +27,8 @@ class NakedKZoneTests(unittest.TestCase):
         self.assertEqual(demand["strength"], "strong")
         self.assertLessEqual(demand["lower"], 95.0)
         self.assertGreaterEqual(demand["upper"], 96.0)
+        self.assertIn("zone_id", demand, "需求区必须有稳定的 zone_id")
+        self.assertTrue(demand["zone_id"].startswith("zone-"), "zone_id 应以 zone- 开头")
 
     def test_clusters_repeated_highs_into_supply_zone_and_buy_side_liquidity(self):
         frame = pd.DataFrame(
@@ -48,7 +50,9 @@ class NakedKZoneTests(unittest.TestCase):
         self.assertEqual(supply["strength"], "strong")
         self.assertGreaterEqual(supply["lower"], 110.8)
         self.assertLessEqual(supply["upper"], 111.4)
+        self.assertIn("zone_id", supply, "供给区必须有稳定的 zone_id")
         self.assertEqual(zones["liquidity_pools"][0]["kind"], "buy_side_liquidity")
+        self.assertIn("pool_id", zones["liquidity_pools"][0], "流动性池必须有稳定的 pool_id")
 
     def test_detects_high_volume_node_zone(self):
         frame = pd.DataFrame(

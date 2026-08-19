@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -66,12 +67,28 @@ def _find_candidates(clean: pd.DataFrame, swing_window: int) -> list[ZoneCandida
     return candidates
 
 
+def _generate_zone_id(kind: str, lower: float, upper: float, member_positions: list[int]) -> str:
+    """生成稳定的 zone_id，基于价格范围和成员位置"""
+    positions_str = ",".join(str(p) for p in sorted(member_positions))
+    content = f"{kind}:{lower:.2f}:{upper:.2f}:{positions_str}"
+    hash_digest = hashlib.sha256(content.encode()).hexdigest()[:12]
+    return f"zone-{hash_digest}"
+
+
+def _generate_pool_id(kind: str, midpoint: float) -> str:
+    """生成稳定的 pool_id，基于类型和中点价格"""
+    content = f"{kind}:{midpoint:.2f}"
+    hash_digest = hashlib.sha256(content.encode()).hexdigest()[:12]
+    return f"pool-{hash_digest}"
+
+
 def _cluster_candidates(
     candidates: list[ZoneCandidate],
     kind: str,
     close: float,
     tolerance: float,
     average_volume: float,
+    clean: pd.DataFrame,
 ) -> list[dict[str, Any]]:
     kind_candidates = sorted([candidate for candidate in candidates if candidate.kind == kind], key=lambda item: item.price)
     clusters: list[list[ZoneCandidate]] = []
@@ -88,12 +105,15 @@ def _cluster_candidates(
     zones: list[dict[str, Any]] = []
     for cluster in clusters:
         prices = [item.price for item in cluster]
+        positions = [item.position for item in cluster]
         total_volume = sum(item.volume for item in cluster)
         volume_ratio = total_volume / (average_volume * len(cluster)) if average_volume > 0 else 1.0
         lower = round(min(prices), 2)
         upper = round(max(prices), 2)
         midpoint = round(sum(prices) / len(prices), 2)
         side = "below" if midpoint < close else "above"
+        zone_id = _generate_zone_id(kind, lower, upper, positions)
+        member_dates = [str(clean.index[pos].date()) for pos in positions]
         zones.append(
             {
                 "kind": kind,
@@ -106,6 +126,8 @@ def _cluster_candidates(
                 "side": side,
                 "source": "swing_cluster",
                 "volume_ratio": round(volume_ratio, 2),
+                "zone_id": zone_id,
+                "member_dates": member_dates,
             }
         )
     return zones
@@ -125,7 +147,8 @@ def _build_liquidity_pools(zones: list[dict[str, Any]], close: float) -> list[di
         else:
             continue
         payload = dict(zone)
-        payload.update({"kind": kind, "label": label, "source": "equal_high_low_cluster"})
+        pool_id = _generate_pool_id(kind, float(zone["midpoint"]))
+        payload.update({"kind": kind, "label": label, "source": "equal_high_low_cluster", "pool_id": pool_id})
         pools.append(payload)
     return sorted(
         pools,
@@ -315,8 +338,8 @@ def detect_price_zones(
     tolerance = _cluster_tolerance(clean, latest_close)
     average_volume = float(clean["Volume"].astype(float).mean())
     candidates = _find_candidates(clean, swing_window=swing_window)
-    support_zones = _cluster_candidates(candidates, "demand", latest_close, tolerance, average_volume)
-    resistance_zones = _cluster_candidates(candidates, "supply", latest_close, tolerance, average_volume)
+    support_zones = _cluster_candidates(candidates, "demand", latest_close, tolerance, average_volume, clean)
+    resistance_zones = _cluster_candidates(candidates, "supply", latest_close, tolerance, average_volume, clean)
     zones = sorted(support_zones + resistance_zones, key=lambda zone: abs(float(zone["midpoint"]) - latest_close))
     liquidity_pools = _build_liquidity_pools(zones, latest_close)
     volume_profile = _volume_profile(clean, bins)
