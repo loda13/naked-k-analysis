@@ -22,7 +22,7 @@ import pandas as pd
 
 
 # 信号有效期（天数）
-SIGNAL_MAX_AGE_DAYS = 10
+SIGNAL_MAX_AGE_DAYS = 20
 
 
 def _clean_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
@@ -512,7 +512,8 @@ def analyze_smart_money_signals(
         return {"enabled": False, "signals": []}
 
     # 使用配置中的阈值，如果有的话
-    volume_threshold = getattr(config, 'volume_anomaly_threshold', 2.0) if config else 2.0
+    volume_threshold = getattr(config, 'volume_anomaly_threshold', 1.5) if config else 1.5
+    price_cluster_threshold = getattr(config, 'price_cluster_threshold', 0.03) if config else 0.03
     sweep_threshold = getattr(config, 'sweep_recovery_threshold', 0.9) if config else 0.9
     exhaustion_ratio = getattr(config, 'exhaustion_volume_ratio', 0.8) if config else 0.8
     confluence_weight = getattr(config, 'confluence_weight', 1.2) if config else 1.2
@@ -523,7 +524,8 @@ def analyze_smart_money_signals(
     # 1. 吸筹成交量模式
     accumulation_signals = detect_accumulation_volume(
         daily_df,
-        volume_threshold=volume_threshold
+        volume_threshold=volume_threshold,
+        price_cluster_threshold=price_cluster_threshold
     )
 
     # 过滤过期信号，但保留用于审计
