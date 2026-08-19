@@ -848,11 +848,23 @@ def format_report(
                     sections.append(f"- {ev['kind']} ({ev['direction']}, {ev['lifecycle']})")
                 sections.append("")
 
-            # 成交证据层
+            # 分钟线资金流快照（替代逐笔成交）
             if report.trade_flow_evidences:
-                sections.append("**成交证据层** (仅港股):")
+                sections.append("**分钟线资金流快照** (港股):")
                 for ev in report.trade_flow_evidences:
-                    sections.append(f"- {ev['kind']} ({ev['direction']}, {ev['lifecycle']}, {ev['quality']})")
+                    if "snapshot" in ev:
+                        snap = ev["snapshot"]
+                        sections.extend([
+                            f"- 状态: {snap['status']} / 质量: {snap['quality']} / {snap['bar_count']} 根分钟线",
+                            f"- VWAP {snap['vwap']:.2f} / 收盘 {snap['last_close']:.2f} (偏离 {snap['close_vs_vwap']:+.2%})",
+                            f"- 收阳分钟成交占比 {snap['uptick_volume_ratio']:.1%}",
+                            f"- 大量分钟(>Q3)成交占比 {snap['large_bar_volume_ratio']:.1%}，其中收阳 {snap['large_bar_uptick_ratio']:.1%}",
+                            f"- 早盘/午盘 {snap['morning_volume_ratio']:.1%} / {snap['afternoon_volume_ratio']:.1%}",
+                            f"- 限制: {', '.join(snap.get('limitations', [])[:2])}",
+                        ])
+                    else:
+                        # 旧格式兼容
+                        sections.append(f"- {ev['kind']} ({ev.get('direction','?')}, {ev.get('lifecycle','?')}, {ev['quality']})")
                 sections.append("")
 
             sections.extend([

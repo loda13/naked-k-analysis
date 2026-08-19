@@ -259,54 +259,28 @@ def build_trade_plan(
         else:
             price_layer = None
 
-        # 2. 获取逐笔成交数据（仅港股）
+        # 2. 获取分钟线聚合资金流（替代失效的东财逐笔接口）
         trade_flow_layer = None
+        intraday_snapshot = None
         if ticker.endswith('.HK'):
             try:
-                import naked_k_flow_eastmoney
-                import naked_k_trade_flow_evidence
-
-                today = pd.Timestamp.now().strftime('%Y-%m-%d')
-                snapshot = naked_k_flow_eastmoney.fetch_trade_flow(ticker, today)
-
-                if snapshot.status == "OK":
-                    trade_flow_evidences = naked_k_trade_flow_evidence.generate_trade_flow_evidence(snapshot)
-                    trade_flow_evidences_list = [
-                        {
-                            "evidence_id": e.evidence_id,
-                            "kind": e.kind,
-                            "direction": e.direction,
-                            "quality": e.quality,
-                            "lifecycle": e.lifecycle,
-                            "inputs": e.inputs,
-                            "thresholds": e.thresholds,
-                            "limitations": list(e.limitations),
-                        }
-                        for e in trade_flow_evidences
-                    ]
-
-                    if trade_flow_evidences:
-                        # 构建 trade_flow layer
-                        from naked_k_trade_flow_evidence import TradeFlowEvidence
-                        tf_state, tf_direction = naked_k_smart_money_fusion._compute_layer_state(
-                            trade_flow_evidences,
-                            quality=trade_flow_evidences[0].quality,
-                            limitations=trade_flow_evidences[0].limitations,
-                        )
-                        trade_flow_layer = naked_k_smart_money_fusion.LayerResult(
-                            layer="trade_flow",
-                            state=tf_state,
-                            direction=tf_direction,
-                            evidences=tuple(trade_flow_evidences),
-                            quality=trade_flow_evidences[0].quality,
-                            limitations=trade_flow_evidences[0].limitations,
-                            decision_time=datetime.now(timezone.utc),
-                            target_session=daily.index[-1].strftime('%Y-%m-%d'),
-                            valid_from=datetime.now(timezone.utc),
-                            valid_until=datetime.now(timezone.utc) + timedelta(days=3),
-                        )
+                import naked_k_intraday_flow
+                intraday_snapshot = naked_k_intraday_flow.collect_intraday_flow(ticker)
+                
+                # 分钟线聚合只提供 snapshot 展示，不生成独立 evidence
+                # 因为与日线 Volume 属同一依赖组（按设计文档 §8.5）
+                # trade_flow_layer 保持 None，fusion 将为单层 price_action
+                
+                # 记录到 trade_flow_evidences_list 用于报告显示
+                if intraday_snapshot.status == "OK":
+                    trade_flow_evidences_list = [{
+                        "kind": "intraday_volume_distribution",
+                        "quality": intraday_snapshot.quality,
+                        "limitations": list(intraday_snapshot.limitations),
+                        "snapshot": intraday_snapshot.to_dict(),
+                    }]
             except (ImportError, Exception):
-                # 静默降级：trade_flow 不可用时不影响主流程
+                # 静默降级：intraday 不可用时不影响主流程
                 pass
 
         # 3. 融合
