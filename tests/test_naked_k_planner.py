@@ -25,8 +25,8 @@ def _expired_bullish_evidence(days_ago: int = 90) -> PriceEvidence:
         observed_at=signal_at,
         available_at=signal_at,
         expires_at=None,
-        signal_high=101.0,
-        signal_low=99.0,
+        signal_high=100.0,
+        signal_low=100.0,
         inputs={},
         thresholds={},
         location_ids=(),
@@ -48,7 +48,7 @@ def _price_layer_with(*, direction: str, evidence: tuple[PriceEvidence, ...]) ->
         expires_at=None,
         target_session=str(now.date()),
         evidence=evidence,
-        evidence_ids=tuple(e.evidence_id for e in evidence),
+        evidence_ids=tuple(e.evidence_id for e in evidence),  # Derived but LayerResult requires it
         lineage_ids=(),
         limitations=("all_signals_expired_over_30d",),
     )
