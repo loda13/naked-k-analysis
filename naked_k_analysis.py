@@ -130,13 +130,17 @@ def trim_to_closed_bars(
 
     if interval == "1wk":
         current_week = clock.isocalendar()[:2]
-        last_week = last_ts.isocalendar()[:2]
         before_weekly_close = clock.weekday() < 4 or (clock.weekday() == 4 and clock.hour < market_close_hour(market))
-        if last_week == current_week and before_weekly_close:
-            return frame.iloc[:-1]
+        if before_weekly_close:
+            return frame.loc[
+                [pd.Timestamp(index).isocalendar()[:2] != current_week for index in frame.index]
+            ]
 
-    if interval == "1mo" and (last_ts.year, last_ts.month) == (clock.year, clock.month):
-        return frame.iloc[:-1]
+    if interval == "1mo":
+        current_month = (clock.year, clock.month)
+        return frame.loc[
+            [(pd.Timestamp(index).year, pd.Timestamp(index).month) != current_month for index in frame.index]
+        ]
 
     if interval == "1h" and len(frame) > 1:
         latest_volume = pd.to_numeric(pd.Series([frame.iloc[-1].get("Volume")]), errors="coerce").iloc[0]
@@ -819,13 +823,14 @@ def format_report(
         # 添加 dual-evidence 分析输出（如果可用）
         if report.dual_evidence_fusion:
             sections.extend([
-                "### 主力资金双证据分析 (实验性)",
+                "### OHLCV 与公开资金流证据（实验性）",
                 "",
                 f"**融合结果**: {report.dual_evidence_fusion['result']}",
                 f"**方向**: {report.dual_evidence_fusion['direction'] or '无'}",
-                f"**置信度**: {report.dual_evidence_fusion['confidence']}",
+                f"**规则置信等级**: {report.dual_evidence_fusion['confidence']}",
                 f"**时间对齐**: {'是' if report.dual_evidence_fusion['aligned'] else '否'}",
-                f"**质量**: {report.dual_evidence_fusion['quality']}",
+                f"**证据契约状态**: {report.dual_evidence_fusion['quality']}",
+                f"**可执行性**: {'仅供参考' if report.dual_evidence_fusion['aligned'] and report.dual_evidence_fusion['result'] != 'conflict' else '不可用于交易定向'}",
                 "",
                 f"**解释**: {report.dual_evidence_fusion['explanation']}",
                 "",
@@ -1415,7 +1420,7 @@ def run_analysis(
             reward_to_risk=report.reward_to_risk,
         )
 
-        # 审计主力资金信号
+        # 审计 OHLCV 量价代理信号
         smart_money = report.smart_money_signals
         if smart_money and smart_money.get("enabled"):
             signals = smart_money.get("signals", [])
@@ -1426,7 +1431,8 @@ def run_analysis(
                 ticker=ticker,
                 name=name,
                 direction=smart_money.get("direction"),
-                probability=smart_money.get("probability"),
+                evidence_type=smart_money.get("evidence_type"),
+                validation_status=smart_money.get("validation_status"),
                 signal_count=len(signals),
                 signal_count_3m=signal_count_3m,
                 signal_dates_3m=signal_dates_3m,

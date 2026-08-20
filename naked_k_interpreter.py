@@ -25,21 +25,6 @@ def _direction_text(direction: str) -> str:
     }.get(direction, direction)
 
 
-def _estimated_win_rate(report: Any) -> str:
-    setup = _as_dict(report, "trade_setup")
-    timeframe = _as_dict(report, "timeframe_context")
-    confidence = float(setup.get("confidence_score", 0) or 0)
-    base = 45 + confidence * 2.0
-    if timeframe.get("alignment") in {"aligned_long", "aligned_short"}:
-        base += 5
-    elif timeframe.get("alignment") == "conflict":
-        base -= 8
-    risk_level = str(_as_dict(report, "risk_plan").get("risk_level", "medium"))
-    if risk_level == "high":
-        base -= 5
-    return f"约{round(max(30, min(68, base)))}%，仅作交易计划分层"
-
-
 def _zone_text(zone: dict[str, Any] | None) -> str:
     if not zone:
         return "暂无"
@@ -52,9 +37,9 @@ def _zone_text(zone: dict[str, Any] | None) -> str:
 
 
 def _format_smart_money_brief(smart_money: dict[str, Any]) -> str:
-    """格式化主力行为简报"""
+    """格式化 OHLCV 量价代理简报。"""
     if not smart_money or not smart_money.get("enabled"):
-        return "暂无明显主力信号"
+        return "暂无量价代理信号"
 
     assessment = smart_money.get("overall_assessment", "")
 
@@ -68,24 +53,23 @@ def _format_smart_money_brief(smart_money: dict[str, Any]) -> str:
     stale_signals = smart_money.get("stale_signals", [])
 
     if not fresh_signals and not stale_signals:
-        return assessment or "暂无明显主力信号"
+        return assessment or "暂无量价代理信号"
 
     if not fresh_signals:
         # 只有过期信号
-        return f"无明显主力信号（{len(stale_signals)}个信号已过期）"
+        return f"无新鲜量价代理信号（{len(stale_signals)}个信号已过期）"
 
     # 提取关键的新鲜信号
     signal_texts = []
     for signal in fresh_signals[:3]:  # 最多显示3个
         label = signal.get("label", "")
         strength = signal.get("strength", "")
-        confidence = signal.get("confidence", 0)
         days_old = signal.get("days_old", 0)
 
         if days_old > 0:
-            signal_texts.append(f"{label}({strength}, {confidence}%, {days_old}日前)")
+            signal_texts.append(f"{label}({strength}, {days_old}日前)")
         else:
-            signal_texts.append(f"{label}({strength}, {confidence}%)")
+            signal_texts.append(f"{label}({strength})")
 
     result = f"{assessment}。检测到：{' + '.join(signal_texts)}"
 
@@ -126,7 +110,7 @@ def build_trader_brief(report: Any) -> dict[str, Any]:
     target_text = str(target) if target is not None else "暂无第一目标"
     reward_text = f"{reward_to_risk}R" if reward_to_risk is not None else "暂无"
 
-    # 主力行为分析
+    # OHLCV 量价代理分析
     smart_money_text = _format_smart_money_brief(smart_money)
 
     risk_points = warnings[:]
@@ -144,7 +128,7 @@ def build_trader_brief(report: Any) -> dict[str, Any]:
             f"{signals}。{thesis}；当前剧本方向为{direction}。"
             f"量价状态：{price_action.get('volume_pressure', '量能中性')}"
         ),
-        "主力行为研判": smart_money_text,
+        "量价代理证据": smart_money_text,
         "关键价格区域": f"下方：{support}；上方：{resistance}",
         "可能交易路径": [
             f"路径A：价格触发 {round(float(_value(report, 'entry_trigger', 0.0)), 2)} 后延续，先看 {target_text}",
@@ -152,8 +136,8 @@ def build_trader_brief(report: Any) -> dict[str, Any]:
             "路径C：未触发则继续观察，避免在区间中部追价",
         ],
         "交易计划": (
-            f"当前机会：{action}；胜率估计：{_estimated_win_rate(report)}；"
-            f"盈亏比：{reward_text}；建议仓位：{_value(report, 'position_size', '暂无')}；"
+            f"当前机会：{action}；盈亏比：{reward_text}；"
+            f"建议仓位：{_value(report, 'position_size', '暂无')}；"
             f"失效位置：{round(float(_value(report, 'stop_loss', 0.0)), 2)}；"
             f"风险等级：{risk_plan.get('risk_level', 'medium')}"
         ),
@@ -171,7 +155,7 @@ def format_trader_brief(brief: dict[str, Any]) -> str:
     return (
         f"状态：{brief.get('当前市场状态', '暂无')}；"
         f"力量：{brief.get('多空力量分析', '暂无')}；"
-        f"主力：{brief.get('主力行为研判', '暂无')}；"
+        f"量价代理：{brief.get('量价代理证据', brief.get('主力行为研判', '暂无'))}；"
         f"区域：{brief.get('关键价格区域', '暂无')}；"
         f"路径：{path_text or '暂无'}；"
         f"计划：{brief.get('交易计划', '暂无')}；"

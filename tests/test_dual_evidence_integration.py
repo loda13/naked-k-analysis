@@ -7,6 +7,7 @@ tests/test_dual_evidence_integration.py
 import unittest
 import pandas as pd
 
+import naked_k_analysis
 import naked_k_planner
 
 
@@ -54,6 +55,10 @@ class TestDualEvidenceIntegration(unittest.TestCase):
         # 验证字段类型
         self.assertIsInstance(report.price_evidences, list)
         self.assertIsInstance(report.trade_flow_evidences, list)
+        markdown = naked_k_analysis.format_report("2026-01-31 CST", [report], naked_k_analysis.DEFAULT_JOURNAL_PATH)
+        self.assertIn("OHLCV 与公开资金流证据（实验性）", markdown)
+        self.assertNotIn("主力资金双证据", markdown)
+        self.assertRegex(markdown, r"\*\*可执行性\*\*: (仅供参考|不可用于交易定向)")
 
     def test_non_hk_stock_skips_trade_flow(self):
         """验证非港股跳过 trade_flow 采集"""

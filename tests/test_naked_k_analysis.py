@@ -2046,7 +2046,7 @@ class NakedKAnalysisTests(unittest.TestCase):
         text = naked_k_analysis.format_report("2026-06-29 16:00:00 CST", [report], naked_k_analysis.DEFAULT_JOURNAL_PATH)
 
         self.assertIn("交易计划", report.trader_brief)
-        self.assertIn("胜率估计", report.trader_brief["交易计划"])
+        self.assertNotIn("胜率", report.trader_brief["交易计划"])
         self.assertIn("- 交易员简报：", text)
 
     def test_trade_plan_reports_structured_risk_plan(self):
@@ -2493,6 +2493,10 @@ class NakedKAnalysisTests(unittest.TestCase):
         self.assertIn("portfolio_exposure", event_types)
         self.assertIn("run_completed", event_types)
         self.assertEqual(reports[0].ticker, "TEST")
+        smart_money_event = next(event for event in events if event["event_type"] == "smart_money_analyzed")
+        self.assertNotIn("probability", smart_money_event["payload"])
+        self.assertEqual(smart_money_event["payload"]["evidence_type"], "ohlcv_price_volume_proxy")
+        self.assertEqual(smart_money_event["payload"]["validation_status"], "UNVALIDATED")
         data_events = [event for event in events if event["event_type"] == "data_loaded"]
         self.assertEqual({event["payload"]["interval"] for event in data_events}, {"1d", "1wk", "1mo", "1h"})
         plan_event = next(event for event in events if event["event_type"] == "plan_generated")
@@ -2629,6 +2633,27 @@ class NakedKAnalysisTests(unittest.TestCase):
 
         self.assertEqual(trimmed.index[-1].strftime("%Y-%m-%d"), "2026-06-26")
 
+    def test_drop_all_duplicate_current_week_rows(self):
+        frame = pd.DataFrame(
+            {
+                "Open": [1.0, 2.0, 3.0],
+                "High": [2.0, 3.0, 4.0],
+                "Low": [0.5, 1.5, 2.5],
+                "Close": [1.5, 2.5, 3.5],
+                "Volume": [100, 200, 300],
+            },
+            index=pd.to_datetime(["2026-08-10", "2026-08-17", "2026-08-19 20:00"], format="mixed"),
+        )
+
+        trimmed = naked_k_analysis.trim_to_closed_bars(
+            frame,
+            market="us",
+            interval="1wk",
+            now=pd.Timestamp("2026-08-20 10:00:00", tz=ZoneInfo("America/New_York")),
+        )
+
+        self.assertEqual(trimmed.index.tolist(), [pd.Timestamp("2026-08-10")])
+
     def test_drop_incomplete_monthly_bar_during_current_month(self):
         frame = pd.DataFrame(
             {
@@ -2649,6 +2674,36 @@ class NakedKAnalysisTests(unittest.TestCase):
         )
 
         self.assertEqual(trimmed.index[-1].strftime("%Y-%m-%d"), "2026-05-31")
+
+    def test_drop_all_duplicate_current_month_rows(self):
+        frame = pd.DataFrame(
+            {
+                "Open": [1.0, 2.0, 3.0],
+                "High": [2.0, 3.0, 4.0],
+                "Low": [0.5, 1.5, 2.5],
+                "Close": [1.5, 2.5, 3.5],
+                "Volume": [100, 200, 300],
+            },
+            index=pd.to_datetime(["2026-07-01", "2026-08-01", "2026-08-19 20:00"], format="mixed"),
+        )
+
+        trimmed = naked_k_analysis.trim_to_closed_bars(
+            frame,
+            market="us",
+            interval="1mo",
+            now=pd.Timestamp("2026-08-20 10:00:00", tz=ZoneInfo("America/New_York")),
+        )
+
+        self.assertEqual(trimmed.index.tolist(), [pd.Timestamp("2026-07-01")])
+
+    def test_defensive_actions_are_not_short_entries(self):
+        self.assertEqual(naked_k_trade.build_signal_state("回避"), "planned_defensive")
+        self.assertEqual(naked_k_trade.build_signal_state("减仓"), "planned_defensive")
+        target, _, reward_to_risk = naked_k_trade.build_trade_metrics(
+            "回避", 100.0, 110.0, resistance=120.0, support=90.0
+        )
+        self.assertIsNone(target)
+        self.assertIsNone(reward_to_risk)
 
     def test_drop_zero_volume_latest_intraday_bar(self):
         frame = pd.DataFrame(

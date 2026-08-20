@@ -69,7 +69,7 @@ def build_signal_state(action: str) -> str:
     if action in BULLISH_ACTIONS:
         return "planned_long"
     if action in BEARISH_ACTIONS:
-        return "planned_short"
+        return "planned_defensive"
     return "watching"
 
 
@@ -84,8 +84,7 @@ def build_trade_metrics(
     target_price: float | None = None
     if action in BULLISH_ACTIONS and resistance > entry_trigger:
         target_price = resistance
-    elif action in BEARISH_ACTIONS and support < entry_trigger:
-        target_price = support
+    # `减仓` / `回避` are defensive alerts, not short entries.
 
     reward_to_risk: float | None = None
     if target_price is not None and risk_per_share > 0:
@@ -728,6 +727,7 @@ def format_risk_plan_summary(risk_plan: dict[str, Any]) -> str:
     direction_label = {
         "long": "多头",
         "short": "空头/风控",
+        "bearish_defensive": "防御/回避",
         "none": "无方向",
     }.get(str(risk_plan.get("direction")), str(risk_plan.get("direction", "无方向")))
     parts = [

@@ -25,20 +25,20 @@ class NakedKRiskTests(unittest.TestCase):
         self.assertEqual(plan["target_r_multiple"], 2.5)
         self.assertIn("按1%账户风险", plan["position_size"])
 
-    def test_builds_short_risk_plan_with_downside_r_targets(self):
+    def test_defensive_plan_does_not_create_short_exposure(self):
         plan = naked_k_risk.build_risk_plan(
             action="减仓",
             entry_trigger=100.0,
             stop_loss=110.0,
             target_price=80.0,
-            account_risk_pct=1.0,
         )
 
-        self.assertEqual(plan["direction"], "short")
-        self.assertEqual(plan["risk_per_share"], 10.0)
-        self.assertEqual(plan["targets_by_r"]["1R"], 90.0)
-        self.assertEqual(plan["targets_by_r"]["2R"], 80.0)
-        self.assertEqual(plan["target_r_multiple"], 2.0)
+        self.assertEqual(plan["direction"], "bearish_defensive")
+        self.assertEqual(plan["status"], "flat")
+        self.assertEqual(plan["suggested_gross_pct"], 0.0)
+        self.assertEqual(plan["effective_account_risk_pct"], 0.0)
+        self.assertEqual(plan["targets_by_r"], {})
+        self.assertIsNone(plan["target_r_multiple"])
 
     def test_blocks_new_risk_when_drawdown_guard_is_hit(self):
         plan = naked_k_risk.build_risk_plan(

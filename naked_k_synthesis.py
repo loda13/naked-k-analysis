@@ -484,6 +484,7 @@ def _build_candidate(
         current_drawdown_pct=float(technical_risk.get("current_drawdown_pct", 0.0)),
         consecutive_losses=int(technical_risk.get("consecutive_losses", 0)),
         config=config.risk if config is not None else None,
+        defensive_residual=action == "减仓",
     )
 
     protection_reasons: list[str] = []

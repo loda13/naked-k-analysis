@@ -1282,7 +1282,7 @@ class NakedKSynthesisTests(unittest.TestCase):
         self.assertEqual(report.action, "回避")
         self.assertEqual(combined["execution_side"], "bearish_defensive")
         self.assertEqual(report.signal_state, "planned_defensive")
-        self.assertEqual(report.risk_plan["engine_direction"], "short")
+        self.assertEqual(report.risk_plan["engine_direction"], "bearish_defensive")
         self.assertEqual(report.risk_plan["direction"], "bearish_defensive")
         self.assertEqual(report.risk_plan["position_intent"], "reduce_or_avoid_long_exposure")
         self.assertNotEqual(report.risk_plan["position_intent"], "open_short")

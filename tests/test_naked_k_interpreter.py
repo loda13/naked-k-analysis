@@ -57,11 +57,55 @@ class NakedKInterpreterTests(unittest.TestCase):
         self.assertIn("交易计划", brief)
         self.assertIn("风险点", brief)
         self.assertIn("空头追击失败", brief["多空力量分析"])
-        self.assertIn("胜率估计", brief["交易计划"])
+        self.assertNotIn("胜率", brief["交易计划"])
         self.assertIn("失效位置", brief["交易计划"])
         joined = " ".join(str(value) for value in brief.values())
         self.assertNotIn("MACD", joined)
         self.assertNotIn("RSI", joined)
+
+    def test_does_not_invent_win_rate_from_setup_confidence(self):
+        report = SimpleNamespace(
+            action="观望",
+            entry_trigger=105.0,
+            stop_loss=99.0,
+            target_price=None,
+            reward_to_risk=None,
+            position_size="0%（无新仓计划）",
+            price_action={},
+            market_structure={},
+            market_regime={},
+            trade_setup={"confidence_score": 99},
+            price_zones={},
+            risk_plan={},
+            timeframe_context={},
+            smart_money_signals={},
+        )
+
+        brief = naked_k_interpreter.build_trader_brief(report)
+
+        self.assertNotIn("胜率", brief["交易计划"])
+        self.assertNotIn("68%", brief["交易计划"])
+
+    def test_formatter_accepts_legacy_smart_money_brief_key(self):
+        text = naked_k_interpreter.format_trader_brief({"主力行为研判": "旧版量价摘要"})
+
+        self.assertIn("量价代理：旧版量价摘要", text)
+
+    def test_fresh_proxy_signal_does_not_render_confidence_as_probability(self):
+        text = naked_k_interpreter._format_smart_money_brief({
+            "enabled": True,
+            "overall_assessment": "量价代理偏多（规则强度未校准）",
+            "signals": [{
+                "label": "吸筹信号",
+                "strength": "developing",
+                "confidence": 88,
+                "days_old": 2,
+                "stale": False,
+            }],
+        })
+
+        self.assertIn("吸筹信号", text)
+        self.assertNotIn("88%", text)
 
 
 if __name__ == "__main__":

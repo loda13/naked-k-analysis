@@ -82,6 +82,20 @@ class NakedKPlannerTests(unittest.TestCase):
         self.assertEqual(report.news_analysis, {})
         self.assertEqual(report.combined_conclusion, {})
 
+    def test_smart_money_summary_does_not_present_stale_signal_as_current(self):
+        summary = naked_k_planner._format_smart_money_summary({
+            "enabled": True,
+            "overall_assessment": "量价代理偏多（规则强度未校准）",
+            "signal_count_3m": 1,
+            "signals": [
+                {"label": "旧信号", "confidence": 99, "days_old": 497, "stale": True},
+                {"label": "新信号", "confidence": 60, "days_old": 12, "stale": False},
+            ],
+        })
+
+        self.assertNotIn("旧信号", summary)
+        self.assertIn("新信号", summary)
+
     def test_planner_attaches_contextual_candle_behavior(self):
         daily = pd.DataFrame(
             {

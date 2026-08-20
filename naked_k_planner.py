@@ -196,7 +196,7 @@ def build_trade_plan(
         daily_regime=market_regime,
     )
 
-    # 主力资金行为分析
+    # OHLCV 量价代理分析
     monthly_zones = naked_k_zones.detect_price_zones(monthly, close=float(monthly["Close"].iloc[-1]), swing_window=2) if monthly is not None and not monthly.empty else None
     weekly_zones = naked_k_zones.detect_price_zones(weekly, close=float(weekly_bar["Close"]), swing_window=1)
 
@@ -332,7 +332,7 @@ def build_trade_plan(
         f"交易剧本：{naked_k_trade.format_trade_setup_summary(trade_setup)}",
         f"关键价格区域：{naked_k_trade.format_price_zones_summary(price_zones)}",
         f"行为上下文：{naked_k_context.format_candle_context_summary(candle_context)}",
-        f"主力行为：{_format_smart_money_summary(smart_money_signals)}",
+        f"量价代理：{_format_smart_money_summary(smart_money_signals)}",
         f"风险计划：{naked_k_trade.format_risk_plan_summary(risk_plan)}",
         f"ATR缓冲：{buffer_ratio * 100:.2f}%",
         "改进：多头/空头都要求先突破信号K极值再触发，减少无确认追价。",
@@ -394,13 +394,13 @@ def build_trade_plan(
 
 
 def _format_smart_money_summary(signals: dict[str, Any]) -> str:
-    """格式化主力行为摘要"""
+    """格式化 OHLCV 量价代理摘要。"""
     if not signals.get("enabled"):
         return "未启用"
 
-    all_signals = signals.get("signals", [])
+    all_signals = [signal for signal in signals.get("signals", []) if not signal.get("stale", False)]
     if not all_signals:
-        return signals.get("overall_assessment", "无明显主力信号")
+        return signals.get("overall_assessment", "无明显量价代理信号")
 
     # 显示最高置信度的信号和3个月统计
     top_signals = sorted(

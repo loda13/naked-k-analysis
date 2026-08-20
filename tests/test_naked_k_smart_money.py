@@ -1,11 +1,13 @@
 """
 tests/test_naked_k_smart_money.py
 
-主力资金行为识别模块的单元测试
+OHLCV 量价代理信号的单元测试
 """
 
+import json
 import unittest
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -355,6 +357,89 @@ class TestSmartMoneyAnalysis(unittest.TestCase):
 
         self.assertFalse(result.get("enabled"))
         self.assertEqual(len(result.get("signals", [])), 0)
+
+    def test_current_summary_is_unvalidated_ohlcv_proxy_not_probability(self):
+        df = _create_fake_ohlcv(periods=30)
+        df.index = pd.date_range(end=pd.Timestamp.now().normalize(), periods=30, freq="D")
+        signal = {
+            "date": df.index[-1],
+            "strength": "developing",
+            "confidence_score": 82,
+            "thesis": "量价规则命中",
+            "volume_ratio": 2.0,
+        }
+
+        with (
+            patch("naked_k_smart_money.detect_accumulation_volume", return_value=[signal]),
+            patch("naked_k_smart_money.detect_selling_exhaustion", return_value=None),
+            patch("naked_k_smart_money.detect_buying_exhaustion", return_value=None),
+        ):
+            result = analyze_smart_money_signals(df, [], [], {})
+
+        self.assertNotIn("probability", result)
+        self.assertNotIn("主力", result["overall_assessment"])
+        self.assertEqual(result["evidence_type"], "ohlcv_price_volume_proxy")
+        self.assertEqual(result["validation_status"], "UNVALIDATED")
+
+    def test_signal_freshness_honors_20_day_boundary(self):
+        df = _create_fake_ohlcv(periods=30)
+        df.index = pd.date_range(end=pd.Timestamp.now().normalize(), periods=30, freq="D")
+        for days_old, expected_stale, expected_direction in (
+            (20, False, "bullish"),
+            (21, True, "neutral"),
+        ):
+            signal = {
+                "date": df.index[-1] - pd.Timedelta(days=days_old),
+                "strength": "developing",
+                "confidence_score": 82,
+                "thesis": "量价规则命中",
+                "volume_ratio": 2.0,
+            }
+            with (
+                patch("naked_k_smart_money.detect_accumulation_volume", return_value=[signal]),
+                patch("naked_k_smart_money.detect_selling_exhaustion", return_value=None),
+                patch("naked_k_smart_money.detect_buying_exhaustion", return_value=None),
+            ):
+                result = analyze_smart_money_signals(df, [], [], {})
+
+            with self.subTest(days_old=days_old):
+                self.assertEqual(result["direction"], expected_direction)
+                self.assertEqual(result["signals"][0]["stale"], expected_stale)
+
+    def test_current_non_accumulation_signals_have_dates_for_aggregation(self):
+        df = _create_fake_ohlcv(periods=30)
+        df.index = pd.date_range(end=pd.Timestamp.now().normalize(), periods=30, freq="D")
+        exhaustion = {
+            "strength": "developing",
+            "confidence_score": 70,
+            "thesis": "量价衰竭",
+            "components": {"volume_ratio": 0.5},
+        }
+        confluence = {
+            "strength": "strong",
+            "confidence_score": 75,
+            "thesis": "多周期量价共振",
+            "zones": {"monthly": {"range": "90-110"}},
+        }
+
+        with (
+            patch("naked_k_smart_money.detect_accumulation_volume", return_value=[]),
+            patch("naked_k_smart_money.detect_selling_exhaustion", return_value=exhaustion),
+            patch("naked_k_smart_money.detect_buying_exhaustion", return_value=exhaustion),
+            patch("naked_k_smart_money.detect_multi_tf_confluence", return_value=confluence),
+        ):
+            result = analyze_smart_money_signals(
+                df,
+                [],
+                [],
+                {},
+                monthly_zones=[{"kind": "demand"}],
+                weekly_zones=[{"kind": "demand"}],
+            )
+
+        self.assertEqual(len(result["signals"]), 4)
+        self.assertTrue(all(signal["date"] == df.index[-1].isoformat() for signal in result["signals"]))
+        json.dumps(result)
 
 
 if __name__ == "__main__":

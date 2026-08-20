@@ -1,13 +1,13 @@
 # Naked K Analysis
 
-裸K交易计划生成器。纯价格结构：BOS/CHoCH、供需区、主力资金，生成触发/止损/目标。可选新闻综合。零指标。
+裸K交易计划生成器。纯价格结构：BOS/CHoCH、供需区、OHLCV 量价代理证据，生成触发/止损/目标。可选新闻综合。零指标。
 
 **当前版本**: [v3.5.1](https://github.com/loda13/naked-k-analysis/releases/tag/v3.5.1)
 
 ## 核心能力
 
 **价格结构**  
-市场结构（swing/BOS/CHoCH）、供需区、流动性池、主力资金概率评分、交易剧本、多周期框架、风险计划（1R/2R/3R）
+市场结构（swing/BOS/CHoCH）、供需区、流动性池、OHLCV 量价代理证据、交易剧本、多周期框架、风险计划（1R/2R/3R）
 
 **消息面**（`--news`）  
 Yahoo + Google + Finnhub + AkShare + Sina 多源，相关性过滤，两轮综合
@@ -22,27 +22,27 @@ Yahoo + Google + Finnhub + AkShare + Sina 多源，相关性过滤，两轮综�
 
 ```bash
 pip install -r requirements.txt
-python naked_k_analysis.py              # 默认腾讯/小米/PDD/泡泡玛特
+python naked_k_analysis.py              # 默认腾讯/小米/PDD/泡泡玛特/NVDA/TSLA/QQQ
 python naked_k_analysis.py --news        # 启用消息面
 python -m unittest discover -v          # 测试
 ```
 
 **输出**: `reports/naked_k_latest.md` (Markdown)、`naked_k_journal.jsonl` (复盘)、`naked_k_audit.jsonl` (审计)
 
-## 主力资金检测
+## OHLCV 量价代理证据
 
-默认启用，吸筹/卖压衰竭/买盘衰竭/多周期共振四类信号，输出概率评分。
+默认启用，输出吸筹/卖压衰竭/买盘衰竭/多周期共振四类量价规则信号。该证据未经样本外校准，不能识别机构或“主力”身份，不输出概率。
 
 **v3.5.1 改进**:
 - ✅ 时区混合比较修复（naive vs aware 不再抛异常）
 - ✅ 公开函数测试覆盖（fetch_intraday_bars / collect_intraday_flow）
 - ✅ 过度工程清理（删除 provider / volume_q1/q2/max 冗余字段）
-- ✅ 30天窗口时效过滤（超老信号不污染当前判断）
+- ✅ 20天窗口时效过滤（超时信号不污染当前判断）
 - ✅ 分钟线聚合替代逐笔（东财接口失效，改用 Yahoo 1分钟 OHLCV）
 
 **示例**:
 ```
-主力行为: 主力抄底概率 83% (吸筹信号(78天前)) | 近3月2次
+量价代理: 量价代理偏多（规则强度未校准） | 近3月2次
 分钟线资金流快照: 331根/VWAP 445.76/收盘447.20(+0.32%)
 ```
 
@@ -67,7 +67,7 @@ echo "FINNHUB_API_KEY=your_key" >> .env
 - **market_regime**: 趋势/震荡/高波动/压缩
 - **trade_setup**: 交易剧本（BOS延续/CHoCH反转/假突破反打/压缩）
 - **risk_plan**: 单笔风险、账户风险、1R/2R/3R
-- **smart_money_signals**: 主力概率评分
+- **smart_money_signals**: 未校准的 OHLCV 量价代理证据
 - **news_analysis**: 多源新闻、第一轮结论（`--news`）
 - **combined_conclusion**: 第二轮综合（`--news`）
 
@@ -81,7 +81,7 @@ echo "FINNHUB_API_KEY=your_key" >> .env
 
 ## 文件结构
 
-**核心**: `naked_k_analysis.py` (CLI)、`naked_k_planner.py` (编排)、`naked_k_trade.py` (触发/止损)、`naked_k_structure.py` (BOS/CHoCH)、`naked_k_zones.py` (供需区)、`naked_k_smart_money.py` (主力资金)
+**核心**: `naked_k_analysis.py` (CLI)、`naked_k_planner.py` (编排)、`naked_k_trade.py` (触发/止损)、`naked_k_structure.py` (BOS/CHoCH)、`naked_k_zones.py` (供需区)、`naked_k_smart_money.py` (OHLCV 量价代理)
 
 **消息面**: `naked_k_news.py` (采集)、`naked_k_news_llm.py` (两轮综合)
 

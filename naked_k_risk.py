@@ -14,7 +14,7 @@ def _direction_for_action(action: str) -> str:
     if action in BULLISH_ACTIONS:
         return "long"
     if action in BEARISH_ACTIONS:
-        return "short"
+        return "bearish_defensive"
     return "none"
 
 
@@ -70,6 +70,7 @@ def build_risk_plan(
     max_drawdown_pct: float = 8.0,
     consecutive_losses: int = 0,
     config: naked_k_config.RiskConfig | None = None,
+    defensive_residual: bool = False,
 ) -> dict[str, Any]:
     if config is not None:
         if account_risk_pct == 1.0:
@@ -89,7 +90,9 @@ def build_risk_plan(
     risk_pct = round(risk_per_share / entry_trigger * 100, 2) if entry_trigger > 0 else 0.0
     max_gross_pct = float(action_gross_caps.get(action, 0.0))
     guardrails: list[str] = []
-    status = "active" if direction != "none" and max_gross_pct > 0 else "flat"
+    status = "active" if (
+        direction in {"long", "short"} or defensive_residual
+    ) and max_gross_pct > 0 else "flat"
     effective_account_risk_pct = float(account_risk_pct)
 
     if current_drawdown_pct >= max_drawdown_pct:

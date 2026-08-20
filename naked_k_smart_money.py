@@ -1,10 +1,10 @@
 """
 naked_k_smart_money.py
 
-主力资金行为识别模块 - Smart Money Concepts (SMC)
+OHLCV 量价代理信号模块
 
-识别机构/大资金的建仓、吸筹、扫单等行为模式。
-只使用OHLCV数据，不依赖付费数据源。
+使用 OHLCV 规则识别吸筹、衰竭和多周期共振等量价形态。
+这些形态不能识别机构或资金主体。
 
 设计原则：
 1. 纯价格+成交量分析，无黑盒指标
@@ -454,13 +454,13 @@ def detect_multi_tf_confluence(
         base_confidence += 5
 
     direction_text = "需求" if direction == "bullish" else "供给"
-    action_text = "长期布局" if direction == "bullish" else "长期派发"
+    direction_bias = "偏多" if direction == "bullish" else "偏空"
 
     return {
         "signal": f"multi_tf_{zone_kind}_confluence",
         "strength": "strong",
         "confidence_score": min(95, base_confidence),
-        "thesis": f"日线、周线、月线{direction_text}区三重共振，主力{action_text}区域",
+        "thesis": f"日线、周线、月线{direction_text}区三重共振，OHLCV 规则{direction_bias}（未校准）",
         "zones": {
             "monthly": {
                 "range": f"{monthly_zone_match.get('lower')}-{monthly_zone_match.get('upper')}",
@@ -484,7 +484,7 @@ def analyze_smart_money_signals(
     config: Any = None,
 ) -> dict[str, Any]:
     """
-    综合分析所有主力资金信号
+    综合分析 OHLCV 量价代理信号。
 
     Args:
         daily_df: 日线OHLCV数据
@@ -496,7 +496,7 @@ def analyze_smart_money_signals(
         config: SmartMoneyConfig配置对象（可选）
 
     Returns:
-        主力信号汇总，包含各类信号和综合评估
+        量价代理信号汇总；不识别机构身份，也不输出概率。
     """
     # 检查配置是否启用
     if config and hasattr(config, 'enabled') and not config.enabled:
@@ -505,7 +505,7 @@ def analyze_smart_money_signals(
             "signals": [],
             "fresh_signals": [],
             "stale_signals": [],
-            "overall_assessment": "主力分析已禁用"
+            "overall_assessment": "量价代理分析已禁用"
         }
 
     if daily_df.empty:
@@ -520,6 +520,12 @@ def analyze_smart_money_signals(
 
     signals: list[dict[str, Any]] = []
     current_date = pd.Timestamp(daily_df.index[-1])
+    current_signal_date = current_date.isoformat()
+    proxy_metadata = {
+        "evidence_type": "ohlcv_price_volume_proxy",
+        "validation_status": "UNVALIDATED",
+        "limitations": ["仅基于OHLCV规则，不能识别机构或主力身份", "未经样本外事件研究校准"],
+    }
 
     # 1. 吸筹成交量模式
     accumulation_signals = detect_accumulation_volume(
@@ -557,6 +563,7 @@ def analyze_smart_money_signals(
                 "strength": exhaustion["strength"],
                 "confidence": exhaustion["confidence_score"],
                 "thesis": exhaustion["thesis"],
+                "date": current_signal_date,
                 "days_old": 0,
                 "details": f"成交量萎缩至{exhaustion['components']['volume_ratio']*100:.0f}%",
             }
@@ -572,6 +579,7 @@ def analyze_smart_money_signals(
                 "strength": buying_exhaustion["strength"],
                 "confidence": buying_exhaustion["confidence_score"],
                 "thesis": buying_exhaustion["thesis"],
+                "date": current_signal_date,
                 "days_old": 0,
                 "details": f"成交量萎缩至{buying_exhaustion['components']['volume_ratio']*100:.0f}%",
             }
@@ -591,6 +599,7 @@ def analyze_smart_money_signals(
                     "strength": bullish_confluence["strength"],
                     "confidence": min(95, confidence),
                     "thesis": bullish_confluence["thesis"],
+                    "date": current_signal_date,
                     "days_old": 0,
                     "details": f"月线区间 {bullish_confluence['zones']['monthly']['range']}",
                 }
@@ -606,6 +615,7 @@ def analyze_smart_money_signals(
                     "strength": bearish_confluence["strength"],
                     "confidence": min(95, confidence),
                     "thesis": bearish_confluence["thesis"],
+                    "date": current_signal_date,
                     "days_old": 0,
                     "details": f"月线区间 {bearish_confluence['zones']['monthly']['range']}",
                 }
@@ -614,11 +624,12 @@ def analyze_smart_money_signals(
     # 综合评估
     if not signals:
         return {
+            **proxy_metadata,
             "enabled": True,
             "signals": [],
             "signal_count_3m": 0,
             "signal_dates_3m": [],
-            "overall_assessment": "无明显主力信号"
+            "overall_assessment": "无明显量价代理信号"
         }
 
     # 计算近3个月的信号统计
@@ -626,20 +637,23 @@ def analyze_smart_money_signals(
     signals_3m = [s for s in signals if pd.Timestamp(s["date"]) >= three_months_ago]
     signal_dates_3m = sorted(list(set([s["date"] for s in signals_3m])), reverse=True)
 
-    # 只用近30天的信号计算概率，避免超老信号污染判断
+    # 只用有效期内的信号判断规则方向，避免超时信号污染当前判断
     # 但保留所有信号用于显示和历史统计
     # 显式 tz_localize(None) 防止 current_date (naive) 与 signal date (可能 aware) 混合比较炸
-    thirty_days_ago = (current_date.tz_localize(None) if current_date.tzinfo else current_date) - pd.Timedelta(days=30)
+    freshness_cutoff = (current_date.tz_localize(None) if current_date.tzinfo else current_date) - pd.Timedelta(days=SIGNAL_MAX_AGE_DAYS)
     recent_signals = [
         s for s in signals 
         if (pd.Timestamp(s["date"]).tz_localize(None) 
             if pd.Timestamp(s["date"]).tzinfo 
-            else pd.Timestamp(s["date"])) >= thirty_days_ago
+            else pd.Timestamp(s["date"])) >= freshness_cutoff
     ]
     
-    # 标记过期信号（用于显示，不影响概率）
+    # 标记过期信号（仅用于历史展示，不影响当前方向）
     for s in signals:
-        s["stale"] = pd.Timestamp(s["date"]) < thirty_days_ago
+        signal_time = pd.Timestamp(s["date"])
+        s["stale"] = (
+            signal_time.tz_localize(None) if signal_time.tzinfo else signal_time
+        ) < freshness_cutoff
 
     # 需要区分多周期需求共振（bullish）和多周期供给共振（bearish）
     bullish_signals = []
@@ -663,13 +677,13 @@ def analyze_smart_money_signals(
     # 如果没有近期信号，返回中性（不用超老信号做方向判断）
     if not recent_signals:
         return {
+            **proxy_metadata,
             "enabled": True,
             "signals": signals,
             "signal_count_3m": len(signal_dates_3m),
             "signal_dates_3m": signal_dates_3m[:10],
-            "overall_assessment": "无明显主力信号（所有信号已过期超30天）",
+            "overall_assessment": f"无新鲜量价代理信号（已有信号均超过{SIGNAL_MAX_AGE_DAYS}天）",
             "direction": "neutral",
-            "probability": 0,
         }
 
     bullish_confidence = sum(s["confidence"] for s in bullish_signals) / len(bullish_signals) if bullish_signals else 0
@@ -677,19 +691,17 @@ def analyze_smart_money_signals(
 
     if bullish_confidence > bearish_confidence:
         direction = "bullish"
-        probability = int(bullish_confidence)
-        assessment = f"主力抄底概率 {probability}%"
+        assessment = "量价代理偏多（规则强度未校准）"
     else:
         direction = "bearish"
-        probability = int(bearish_confidence)
-        assessment = f"主力派发概率 {probability}%"
+        assessment = "量价代理偏空（规则强度未校准）"
 
     return {
+        **proxy_metadata,
         "enabled": True,
         "signals": signals,
         "signal_count_3m": len(signal_dates_3m),
         "signal_dates_3m": signal_dates_3m[:10],  # 最多显示10个日期
         "overall_assessment": assessment,
         "direction": direction,
-        "probability": probability,
     }
