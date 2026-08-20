@@ -16,29 +16,30 @@ Yahoo + Google + Finnhub + AkShare + Sina 多源，相关性过滤，两轮综�
 事件回测、Walk Forward、R倍数、Monte Carlo、市场周期分桶
 
 **数据**  
-腾讯K线 → Yahoo → yfinance 自动降级，支持港股/A股/北交所/美股/韩股
+
+westock-data CLI → 腾讯K线 → Yahoo chart JSON → yfinance 自动降级，支持港股/A股/北交所/美股/韩股。
 
 ## 快速开始
 
 ```bash
 pip install -r requirements.txt
-python naked_k_analysis.py              # 默认腾讯/小米/PDD/泡泡玛特/NVDA/TSLA/QQQ
-python naked_k_analysis.py --news        # 启用消息面
-python -m unittest discover -v          # 测试
+python naked_k_analysis.py 0700.HK
+python naked_k_analysis.py 0700.HK TSLA --news
+python naked_k_analysis.py QQQ --json
+python -m unittest discover -v
 ```
 
-**输出**: `reports/naked_k_latest.md` (Markdown)、`naked_k_journal.jsonl` (复盘)、`naked_k_audit.jsonl` (审计)
+每次运行必须显式给出一个或多个 ticker。项目不内置股票池，也不设股票白名单；
+`company_names.json` 只为部分标的补充新闻别名和 provider 映射。
+
+**输出**：`reports/naked_k_latest.md`、`reports/naked_k_journal.jsonl`、
+`reports/naked_k_audit.jsonl`。
 
 ## OHLCV 量价代理证据
 
 默认启用，输出吸筹/卖压衰竭/买盘衰竭/多周期共振四类量价规则信号。该证据未经样本外校准，不能识别机构或“主力”身份，不输出概率。
 
-**v3.5.1 改进**:
-- ✅ 时区混合比较修复（naive vs aware 不再抛异常）
-- ✅ 公开函数测试覆盖（fetch_intraday_bars / collect_intraday_flow）
-- ✅ 过度工程清理（删除 provider / volume_q1/q2/max 冗余字段）
-- ✅ 20天窗口时效过滤（超时信号不污染当前判断）
-- ✅ 分钟线聚合替代逐笔（东财接口失效，改用 Yahoo 1分钟 OHLCV）
+版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 **示例**:
 ```
@@ -46,7 +47,7 @@ python -m unittest discover -v          # 测试
 分钟线资金流快照: 331根/VWAP 445.76/收盘447.20(+0.32%)
 ```
 
-配置见 `config.json` 的 `smart_money` 部分。
+配置格式见 `config.example.json`；复制为自己的 JSON 文件后通过 `--config-path` 指定。
 
 ## 消息面配置（可选）
 
@@ -86,8 +87,6 @@ echo "FINNHUB_API_KEY=your_key" >> .env
 **消息面**: `naked_k_news.py` (采集)、`naked_k_news_llm.py` (两轮综合)
 
 **数据与回测**: `westock_wrapper.py` (多源兜底)、`naked_k_backtest.py` (事件回测)
-
-**测试**: 541 单元测试
 
 ## 参数配置
 

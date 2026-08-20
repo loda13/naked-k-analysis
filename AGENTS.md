@@ -6,6 +6,7 @@ This repository is now focused only on naked candlestick analysis. Do not reintr
 
 `naked_k_analysis.py`
 - CLI entry point.
+- Requires one or more positional ticker symbols; there is no default pool or allowlist.
 - Loads daily, weekly, and optional 1H OHLCV data.
 - Builds naked K trade plans with trigger, invalidation, target, R/R, position guidance, intraday status, and journal review.
 - Writes Markdown reports and JSON payloads.
@@ -40,8 +41,8 @@ Future work should improve K-line reading, trigger discipline, journaling, and r
 Run the naked K report:
 
 ```bash
-python naked_k_analysis.py
-python naked_k_analysis.py --json
+python naked_k_analysis.py 0700.HK
+python naked_k_analysis.py 0700.HK --json
 ```
 
 Run all tests:
