@@ -99,8 +99,7 @@ echo "FINNHUB_API_KEY=your_key" >> .env
     "action_gross_caps": {"买入": 20.0, "小仓试错": 8.0}
   },
   "smart_money": {
-    "enabled": true,
-    "volume_anomaly_threshold": 2.0
+    "enabled": true
   }
 }
 ```
