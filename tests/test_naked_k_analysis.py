@@ -25,6 +25,23 @@ from tests.conftest import LegacyResponse
 
 
 class NakedKAnalysisTests(unittest.TestCase):
+    def test_market_classification_reuses_the_canonical_function(self):
+        self.assertIs(naked_k_analysis.classify_market, classify_market)
+        self.assertIs(naked_k_trade.classify_market, classify_market)
+        cases = {
+            "0700.HK": "hk",
+            "600519.SS": "cn",
+            "000001.SZ": "cn",
+            "430139.BJ": "cn",
+            "000660.KS": "kr",
+            "035720.KQ": "kr",
+            "BTC-USD": "crypto",
+            "NVDA": "us",
+        }
+        for ticker, expected in cases.items():
+            with self.subTest(ticker=ticker):
+                self.assertEqual(naked_k_analysis.classify_market(ticker), expected)
+
     def _integration_frame(self):
         frame = pd.DataFrame(
             {

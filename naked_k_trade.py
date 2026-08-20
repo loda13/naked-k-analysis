@@ -153,14 +153,7 @@ def _format_ts(value: Any, tz: str | None = None) -> str:
     return timestamp.tz_convert(tz).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def classify_market(ticker: str) -> str:
-    """Market for a ticker, reusing the portfolio rule rather than a third copy.
-
-    naked_k_portfolio's version is the more complete one — it maps `.BJ` to cn and
-    recognises crypto, where naked_k_analysis.classify_market returns "us" for
-    `.BJ`. naked_k_portfolio imports only naked_k_config, so this adds no cycle.
-    """
-    return naked_k_portfolio.classify_market(ticker)
+classify_market = naked_k_portfolio.classify_market
 
 
 def _display_timezone(frame: pd.DataFrame, market: str | None) -> str | None:

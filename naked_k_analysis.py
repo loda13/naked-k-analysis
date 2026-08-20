@@ -70,15 +70,7 @@ DEFAULT_AUDIT_PATH = Path("reports/naked_k_audit.jsonl")
 InstrumentReport = naked_k_planner.InstrumentReport
 
 
-def classify_market(ticker: str) -> str:
-    symbol = ticker.upper()
-    if symbol.endswith(".HK"):
-        return "hk"
-    if symbol.endswith((".SS", ".SZ")):
-        return "cn"
-    if symbol.endswith((".KS", ".KQ")):
-        return "kr"
-    return "us"
+classify_market = naked_k_portfolio.classify_market
 
 
 def market_timezone(market: str) -> ZoneInfo:
