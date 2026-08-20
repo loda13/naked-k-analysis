@@ -63,15 +63,6 @@ from naked_k_trade import (
 )
 import westock_wrapper as yf
 
-DEFAULT_TICKERS = [
-    ("腾讯", "0700.HK"),
-    ("小米", "1810.HK"),
-    ("PDD", "PDD"),
-    ("泡泡玛特", "9992.HK"),
-    ("NVDA", "NVDA"),
-    ("TSLA", "TSLA"),
-    ("QQQ", "QQQ"),
-]
 DEFAULT_JOURNAL_PATH = Path("reports/naked_k_journal.jsonl")
 DEFAULT_REPORT_PATH = Path("reports/naked_k_latest.md")
 DEFAULT_AUDIT_PATH = Path("reports/naked_k_audit.jsonl")
@@ -1492,7 +1483,13 @@ def run_analysis(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="生成固定标的的裸K收盘报告")
+    parser = argparse.ArgumentParser(description="生成指定标的的裸K收盘报告")
+    parser.add_argument(
+        "tickers",
+        nargs="+",
+        metavar="TICKER",
+        help="股票代码，可指定多个",
+    )
     parser.add_argument("--json", action="store_true", help="输出 JSON")
     parser.add_argument("--journal-path", default=str(DEFAULT_JOURNAL_PATH), help="复盘日志路径")
     parser.add_argument("--report-path", default=str(DEFAULT_REPORT_PATH), help="Markdown 报告输出路径")
@@ -1550,7 +1547,7 @@ def main() -> int:
                 "message": "News configuration or model discovery failed",
             }
     report_text, reports = run_analysis(
-        DEFAULT_TICKERS,
+        [(ticker, ticker) for ticker in args.tickers],
         journal_path,
         config=config,
         audit_path=audit_path,

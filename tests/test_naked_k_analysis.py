@@ -2,7 +2,7 @@ import unittest
 import copy
 import io
 import inspect
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import asdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -203,6 +203,7 @@ class NakedKAnalysisTests(unittest.TestCase):
         self,
         argv,
         *,
+        tickers=("TEST",),
         news_config=None,
         load_news_error=None,
         resolve_error=None,
@@ -212,7 +213,7 @@ class NakedKAnalysisTests(unittest.TestCase):
         output = io.StringIO()
         active_news_config = news_config or self._news_config()
         with (
-            patch.object(sys, "argv", ["naked_k_analysis.py", *argv]),
+            patch.object(sys, "argv", ["naked_k_analysis.py", *tickers, *argv]),
             patch.object(
                 naked_k_analysis.naked_k_config,
                 "load_trading_config",
@@ -247,10 +248,65 @@ class NakedKAnalysisTests(unittest.TestCase):
             exit_code = naked_k_analysis.main()
         return exit_code, output.getvalue(), run, load_news
 
+    def test_main_requires_ticker_before_any_side_effect(self):
+        with (
+            patch.object(sys, "argv", ["naked_k_analysis.py"]),
+            patch.object(
+                naked_k_analysis.naked_k_config,
+                "load_trading_config",
+                return_value=naked_k_config.TradingConfig(),
+            ) as load_config,
+            patch.object(
+                naked_k_analysis.naked_k_llm,
+                "load_llm_config",
+                return_value=naked_k_llm.LLMConfig(),
+            ) as load_llm,
+            patch.object(naked_k_news_llm, "load_news_config") as load_news,
+            patch.object(
+                naked_k_analysis,
+                "run_analysis",
+                return_value=("report", []),
+            ) as run,
+            patch.object(Path, "write_text") as write_report,
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(io.StringIO()) as error,
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                naked_k_analysis.main()
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("TICKER", error.getvalue())
+        load_config.assert_not_called()
+        load_llm.assert_not_called()
+        load_news.assert_not_called()
+        run.assert_not_called()
+        write_report.assert_not_called()
+
+    def test_main_passes_multiple_tickers_unchanged(self):
+        with TemporaryDirectory() as tmpdir:
+            exit_code, _, run, _ = self._invoke_main(
+                [
+                    "--report-path",
+                    str(Path(tmpdir) / "report.md"),
+                    "--journal-path",
+                    str(Path(tmpdir) / "journal.jsonl"),
+                    "--audit-path",
+                    str(Path(tmpdir) / "audit.jsonl"),
+                ],
+                tickers=("0700.HK", "nvda"),
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            run.call_args.args[0],
+            [("0700.HK", "0700.HK"), ("nvda", "nvda")],
+        )
+
     def test_news_cli_defaults_are_disabled_and_have_no_token_argument(self):
-        with patch.object(sys, "argv", ["naked_k_analysis.py"]):
+        with patch.object(sys, "argv", ["naked_k_analysis.py", "TEST"]):
             args = naked_k_analysis.parse_args()
 
+        self.assertEqual(args.tickers, ["TEST"])
         self.assertFalse(getattr(args, "news", None))
         self.assertEqual(getattr(args, "news_model", None), "")
         self.assertEqual(getattr(args, "news_lookback_days", None), 7)
@@ -263,6 +319,7 @@ class NakedKAnalysisTests(unittest.TestCase):
             "argv",
             [
                 "naked_k_analysis.py",
+                "TEST",
                 "--news",
                 "--news-model",
                 "model-a",
@@ -277,6 +334,7 @@ class NakedKAnalysisTests(unittest.TestCase):
             except SystemExit:
                 self.fail("news CLI flags must be accepted")
 
+        self.assertEqual(args.tickers, ["TEST"])
         self.assertTrue(getattr(args, "news", None))
         self.assertEqual(getattr(args, "news_model", None), "model-a")
         self.assertEqual(getattr(args, "news_lookback_days", None), 5)
