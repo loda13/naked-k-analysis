@@ -13,18 +13,18 @@ def classify_market(ticker: str) -> str:
         return "cn"
     if symbol.endswith((".KS", ".KQ")):
         return "kr"
-    if symbol.startswith(("BTC", "ETH", "SOL")) or "-" in symbol:
+    if symbol in {"BTC-USD", "ETH-USD", "SOL-USD"}:
         return "crypto"
     return "us"
 
 
 # Single market -> IANA zone map for the whole repo. Lives here beside
 # classify_market because this module imports only naked_k_config, so both the
-# data layer and the CLI can reach it without a cycle. Crypto is deliberately
-# absent: it has no local session, so callers fall back to UTC rather than
-# borrowing an exchange's clock.
+# data layer and the CLI can reach it without a cycle. Crypto uses UTC because
+# its 24/7 bars have no exchange-local session.
 _MARKET_TIMEZONES = {
     "cn": "Asia/Shanghai",
+    "crypto": "UTC",
     "hk": "Asia/Hong_Kong",
     "kr": "Asia/Seoul",
     "us": "America/New_York",

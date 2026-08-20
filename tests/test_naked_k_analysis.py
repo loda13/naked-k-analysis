@@ -36,6 +36,8 @@ class NakedKAnalysisTests(unittest.TestCase):
             "000660.KS": "kr",
             "035720.KQ": "kr",
             "BTC-USD": "crypto",
+            "BRK-B": "us",
+            "BF-A": "us",
             "NVDA": "us",
         }
         for ticker, expected in cases.items():
@@ -2686,6 +2688,83 @@ class NakedKAnalysisTests(unittest.TestCase):
         )
 
         self.assertEqual(trimmed.index[-1].strftime("%Y-%m-%d"), "2026-06-26")
+
+    def test_crypto_market_timezone_is_utc(self):
+        self.assertEqual(naked_k_analysis.market_timezone("crypto"), ZoneInfo("UTC"))
+
+    def test_crypto_periods_close_only_at_the_next_utc_boundary(self):
+        cases = (
+            (
+                "1d",
+                ["2026-08-19", "2026-08-20"],
+                "2026-08-20 17:00:00",
+                [pd.Timestamp("2026-08-19")],
+            ),
+            (
+                "1wk",
+                ["2026-08-10", "2026-08-17", "2026-08-20 09:29:24"],
+                "2026-08-23 23:00:00",
+                [pd.Timestamp("2026-08-10")],
+            ),
+            (
+                "1mo",
+                ["2026-07-01", "2026-08-01", "2026-08-20 09:29:24"],
+                "2026-08-20 17:00:00",
+                [pd.Timestamp("2026-07-01")],
+            ),
+        )
+        for interval, index, now, expected in cases:
+            with self.subTest(interval=interval):
+                frame = pd.DataFrame(
+                    {
+                        "Open": range(len(index)),
+                        "High": range(1, len(index) + 1),
+                        "Low": range(len(index)),
+                        "Close": range(1, len(index) + 1),
+                        "Volume": [100] * len(index),
+                    },
+                    index=pd.to_datetime(index, format="mixed"),
+                )
+
+                trimmed = naked_k_analysis.trim_to_closed_bars(
+                    frame,
+                    market="crypto",
+                    interval=interval,
+                    now=pd.Timestamp(now, tz=ZoneInfo("UTC")),
+                )
+
+                self.assertEqual(trimmed.index.tolist(), expected)
+
+    def test_load_ohlcv_applies_crypto_closed_bar_trimming(self):
+        frame = pd.DataFrame(
+            {
+                "Open": [1.0, 2.0],
+                "High": [2.0, 3.0],
+                "Low": [0.5, 1.5],
+                "Close": [1.5, 2.5],
+                "Volume": [100.0, 200.0],
+            },
+            index=pd.to_datetime(["2026-08-19", "2026-08-20"]),
+        )
+        trim = naked_k_analysis.trim_to_closed_bars
+
+        def trim_at_fixed_time(loaded, market, interval):
+            return trim(
+                loaded,
+                market,
+                interval,
+                now=pd.Timestamp("2026-08-20 17:00:00", tz=ZoneInfo("UTC")),
+            )
+
+        with patch.object(naked_k_analysis.yf, "download", return_value=frame), patch.object(
+            naked_k_analysis,
+            "trim_to_closed_bars",
+            side_effect=trim_at_fixed_time,
+        ) as trim_call:
+            loaded = naked_k_analysis.load_ohlcv("BTC-USD", interval="1d", period="18mo")
+
+        self.assertEqual(loaded.index.tolist(), [pd.Timestamp("2026-08-19")])
+        self.assertEqual(trim_call.call_args.kwargs, {"market": "crypto", "interval": "1d"})
 
     def test_drop_incomplete_hk_weekly_bar_during_current_week(self):
         frame = pd.DataFrame(

@@ -74,13 +74,7 @@ classify_market = naked_k_portfolio.classify_market
 
 
 def market_timezone(market: str) -> ZoneInfo:
-    """Session zone for a market, from the one map in naked_k_portfolio.
-
-    Behaviour-neutral against the previous if-chain: the only changed answer is
-    hk, which now resolves to Asia/Hong_Kong instead of the Asia/Shanghai
-    fallback. Both are UTC+8 with no DST — checked every day from 2015 to 2027
-    for a differing offset and found none.
-    """
+    """Session zone for a market, including UTC for 24/7 crypto bars."""
     return ZoneInfo(naked_k_portfolio.market_timezone_name(market))
 
 
@@ -103,6 +97,17 @@ def trim_to_closed_bars(
         clock = clock.tz_localize(tz)
     else:
         clock = clock.tz_convert(tz)
+
+    if market == "crypto" and interval in {"1d", "1wk", "1mo"}:
+        stamps = pd.DatetimeIndex(frame.index)
+        stamps = stamps.tz_localize("UTC") if stamps.tz is None else stamps.tz_convert("UTC")
+        if interval == "1d":
+            return frame.loc[[stamp.date() != clock.date() for stamp in stamps]]
+        if interval == "1wk":
+            current_week = clock.isocalendar()[:2]
+            return frame.loc[[stamp.isocalendar()[:2] != current_week for stamp in stamps]]
+        current_month = (clock.year, clock.month)
+        return frame.loc[[(stamp.year, stamp.month) != current_month for stamp in stamps]]
 
     last_ts = pd.Timestamp(frame.index[-1])
     last_date = last_ts.date()

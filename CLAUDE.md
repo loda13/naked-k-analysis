@@ -21,7 +21,7 @@ python -m unittest tests.test_naked_k_synthesis -v   # single test module
 python -m unittest tests.test_naked_k_synthesis.ClassName.test_method -v   # single test
 ```
 
-Every module `naked_k_X.py` has a matching `tests/test_naked_k_X.py`. There is no separate lint/build step — `unittest` is the gate. All tests inject fake sessions/data; none hit the live network.
+Tests usually mirror module names; `naked_k_trade.py` is covered in `tests/test_naked_k_analysis.py`. There is no separate lint/build step — `unittest` is the gate. All tests inject fake sessions/data; none hit the live network.
 
 ## Architecture
 
