@@ -64,6 +64,15 @@ python -m unittest tests.test_westock_wrapper -v
 - Keep production logic centered on OHLCV candles and price structure.
 - Add tests before changing signal behavior.
 - Keep data-fetch fallback behavior covered by `tests/test_westock_wrapper.py`.
+- Preserve each fetcher's adjustment metadata, cross-timeframe conflict checks,
+  and UTC-internal intraday timestamps; keep Tencent row limits and minute-data
+  routing covered by tests.
+- Optional LLM/news failures must degrade to the deterministic technical report.
+  Model output must not invent market data, bypass risk controls, or leak secrets.
+- In two-pass news analysis, round 1 sees only collected news and cites evidence
+  IDs; round 2 may see the technical snapshot. Direction flips must rebuild
+  price and risk fields through deterministic helpers.
+- Tests must not access the live network.
 - Do not add broad indicator frameworks back into the project.
 - Keep generated reports under `reports/`.
 

@@ -515,7 +515,7 @@ data_loaded
 - 旧 `confluence_weight` 不再参与计算，读取到时产生 deprecation warning，下一 schema major 删除；
 - `probability` 从 report、brief、JSON、journal 和 audit 的新 schema 全部移除。首期不提供 `heuristic_score`、`strength_score` 或任何替代数字，只输出触发规则、原始统计、状态和 `validation_status=UNVALIDATED`；
 - 旧 journal 只读兼容：历史 `probability` 原样保留在 legacy payload，不转换成新 evidence，也不参与新报告；
-- `CLAUDE.md`、`README.md`、`CHANGELOG.md` 和 `docs/superpowers/smart-money-user-guide.md` 中的旧概率/机构识别表述必须在 Phase 0 同步纠偏。
+- `README.md`、`CHANGELOG.md` 和 `docs/superpowers/smart-money-user-guide.md` 中的旧概率/机构识别表述必须在 Phase 0 同步纠偏。
 
 ## 11. 错误处理和降级
 

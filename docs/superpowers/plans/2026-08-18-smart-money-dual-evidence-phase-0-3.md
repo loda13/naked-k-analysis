@@ -1110,7 +1110,6 @@ Scope-risk: broad"
 - Create: `tests/test_naked_k_smart_money_acceptance.py`
 - Modify: `naked_k_analysis.py:222-283,750-848`
 - Modify: `README.md`
-- Modify: `CLAUDE.md`
 - Modify: CHANGELOG.md
 - Modify: `docs/superpowers/smart-money-user-guide.md`
 - Modify: `docs/superpowers/specs/2026-08-17-smart-money-dual-evidence-design.md`
@@ -1154,7 +1153,7 @@ Scan only current user-facing files, not archived delivery reports:
 
 ```python
 CURRENT_DOCS = [
-    "README.md", "CLAUDE.md", "CHANGELOG.md",
+    "README.md", "CHANGELOG.md",
     "docs/superpowers/smart-money-user-guide.md",
 ]
 FORBIDDEN_PHRASES = ["主力抄底概率", "主力派发概率", "识别机构/大资金", "主力长期布局"]
@@ -1216,7 +1215,7 @@ Expected: three live trade providers are `OK`; replay IDs are identical; generat
 Run:
 
 ```bash
-git add naked_k_smart_money_acceptance.py run_smart_money_live_smoke.py tests/test_naked_k_smart_money_acceptance.py naked_k_analysis.py README.md CLAUDE.md CHANGELOG.md docs/superpowers/smart-money-user-guide.md docs/superpowers/specs/2026-08-17-smart-money-dual-evidence-design.md
+git add naked_k_smart_money_acceptance.py run_smart_money_live_smoke.py tests/test_naked_k_smart_money_acceptance.py naked_k_analysis.py README.md CHANGELOG.md docs/superpowers/smart-money-user-guide.md docs/superpowers/specs/2026-08-17-smart-money-dual-evidence-design.md
 git diff --cached --check
 git commit -m "docs: expose auditable smart-money proxy evidence" -m "Constraint: No identity claim, probability claim, or execution mutation
 Confidence: high
@@ -1230,7 +1229,7 @@ Before declaring Phase 0–3 complete, run:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -v
-rg -n "主力抄底概率|主力派发概率|probability" README.md CLAUDE.md CHANGELOG.md docs/superpowers/smart-money-user-guide.md naked_k_analysis.py naked_k_interpreter.py naked_k_smart_money.py
+rg -n "主力抄底概率|主力派发概率|probability" README.md CHANGELOG.md docs/superpowers/smart-money-user-guide.md naked_k_analysis.py naked_k_interpreter.py naked_k_smart_money.py
 git diff --check
 git status --short
 ```

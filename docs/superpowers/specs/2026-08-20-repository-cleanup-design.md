@@ -14,7 +14,7 @@ runtime output stays outside the maintained project tree.
 - Keep the naked-K, news, backtest, and current Smart Money behavior intact.
 - Do not touch `.worktrees/smart-money-dual-evidence`; it contains unfinished,
   uncommitted work.
-- Preserve `.env` and `.claude/settings.local.json` as local configuration.
+- Preserve `.env` as local configuration.
 - Keep `company_names.json`; it is optional news alias/provider metadata, not a
   ticker allowlist.
 - Do not add dependencies, a watchlist system, a ticker registry, or a new
@@ -66,7 +66,7 @@ Keep the maintained top-level documentation:
 
 - `README.md`
 - `CHANGELOG.md` (new consolidated release history)
-- `AGENTS.md`, `CLAUDE.md`, `LICENSE`
+- `AGENTS.md`, `LICENSE`
 
 Remove the root-level `FINNHUB_*`, `NEWS_*`, `OPTIMIZATION_COMPLETE.md`,
 `RELEASE_NOTES*`, and `RELEASE_v*` implementation/status documents after their
@@ -93,7 +93,7 @@ Delete ignored generated state after implementation and verification:
 - `.superpowers/`
 - `.omc/` after the OMC-guided task is complete
 
-Do not delete `.worktrees/`, `.env`, or `.claude/`. Existing `.gitignore` rules
+Do not delete `.worktrees/` or `.env`. Existing `.gitignore` rules
 already cover runtime output; no new broad ignore rule is needed.
 
 The ignored `.omc/project-memory.json` contained a plaintext Finnhub credential.

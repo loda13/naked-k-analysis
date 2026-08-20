@@ -406,8 +406,8 @@ class TencentMinuteKlineTests(unittest.TestCase):
 
         Verified live: Yahoo's 0700.HK 1h index ends at 06:07 for a session that
         closes 16:00 Beijing, i.e. UTC with no tzinfo. Leaving mkline in Beijing
-        would put the two sources 8h apart on the same bar — the same skew CLAUDE.md
-        records for AkShare and Sina. Normalising to naive UTC keeps one convention.
+        would put the two sources 8h apart on the same bar. Normalising to naive
+        UTC keeps one convention.
         """
         rows = [["202608061400", "1145.01", "1150.00", "1158.00", "1141.69", "1554234.00", {}]]
         response = SimpleNamespace(

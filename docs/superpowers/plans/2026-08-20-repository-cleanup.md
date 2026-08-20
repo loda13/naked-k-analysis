@@ -12,7 +12,7 @@
 
 - Keep the naked-K, news, backtest, and current Smart Money behavior intact.
 - Do not touch `.worktrees/smart-money-dual-evidence`; it contains unfinished, uncommitted work.
-- Preserve `.env` and `.claude/settings.local.json` as local configuration.
+- Preserve `.env` as local configuration.
 - Keep `company_names.json`; it is optional news alias/provider metadata, not a ticker allowlist.
 - Do not add dependencies, a watchlist system, a ticker registry, or a new package layout.
 - Keep `naked_k_analysis.run_analysis()` and all report schemas unchanged.
@@ -401,7 +401,6 @@ Scope-risk: moderate"
 - Create: `CHANGELOG.md`
 - Modify: `README.md`
 - Modify: `AGENTS.md`
-- Modify: `CLAUDE.md`
 - Replace: `docs/superpowers/smart-money-user-guide.md`
 - Modify: `docs/superpowers/specs/2026-08-17-smart-money-dual-evidence-design.md`
 - Modify: `docs/superpowers/plans/2026-08-18-smart-money-dual-evidence-phase-0-3.md`
@@ -529,38 +528,6 @@ Add this sentence under `Main Entry`:
 - Requires one or more positional ticker symbols; there is no default pool or allowlist.
 ```
 
-In `CLAUDE.md`, replace the four run commands with:
-
-```bash
-python naked_k_analysis.py 0700.HK          # explicit ticker; multiple tickers are accepted
-python naked_k_analysis.py 0700.HK --json   # also emit JSON payload
-python naked_k_analysis.py 0700.HK --llm    # optional OpenAI-compatible commentary
-python naked_k_analysis.py 0700.HK --news   # optional two-pass news deliberation
-```
-
-Apply these exact prose replacements in `CLAUDE.md`:
-
-- `naked_k_analysis.py is the CLI orchestrator (~1200 lines).` →
-  `naked_k_analysis.py is the CLI orchestrator.`
-- Replace the `naked_k_smart_money.py` description with:
-
-```markdown
-- `naked_k_smart_money.py` — deterministic OHLCV volume/price proxy rules for accumulation-like behavior and buying/selling exhaustion. Outputs are uncalibrated advisory evidence, not institutional identity or probability.
-```
-
-- Replace the Finnhub `zero-config fallback` wording with
-  `optional API-key integration with a no-key fallback`.
-- Delete the line linking the removed 2026-07-20 news design; keep the safety
-  rules immediately below it.
-- Replace `Default ticker pool: ...` with:
-
-```markdown
-The CLI has no ticker allowlist or default pool; every run supplies its symbols explicitly.
-```
-
-- Delete the manual `run_*.py` naming rule and the sentence claiming
-  `AGENTS.md` is stale.
-
 - [ ] **Step 4: Replace the stale Smart Money guide**
 
 Replace `docs/superpowers/smart-money-user-guide.md` with exactly:
@@ -616,10 +583,9 @@ python naked_k_analysis.py 0700.HK --config-path config.example.json
 Make these exact reference changes:
 
 - In `docs/superpowers/specs/2026-08-17-smart-money-dual-evidence-design.md`,
-  change `CLAUDE.md、README.md、RELEASE_NOTES*` to
-  `CLAUDE.md、README.md、CHANGELOG.md`, and change `默认标的回归` to
-  `显式 ticker CLI 回归`. Keep its Eastmoney provider filename as a
-  future-design reference.
+  keep maintained documentation references limited to `README.md、CHANGELOG.md`
+  and change `默认标的回归` to `显式 ticker CLI 回归`. Keep its Eastmoney
+  provider filename as a future-design reference.
 - In `docs/superpowers/plans/2026-08-18-smart-money-dual-evidence-phase-0-3.md`:
   - change `Non-HK default tickers` to `Requested non-HK tickers`;
   - replace the three Task 11 `RELEASE_NOTES*` file-list rows with
@@ -693,7 +659,7 @@ Run:
 ```bash
 rg -n --pcre2 'python(?:3)? naked_k_analysis\.py(?:\s*(?:#.*)?$|\s+--)' \
   --glob '!docs/superpowers/plans/2026-08-20-repository-cleanup.md' \
-  README.md AGENTS.md CLAUDE.md docs/superpowers
+  README.md AGENTS.md docs/superpowers
 rg -n 'DEFAULT_TICKERS|default ticker pool|默认(股票|标的)|固定标的' \
   --glob '!.worktrees/**' \
   --glob '!docs/superpowers/specs/2026-08-20-repository-cleanup-design.md' \
@@ -730,7 +696,7 @@ Expected: no output and exit 0.
 Stage explicit maintained files plus tracked deletions; do not use `git add -A`:
 
 ```bash
-git add CHANGELOG.md README.md AGENTS.md CLAUDE.md \
+git add CHANGELOG.md README.md AGENTS.md \
   docs/superpowers/smart-money-user-guide.md \
   docs/superpowers/specs/2026-08-17-smart-money-dual-evidence-design.md \
   docs/superpowers/plans/2026-08-18-smart-money-dual-evidence-phase-0-3.md
@@ -771,7 +737,7 @@ Scope-risk: moderate"
 **Files:**
 - Verify: all retained tracked Python and Markdown files.
 - Delete ignored runtime: `reports/`, `naked_k_reports/`, `.pytest_cache/`, `__pycache__/`, `tests/__pycache__/`, `.code-review-graph/`, `.superpowers/`, then `.omc/` as the last OMC action.
-- Preserve: `.worktrees/`, `.env`, `.claude/`.
+- Preserve: `.worktrees/`, `.env`.
 
 **Interfaces:**
 - Consumes: Tasks 1-4 completed and committed.
@@ -794,7 +760,7 @@ tracking or verifier changes appear in status.
 Give a fresh verifier/code-reviewer this exact scope:
 
 ```text
-Review HEAD against 10d6267 and the approved repository-cleanup spec. Check CLI no-ticker side effects, ticker ordering, classifier identity, deleted-module reachability, retained dual-evidence behavior, documentation truth, broken links, ignored runtime boundaries, and untouched .worktrees/.env/.claude. Report findings by severity and do not self-approve implementation changes.
+Review HEAD against 10d6267 and the approved repository-cleanup spec. Check CLI no-ticker side effects, ticker ordering, classifier identity, deleted-module reachability, retained dual-evidence behavior, documentation truth, broken links, ignored runtime boundaries, and untouched .worktrees/.env. Report findings by severity and do not self-approve implementation changes.
 ```
 
 Expected: no critical or important findings. If findings exist, fix them with
@@ -842,7 +808,6 @@ test ! -e .superpowers
 test -e .omc
 test -e .worktrees/smart-money-dual-evidence
 test -e .env
-test -e .claude/settings.local.json
 git status --short --branch
 git log -5 --oneline --decorate
 ```
