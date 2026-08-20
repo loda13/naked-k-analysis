@@ -6,7 +6,52 @@ import pandas as pd
 
 import naked_k_analysis
 import naked_k_planner
+import naked_k_smart_money_fusion
 import naked_k_trade
+from naked_k_price_evidence import PriceEvidence
+from naked_k_smart_money_contracts import LayerResult
+
+
+def _expired_bullish_evidence(days_ago: int = 90) -> PriceEvidence:
+    """一条 30 天窗口外的看涨证据。"""
+    signal_at = pd.Timestamp.now() - pd.Timedelta(days=days_ago)
+    return PriceEvidence(
+        evidence_id="ev-expired",
+        kind="demand_zone_reclaim",
+        direction="bullish",
+        lifecycle="confirmed",
+        dependency_group="price_structure",
+        signal_at=signal_at,
+        observed_at=signal_at,
+        available_at=signal_at,
+        expires_at=None,
+        signal_high=101.0,
+        signal_low=99.0,
+        inputs={},
+        thresholds={},
+        location_ids=(),
+    )
+
+
+def _price_layer_with(*, direction: str, evidence: tuple[PriceEvidence, ...]) -> LayerResult:
+    """构造 build_price_action_layer 的返回：direction 已过滤，evidence 保留全部。"""
+    now = pd.Timestamp.now()
+    return LayerResult(
+        schema_version="1.0.0",
+        layer_id="price_action",
+        availability="available",
+        direction=direction,
+        lifecycle="expired",
+        quality="VALID",
+        as_of=now,
+        valid_from=min(e.available_at for e in evidence),
+        expires_at=None,
+        target_session=str(now.date()),
+        evidence=evidence,
+        evidence_ids=tuple(e.evidence_id for e in evidence),
+        lineage_ids=(),
+        limitations=("all_signals_expired_over_30d",),
+    )
 
 
 class NakedKPlannerTests(unittest.TestCase):
@@ -110,6 +155,30 @@ class NakedKPlannerTests(unittest.TestCase):
         self.assertIs(naked_k_analysis.build_breakout_trigger, naked_k_trade.build_breakout_trigger)
         self.assertIs(naked_k_analysis.analyze_price_action_context, naked_k_trade.analyze_price_action_context)
         self.assertIs(naked_k_analysis.review_previous_call, naked_k_trade.review_previous_call)
+
+    def test_fusion_keeps_30d_filtered_direction_not_full_evidence_revote(self):
+        """融合层必须沿用 layer.direction，不能按全量证据重新投票。
+
+        build_price_action_layer 只用近 30 天证据定 direction，但 evidence 故意保留
+        全部历史。planner 若拿完整 evidence 重跑 _compute_layer_state，过期信号会被
+        投回来，30 天过滤等于失效。
+        """
+        expired = _expired_bullish_evidence()
+        layer = _price_layer_with(direction="neutral", evidence=(expired,))
+
+        # 前提：全量重投票确实会把过期的 bullish 投回来
+        _, revoted = naked_k_smart_money_fusion._compute_layer_state(
+            layer.evidence, quality=layer.quality, limitations=layer.limitations
+        )
+        self.assertEqual(revoted, "bullish", "前提失效：全量重投票不再复现过期信号")
+
+        with patch.object(naked_k_planner.naked_k_price_evidence, "build_price_action_layer", return_value=layer):
+            report = naked_k_planner.build_trade_plan(
+                "测试", "TEST", self._sample_frame(), self._sample_frame().copy(), previous=None
+            )
+
+        self.assertIsNotNone(report.dual_evidence_fusion, "dual_evidence 未产出，测试没走到融合层")
+        self.assertEqual(report.dual_evidence_fusion["direction"], "neutral")
 
 
 if __name__ == "__main__":

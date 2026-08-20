@@ -238,8 +238,10 @@ def build_trade_plan(
         if price_action_layer.availability == "available":
             price_evidences_list = [naked_k_price_evidence.evidence_to_dict(e) for e in price_action_layer.evidence]
 
-            # 构建 price_action layer - 照抄 trade_flow 同构写法
-            price_state, price_direction = naked_k_smart_money_fusion._compute_layer_state(
+            # participation state 是融合层新增的信息，必须算；direction 不能重算——
+            # layer.direction 已经过了 30 天窗口过滤，而 evidence 故意保留全部历史，
+            # 按全量重投票会把过期信号投回来（见 build_price_action_layer）。
+            price_state, _ = naked_k_smart_money_fusion._compute_layer_state(
                 price_action_layer.evidence,
                 quality=price_action_layer.quality,
                 limitations=price_action_layer.limitations,
@@ -247,7 +249,7 @@ def build_trade_plan(
             price_layer = naked_k_smart_money_fusion.LayerResult(
                 layer="price_action",
                 state=price_state,
-                direction=price_direction,
+                direction=price_action_layer.direction,
                 evidences=tuple(price_action_layer.evidence),
                 quality=price_action_layer.quality,
                 limitations=price_action_layer.limitations,
