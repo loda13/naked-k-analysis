@@ -2958,9 +2958,8 @@ class IntradayLocalTimeTests(unittest.TestCase):
     def test_beijing_exchange_ticker_uses_the_china_zone(self):
         """`.BJ` is a mainland exchange, so it must not fall through to New York.
 
-        naked_k_analysis.classify_market omits `.BJ` and returns "us" for it, while
-        naked_k_portfolio.classify_market handles it. The intraday clock reuses the
-        portfolio one rather than adding a third copy of this rule.
+        Both public module names alias naked_k_portfolio.classify_market, so the
+        intraday clock uses the canonical `.BJ` rule without a duplicate copy.
         """
         frame = self._frame(["2026-08-10 07:00:00"])
 
