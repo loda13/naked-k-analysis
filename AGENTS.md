@@ -2,9 +2,12 @@
 
 The user approved a transition from naked-candlestick-only analysis to daily swing trend assessment on 2026-09-06. The investment horizon is several weeks to several months. Keep the `naked_k_analysis.py` CLI name for continuity.
 
+On 2026-09-29 the user requested broad technical-indicator and price-pattern coverage in a text-only report for their own judgment. No charts. This observation layer is advisory and separately versioned; it does not change the `technical-trend-v2` execution or risk rules.
+
 ## Scope
 
 - `naked_k_trend.py`: pure EMA20/50/200, Wilder ATR14/ADX14, prior-20-bar channel and relative-volume calculations; shared trend and entry rules.
+- `naked_k_observations.py`: broad indicators, causal text-only pattern observations and bullish/bearish/conflicting evidence. Definitions and thresholds: `docs/technical-observations.md`.
 - `naked_k_zones.py`: confirmed structural support/resistance and explicit-anchor HLC3-volume VWAP approximation.
 - `naked_k_planner.py`: conditional plans, existing-position handling and proposed portfolio budgets.
 - `naked_k_risk.py`, `naked_k_portfolio.py`, `naked_k_config.py`: validated risk and optional read-only account state.
@@ -21,6 +24,7 @@ The user approved a transition from naked-candlestick-only analysis to daily swi
 - Rule version `technical-trend-v2`: below 55 daily bars stays unknown; 55–204 uses Close/EMA20/EMA50 and the five-day EMA50 slope with explicit short-history labeling; 205+ retains Close/EMA50/EMA200. Shared constants live in `naked_k_trend.py`; do not fabricate EMA200 or special-case tickers.
 - Backtest production warmup is at least 55 bars. Mark EMA50/200 comparisons unavailable if EMA200 is missing at the initial signal; never report a cash-only curve as a valid unavailable benchmark. Report mode changes using only each signal's available prefix.
 - Trend strength is not direction, a risk multiple is not a target prediction, and a rule threshold is not a calibrated probability.
+- Observation indicators must not vote on or mutate trade actions or risk budgets. Pattern confirmation means the documented geometry/price rule was met, not that a trade will profit. Oversold is not an automatic buy; volume proxies cannot identify institutions. Keep missing/insufficient values explicit.
 - News contains source/date/title metadata only and must never alter technical actions; failure must preserve the technical report. Do not restore LLM direction synthesis or institutional-flow inference.
 - Unknown account holdings or drawdown are not zero. Proposed budgets are not actual exposure; defensive actions never open shorts.
 - Backtest uses next-open execution, adverse slippage, costs and multi-day positions. No fills at stale trigger prices, fake final liquidation or trade-count-scaled Sharpe.

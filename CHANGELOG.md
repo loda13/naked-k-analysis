@@ -1,11 +1,16 @@
 # Changelog
 
-## Unreleased
+## v4.1.0 — 2026-09-29
 
+- Add `technical-observations-v1`: a text-only report with 33 indicator rows, confirmed-pivot patterns, price events and divergence candidates for manual judgment.
+- Show bullish/bearish evidence, disagreements, unavailable values and pattern confirmation times; no scores, charts or institutional-identity inference.
+- Mark conflicting ROC/Momentum directions as mixed and state moving-average positions explicitly.
+- Persist observations in JSON/journal and their version in audit. Keep v2 execution/risk rules unchanged; all new observation rules remain economically UNVALIDATED.
 - Add automatic EMA20/50 short-history assessment for 55–204 daily bars, with explicit missing long-term context; keep the 205+ bar direction rule and all entry/risk constraints.
 - Use `technical-trend-v2` in reports, JSON, journal and audit, including history mode and sample size; preserve earlier artifacts.
 - Support 55-bar production backtest warmup and explicitly unavailable EMA50/200 comparisons when long-history data is missing.
 - Display both support/resistance zone bounds rather than a single midpoint or lower edge.
+- Verify 281 offline tests and a Tencent live report with consistent Markdown, JSON, journal and audit; these establish software behavior, not investment effectiveness.
 
 ## v4.0.0 — 2026-09-06
 

@@ -1,23 +1,33 @@
-# Daily Swing Trend Analysis · 日线波段趋势分析
+# Technical Signal Observations · 日线技术信号观察
 
-[最新版本 v4.0.0](https://github.com/loda13/naked-k-analysis/releases/tag/v4.0.0) · [变更记录](CHANGELOG.md) · [配置示例](config.example.json)
+[最新版本 v4.1.0](https://github.com/loda13/naked-k-analysis/releases/tag/v4.1.0) · [发布说明](docs/releases/v4.1.0.md) · [变更记录](CHANGELOG.md) · [配置示例](config.example.json)
 
-日线波段技术趋势评估，适合持有数周至数月。保留原入口 `naked_k_analysis.py`，使用同一套确定性规则生成报告和离线回测。**规则当前为 UNVALIDATED；工程验证不代表盈利能力已验证。**
+面向A股、港股、美股等市场的日线技术研究，适合持有数周至数月。报告以文字和表格列出偏多、偏空、分歧、形态状态和指标明细，供用户自主判断，不绘图。保留原入口 `naked_k_analysis.py` 和既有v2条件计划参考，不连接券商下单。
 
-面向A股、港股、美股等市场的研究与复盘：回答趋势方向、趋势强弱、突破是否成立、在哪里失效以及可承受多少风险。输出Markdown和JSON，支持可选账户快照；不连接券商下单。
+**当前规则及观察层的经济有效性均为 UNVALIDATED。测试通过、形态确认和指标偏多，不代表盈利能力已验证。**
 
-## 核心信息
+## 报告内容
 
-| 信息 | 用途 |
+1. **偏多、偏空及分歧**：汇总买入与卖出/减仓的观察线索，保留指标之间的矛盾，不评分、不按数量投票。
+2. **文字形态与价格事件**：区分待确认、已确认和已失效，列出识别日期、确认/失效日期及适用的价格条件。
+3. **33个指标条目**：展示数值、计算口径和解释；部分条目包含多个周期，条目数不代表独立证据数量。缺量、样本不足或无法计算时明确标注。
+4. **v2条件计划参考**：保留趋势、风险预算和可选账户快照。新增观察层不修改既有入场、退出及仓位规则。
+
+## 覆盖范围
+
+| 类别 | 指标与观察 |
 | --- | --- |
-| EMA20 / 50 / 200 | 短期位置、中期趋势、长期背景 |
-| ADX14 | 趋势强度；不单独判断涨跌 |
-| ATR14 / ATR% | 波动、止损距离和风险预算 |
-| 前20日高低通道 | 首次收盘突破及结构止损 |
-| 相对成交量 | 当前量与之前20日均量比较，仅辅助观察 |
-| 已确认支撑压力 / 锚定VWAP | 价格位置；VWAP为HLC3成交量近似，明确锚点和确认日 |
+| 均线与位置 | MA5/10/20/60/120/250、EMA20/50/200、BBI、BIAS6/12/24 |
+| 趋势与强度 | SAR、Aroon25、TRIX、MACD、DMI/ADX14/ADXR；ADX仅描述强度 |
+| 动量 | RSI6/12/14/24、KDJ、慢速随机指标、Williams %R、CCI、ROC12/Momentum10 |
+| 波动与通道 | 布林带、ATR14/ATR%、历史波动率20日、Keltner、前20/55日Donchian通道 |
+| 成交量与量价 | 均量、日线相对量、OBV、A/D、CMF、MFI、VWMA、显式锚点的HLC3近似VWAP |
+| 结构与形态 | 已确认支撑压力；双/三重底顶、头肩底顶、箱体、三角、楔形、旗形、RSI/MACD背离候选 |
+| 价格行为 | 突破/破位、假突破/假破位、回踩/反抽、探底、吞没、十字星、星线、仙人指路候选及确认、低位承接/高位回落 |
 
-不再生成主力意图、双证据融合、未校准置信评分、日K分摊成交分布或AI买卖方向。新闻只保留来源、日期、标题，不调用模型。没有新增指标依赖。
+所有观察只使用已收盘日K；通道排除信号当日，结构拐点须等待确认。形态“已确认”表示满足项目定义；未满足条件时不强行匹配。ROC与Momentum方向不一致时显示分歧。完整公式、窗口和阈值见[技术观察定义](docs/technical-observations.md)。
+
+量价指标无法识别“主力抄底”或交易者身份。超买不等于应卖、超卖不等于应买。换手率、盘口和逐笔资金归属需要额外数据，当前不推算。可选新闻只保留来源、日期、标题，不调用模型、不改变技术动作。新增计算复用pandas/numpy，没有新增指标依赖。
 
 ## 使用
 
@@ -40,13 +50,23 @@ python naked_k_analysis.py 0700.HK --news
 python -m unittest discover -v
 ```
 
+指定独立输出路径，保留本次报告、JSON和审计：
+
+```bash
+mkdir -p reports/tencent
+python naked_k_analysis.py 0700.HK --json \
+  --report-path reports/tencent/report.md \
+  --journal-path reports/tencent/journal.jsonl \
+  --audit-path reports/tencent/audit.jsonl > reports/tencent/payload.json
+```
+
 必须显式提供ticker，不内置股票池。行情依次降级：westock-data CLI、腾讯K线、Yahoo chart JSON、yfinance。默认请求3年日K和可选5年周K；周线只显示数据背景和复权检查，不重复参与交易投票。55–204根完整日K自动使用短历史模式，支持DRAM、FOTO等新上市标的；不足55根时不生成趋势方向或新仓计划。
 
 `--news-lookback-days 7 --news-max-items 12` 控制事实附录，窗口外和未来消息按采集层规则过滤。标题未逐条核验正文，不等于事件已经被确认。
 
-输出：`reports/naked_k_latest.md`、`reports/naked_k_journal.jsonl`、`reports/naked_k_audit.jsonl`。JSON及日志schema为 `technical-trend-v2`，趋势结果包含 `history_mode`、`daily_rows`、`direction_basis` 和 `rule_version`。日志追加新记录；旧记录保留原样，不自动换算为新规则的历史信号。
+默认输出：`reports/naked_k_latest.md`、`reports/naked_k_journal.jsonl`、`reports/naked_k_audit.jsonl`；`--json` 同时向标准输出打印JSON。JSON及日志schema为 `technical-trend-v2`，趋势结果包含 `history_mode`、`daily_rows`、`direction_basis` 和 `rule_version`。独立观察层存于每个标的的 `observations` 字段，版本为 `technical-observations-v1`；audit的 `plan_generated` 记录 `observation_version`。日志追加新记录；旧记录保留原样，不自动换算为新规则的历史信号。
 
-## 当前规则
+## v2条件计划规则
 
 1. 完整历史模式（至少205根）：上涨为收盘 > EMA50 > EMA200，EMA50比5个交易日前高。短历史模式（55–204根）：上涨为收盘 > EMA20 > EMA50，EMA50比5个交易日前高；明确标注“长期趋势未确认”。两种模式下跌均为相反关系，其余为过渡。ADX低于20显示弱、20到25为发展中、25及以上为强，仅是描述性惯例。
 2. 只有上涨趋势下首次收盘突破**之前20根日K**最高价才产生候选；持续突破不反复产生新仓。EMA采用首N根收盘均值初始化；ATR/ADX采用Wilder平滑。
@@ -72,7 +92,9 @@ python naked_k_analysis.py 0700.HK --config-path config.example.json --account-p
 
 止损只是计划，跳空、流动性与交易所限制可能造成更大实际损失。账户风险字段依赖输入质量；百分比预算不自动转换为各市场整手订单。
 
-## 短历史规则迁移
+## 从 v4.0.0 升级
+
+CLI入口、依赖和已有参数不变。报告新增文字观察、形态状态和指标表，原条件计划移至参考部分。JSON/journal新增 `observations`，解析旧日志时应允许该字段缺失；观察层与策略规则各自标记版本。离线回测仍只评估v2趋势规则，不把新增观察项视为已回测策略。
 
 `technical-trend-v2`增加短历史模式；至少205根时保留v1完整趋势算法。调用方应读取模式及规则版本，不把v1与v2日志拼接成同一规则业绩；所有旧报告和日志保留。支撑、压力在Markdown中展示完整区间。
 
@@ -81,13 +103,15 @@ python naked_k_analysis.py 0700.HK --config-path config.example.json --account-p
 - v4.0.0为不兼容升级：报告结构与信号规则已替换，当时引入 `technical-trend-v1` schema；当前使用v2，不能把v3历史信号拼接成同一策略业绩。
 - `--llm`、`--llm-base-url`、`--llm-model`、`--news-model` 已删除，使用时明确报错。`--news` 改为事实附录。
 - 旧配置的 `smart_money` 字段不再接受，按 `config.example.json` 迁移。旧输出中的AI/资金流/综合动作字段不再生成。
-- MACD、RSI、KDJ、布林带未加入；当前组合已经分别描述方向、强度和波动，避免重复证据。
+- MACD、RSI、KDJ、布林带等已于2026-09-29加入独立观察层；v2交易规则继续使用原来的精简组合。
 - 旧Python模块接口已移除，脚本集成请使用 [naked_k_trend.py](naked_k_trend.py)、[naked_k_planner.py](naked_k_planner.py) 和 [naked_k_backtest.py](naked_k_backtest.py)。CLI入口名保留。
 - `docs/superpowers/` 下旧设计保留作历史，当前设计见 [日线波段精简设计](docs/superpowers/specs/2026-09-06-technical-trend-streamline-design.md)。
 
 ## 验证
 
-v4.0.0发布前，260项离线测试及独立代码审查通过。覆盖指标计算、完整K线与复权处理、风险边界、新闻降级、执行顺序和日志一致性。生成的报告和账户文件保留在本地，不作为仓库源码发布。
+v4.1.0发布前，281项离线测试通过。覆盖指标公式及预热、平盘/缺量/短历史、计算前缀一致性、形态确认与失效时点、动量分歧、观察层与v2计划隔离，以及已有的数据、风控、新闻和回测回归。
+
+2026-09-29腾讯（0700.HK）实跑使用750根已收盘日K，33个指标条目均可计算，Markdown、JSON、journal和audit核对一致。该次运行验证报告链路，不是收益验证。生成的报告和账户文件保留在本地，不作为仓库源码发布。
 
 离线回测的输入应包含完整、已收盘的OHLCV，明确费用、滑点和复权口径。使用实际下一日开盘、日内止损及多日持仓；期末未平仓按市值记录。比较同区间买入持有和更简单的EMA规则，明确仓位差异。
 

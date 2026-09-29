@@ -21,6 +21,7 @@ import naked_k_news_enhanced
 import naked_k_planner
 import naked_k_portfolio
 import naked_k_trend
+import naked_k_observations
 import westock_wrapper as yf
 
 DEFAULT_JOURNAL_PATH = Path("reports/naked_k_journal.jsonl")
@@ -309,7 +310,7 @@ def _news_appendix(report: InstrumentReport) -> list[str]:
 def format_report(run_date: str, reports: list[InstrumentReport], journal_path: Path,
                   config: naked_k_config.TradingConfig | None = None,
                   adjustment_conflicts: dict | None = None) -> str:
-    lines = ['# 日线波段技术趋势报告', f'生成日期：{run_date}', f'日志：{journal_path}',
+    lines = ['# 日线技术信号观察报告', f'生成日期：{run_date}', f'日志：{journal_path}',
              f'周期：数周至数月；规则版本 {naked_k_trend.RULE_VERSION}；经济有效性 UNVALIDATED。', '']
     directions = {'up': '上涨', 'down': '下跌', 'transition': '过渡', 'unknown': '数据不足'}
     strengths = {'strong': '强', 'developing': '发展中', 'weak': '弱', 'unknown': '不可计算'}
@@ -323,6 +324,7 @@ def format_report(run_date: str, reports: list[InstrumentReport], journal_path: 
                   *([warning] if warning else []),
                   f"- 最新K线：日线 {report.latest_k_dates['daily']} 收 {_display(trend['close'])}",
                   f"- 评估依据：{modes[trend['history_mode']]}；完整日K {trend['daily_rows']} 根",
+                  *naked_k_observations.format_observations(report.observations),
                   f"- 趋势：{directions[trend['direction']]}；ADX强度：{strengths[trend['strength']]}",
                   f'- 当前计划：{report.action}；状态：{report.signal_state}',
                   f"- EMA20 / EMA50 / EMA200：{_display(ind.get('ema20'))} / {_display(ind.get('ema50'))} / {_display(ind.get('ema200'))}",
@@ -463,6 +465,7 @@ def run_analysis(tickers: list[tuple[str, str]], journal_path: Path,
         append_journal(journal_path, run_date, report)
         audit.info('plan_generated', ticker=report.ticker, action=report.action,
                    signal_state=report.signal_state, account_status=report.account['status'],
+                   observation_version=report.observations.get('version'),
                    rule_version=naked_k_trend.RULE_VERSION, history_mode=report.trend['history_mode'],
                    daily_rows=report.trend['daily_rows'], direction_basis=report.trend['direction_basis'])
     text = format_report(run_date, reports, journal_path, config, conflicts)

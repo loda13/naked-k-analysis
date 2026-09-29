@@ -11,6 +11,7 @@ import naked_k_config as settings
 import naked_k_portfolio as portfolio
 import naked_k_risk
 import naked_k_trend
+import naked_k_observations
 
 
 @dataclass
@@ -38,6 +39,7 @@ class InstrumentReport:
     schema_version: str = naked_k_trend.RULE_VERSION
     news: dict[str, Any] = field(default_factory=dict)
     data_quality: dict[str, Any] = field(default_factory=dict)
+    observations: dict[str, Any] = field(default_factory=dict)
 
 
 def _flat_risk(reason: str) -> dict[str, Any]:
@@ -118,7 +120,8 @@ def build_trade_plan(name: str, ticker: str, daily: pd.DataFrame,
         risk_per_share=(trend['entry_reference'] - stop) if stop is not None else None,
         reward_to_risk=None, support=support['midpoint'] if support else None,
         resistance=trend['resistance'], position_size=risk['position_size'],
-        data_sources=sources, latest_k_dates=dates, latest_closes=closes, review=review)
+        data_sources=sources, latest_k_dates=dates, latest_closes=closes, review=review,
+        observations=naked_k_observations.analyze_observations(daily, trend))
 
 
 def apply_portfolio_limits(reports: list[InstrumentReport], config: settings.TradingConfig | None = None) -> None:
