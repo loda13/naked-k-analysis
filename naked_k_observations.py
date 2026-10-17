@@ -1,4 +1,4 @@
-"""Text-only, causal observations. These never vote on the v2 trade plan."""
+"""Text-only, causal observations. These never vote on the dual-MA trade plan."""
 from __future__ import annotations
 
 import math
@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from naked_k_trend import _number, _smooth, indicator_frame
-from naked_k_zones import detect_price_zones
+from naked_k_zones import _date as _zone_date, detect_price_zones
 
 OBSERVATION_VERSION = 'technical-observations-v1'
 PATTERN_WINDOW = 120
@@ -136,7 +136,7 @@ def _pattern(data, key, name, side, status, start, detected, event, evidence, tr
 
 def _structural_patterns(data: pd.DataFrame, zones: dict) -> list[dict[str, Any]]:
     points = []
-    dates = {_date(data, i): i for i in range(len(data))}
+    dates = {_zone_date(value): i for i, value in enumerate(data.index)}
     raw = zones.get('zones', [])
     date_counts = Counter(point['swing_date'] for point in raw)
     for point in raw:
@@ -370,7 +370,7 @@ def analyze_observations(frame: pd.DataFrame, trend: dict | None = None) -> dict
     for period in (5, 10, 20, 60, 120, 250):
         delta = row.Close - row[f'sma{period}']
         add(f'sma{period}', f'MA{period}', '趋势', [f'sma{period}'], '收盘在线上' if delta > 0 else '收盘在线下' if delta < 0 else '收盘与均线持平', side(delta))
-    add('ema', 'EMA20/50/200', '趋势', ['ema20', 'ema50', 'ema200', 'ema50_slope'], '均线位置与EMA50近5日变化；完整/短历史趋势按v2单独评估')
+    add('ema', 'EMA20/50/200', '趋势', ['ema20', 'ema50', 'ema200', 'ema50_slope'], '辅助均线与EMA50近5日变化；不参与双均线交易主线')
     add('bbi', 'BBI(3/6/12/24)', '趋势', ['bbi'], '收盘与四周期均线均值比较', side(row.Close - row.bbi))
     add('sar', 'SAR(0.02,0.02,0.2)', '趋势', ['sar'], '初始方向由前两根收盘决定，前两根极值初始化；翻转仅作观察', side(row.Close - row.sar))
     add('aroon', 'Aroon25', '趋势', ['aroon_up', 'aroon_down'], '含当日26根统计距最近高低点的日数；相同极值取最近一次', side(row.aroon_up - row.aroon_down))
@@ -424,7 +424,7 @@ def _fmt(value: Any) -> str:
 def format_observations(observations: dict) -> list[str]:
     if not observations:
         return []
-    lines = ['', '### 技术信号观察（自主判断）',
+    lines = ['', '### 技术信号观察附录（不参与交易决策）',
              f"- 截至 {observations['as_of']} 完整日K；观察版本 {observations['version']}。",
              '- 偏多/偏空为观察线索；形态确认条件另列，偏空不等于开空仓。',
              '- 偏多线索（买入观察）：' + ('、'.join(observations['bullish_evidence']) or '未出现可计算的偏多读数'),
@@ -454,5 +454,5 @@ def format_observations(observations: dict) -> list[str]:
         values = '；'.join(f"{labels.get(key, key.upper())}={_fmt(value)}" if len(item['values']) > 1 else _fmt(value)
                           for key, value in item['values'].items())
         lines.append(f"| {item['group']} | {item['name']} | {values} | {sides[item['side']]}；{item['interpretation']} |")
-    lines += ['', *['- ' + x for x in observations['limitations']], '', '### v2条件计划参考']
+    lines += ['', *['- ' + x for x in observations['limitations']]]
     return lines

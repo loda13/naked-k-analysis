@@ -5,6 +5,7 @@ import argparse
 import json
 import math
 from dataclasses import asdict
+from functools import partial
 from pathlib import Path
 from statistics import stdev
 from typing import Any, Callable
@@ -13,12 +14,12 @@ import pandas as pd
 
 from naked_k_config import TradingConfig, load_trading_config
 from naked_k_risk import build_risk_plan
-from naked_k_trend import MIN_HISTORY, RULE_VERSION, analyze_trend, evaluate_entry, indicator_frame
+from naked_k_trend import MIN_HISTORY, RULE_VERSION, analyze_trend, evaluate_entry, indicator_frame, protective_stop
 from naked_k_zones import validate_ohlcv
 
 
 SignalBuilder = Callable[[pd.DataFrame], dict[str, Any]]
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "2.0"
 
 
 def _date(value: Any) -> str:
@@ -153,13 +154,30 @@ def _actionable(signal: dict[str, Any]) -> bool:
             and signal.get("action", "小仓试错") in {"买入", "小仓试错"})
 
 
+def _exit_price(row, position: dict, pending_exit: bool = False) -> tuple[float | None, str | None]:
+    stop, target = position['stop'], position.get('target')
+    if row.Open <= stop:
+        return row.Open, 'stop_gap'
+    if target is not None and row.Open >= target:
+        return row.Open, 'target_gap'
+    if pending_exit:
+        return row.Open, 'setup_exit' if position.get('entry_setup') else 'trend_exit'
+    # The intraday path is unknown: a bar touching both levels hits the stop first.
+    if row.Low <= stop:
+        return stop, 'stop'
+    if target is not None and row.High >= target:
+        return target, 'target'
+    return None, None
+
+
 def run_event_backtest(name: str, ticker: str, daily: pd.DataFrame, *, commission_bps: float,
                        slippage_bps: float, config: TradingConfig | None = None, min_history: int = MIN_HISTORY,
                        signal_builder: SignalBuilder | None = None, initial_equity: float = 100000.0) -> dict[str, Any]:
     commission, slip = _cost(commission_bps, "commission_bps"), _cost(slippage_bps, "slippage_bps")
     if type(min_history) is not int or min_history < 2 or isinstance(initial_equity, bool) or not isinstance(initial_equity, (int, float)) or initial_equity <= 0 or not math.isfinite(initial_equity):
         raise ValueError("min_history must be at least 2 and initial_equity must be finite and positive")
-    frame, config, builder = _clean(daily), config or TradingConfig(), signal_builder or analyze_trend
+    frame, config = _clean(daily), config or TradingConfig()
+    builder = signal_builder or partial(analyze_trend, config=config.strategy, ticker=ticker.strip().upper())
     if signal_builder is None and min_history < MIN_HISTORY:
         raise ValueError(f"the production trend strategy requires min_history >= {MIN_HISTORY}")
     evaluation_start = _date(frame.index[min_history]) if len(frame) > min_history else None
@@ -188,14 +206,7 @@ def run_event_backtest(name: str, ticker: str, daily: pd.DataFrame, *, commissio
         row, day = frame.iloc[i], frame.index[i]
         stopped_today = False
         if position:
-            if row.Open <= position["stop"]:
-                base, reason = row.Open, "stop_gap"
-            elif pending_exit:
-                base, reason = row.Open, "trend_exit"
-            elif row.Low <= position["stop"]:
-                base, reason = position["stop"], "stop"
-            else:
-                base = reason = None
+            base, reason = _exit_price(row, position, pending_exit)
             if base is not None:
                 fill = float(base) * (1 - slip)
                 exit_commission = position["units"] * fill * commission
@@ -205,6 +216,7 @@ def run_event_backtest(name: str, ticker: str, daily: pd.DataFrame, *, commissio
                 trade = {**{k: position[k] for k in ("entry_date", "entry_price", "units")}, "exit_date": _date(day),
                          "exit_price": fill, "direction": "long", "exit_reason": reason,
                          "holding_days": i - position["entry_index"], "net_pnl": pnl,
+                         'entry_setup': position.get('entry_setup'), 'target': position.get('target'),
                          "r_multiple": pnl / risk if risk > 0 else None}
                 trades.append(trade)
                 consecutive_losses = consecutive_losses + 1 if pnl < 0 else 0
@@ -212,11 +224,13 @@ def run_event_backtest(name: str, ticker: str, daily: pd.DataFrame, *, commissio
 
         if position is None and pending_entry is not None and not stopped_today:
             fill = float(row.Open) * (1 + slip)
-            check = evaluate_entry(pending_entry, fill)
+            check = evaluate_entry(pending_entry, float(row.Open))
+            if check['eligible']:
+                check = evaluate_entry(pending_entry, fill)
             if check["eligible"] and _actionable(pending_entry):
                 current_equity = cash
                 drawdown = max(0.0, (peak - current_equity) / peak * 100) if peak else 0.0
-                plan = build_risk_plan("小仓试错", fill, float(check["stop"]), None,
+                plan = build_risk_plan("小仓试错", fill, float(check["stop"]), check['target'],
                     current_drawdown_pct=drawdown, consecutive_losses=consecutive_losses, config=config.risk)
                 account_risk_gross = config.portfolio.max_total_account_risk_pct / plan["risk_pct"] * 100
                 gross = min(plan["suggested_gross_pct"], _allocation_cap(config), account_risk_gross) / 100
@@ -226,14 +240,17 @@ def run_event_backtest(name: str, ticker: str, daily: pd.DataFrame, *, commissio
                     cash -= units * fill + entry_commission
                     position = {"entry_date": _date(day), "entry_price": fill, "entry_index": i, "units": units,
                                 "stop": float(check["stop"]), "initial_dollar_risk": units * (fill - float(check["stop"])),
+                                'target': check['target'], 'entry_setup': (pending_entry.get('setup') or {}).get('kind'),
                                 "cash_before_entry": before}
-                    if row.Low <= position["stop"]:
-                        exit_fill = position["stop"] * (1 - slip)
+                    exit_base, exit_reason = _exit_price(row, position)
+                    if exit_base is not None:
+                        exit_fill = exit_base * (1 - slip)
                         exit_commission = units * exit_fill * commission
                         cash += units * exit_fill - exit_commission
                         pnl = cash - before
                         trades.append({"entry_date": _date(day), "entry_price": fill, "exit_date": _date(day),
-                            "exit_price": exit_fill, "direction": "long", "exit_reason": "stop", "holding_days": 0,
+                            "exit_price": exit_fill, "direction": "long", "exit_reason": exit_reason, "holding_days": 0,
+                            'entry_setup': position.get('entry_setup'), 'target': position.get('target'),
                             "units": units, "net_pnl": pnl, "r_multiple": pnl / position["initial_dollar_risk"]})
                         consecutive_losses = consecutive_losses + 1 if pnl < 0 else 0
                         position = None
@@ -252,17 +269,19 @@ def run_event_backtest(name: str, ticker: str, daily: pd.DataFrame, *, commissio
             mode_transitions.append({key: signal.get(key) for key in
                 ("daily_rows", "history_mode", "direction_basis", "rule_version")})
         if position:
-            new_stop = signal.get("stop_loss")
+            new_stop = (protective_stop(signal, position['entry_setup'], position['stop'])
+                        if position.get('entry_setup') else signal.get('stop_loss'))
             if isinstance(new_stop, (int, float)) and math.isfinite(new_stop) and position["stop"] < new_stop < row.Close:
                 position["stop"] = float(new_stop)
-            pending_exit = bool(signal.get("exit_signal"))
+            pending_exit = (bool(new_stop is not None and row.Close <= new_stop) if position.get('entry_setup')
+                            else bool(signal.get('exit_signal')))
         elif _actionable(signal):
             pending_entry = signal
 
     equity_values = [point["equity"] for point in curve]
     comparisons = {"buy_hold": _comparison(frame, first, commission, slip, config, False, initial_equity),
                    "ema50_200": _comparison(frame, first, commission, slip, config, True, initial_equity)}
-    public_position = None if not position else {k: position[k] for k in ("entry_date", "entry_price", "units", "stop", "initial_dollar_risk")}
+    public_position = None if not position else {k: position[k] for k in ("entry_date", "entry_price", "units", "stop", "initial_dollar_risk", 'target', 'entry_setup')}
     return {"name": name, "ticker": ticker, "status": "completed", "trades": trades, "open_position": public_position,
             "equity_curve": curve, "metrics": calculate_performance_metrics(trades, equity_values), "comparisons": comparisons,
             "metadata": metadata, "exposure": _exposure_summary(curve),
@@ -352,7 +371,7 @@ def _read_benchmark(path: str) -> pd.Series:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Offline naked-K trend backtest")
+    parser = argparse.ArgumentParser(description="Offline daily dual-MA long/cash backtest")
     parser.add_argument("ticker"); parser.add_argument("--csv", required=True)
     parser.add_argument("--commission-bps", required=True, type=float); parser.add_argument("--slippage-bps", required=True, type=float)
     parser.add_argument("--output", required=True); parser.add_argument("--benchmark-csv"); parser.add_argument("--config")

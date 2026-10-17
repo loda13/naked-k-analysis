@@ -22,6 +22,7 @@ import naked_k_planner
 import naked_k_portfolio
 import naked_k_trend
 import naked_k_observations
+import naked_k_verification
 import westock_wrapper as yf
 
 DEFAULT_JOURNAL_PATH = Path("reports/naked_k_journal.jsonl")
@@ -113,6 +114,9 @@ def load_ohlcv(ticker: str, interval: str, period: str) -> pd.DataFrame:
         raise ValueError(f"{ticker} {interval} 无可用数据")
     frame = frame.copy()
     frame.index = pd.to_datetime(frame.index)
+    if interval == '1d' and (frame.attrs.get('source') == 'yahoo_chart' or frame.index.tz is not None):
+        stamps = frame.index.tz_localize('UTC') if frame.index.tz is None else frame.index
+        frame.index = stamps.tz_convert(market_timezone(classify_market(ticker))).normalize().tz_localize(None)
     frame = frame.sort_index()
     frame = trim_to_closed_bars(frame, market=classify_market(ticker), interval=interval)
     if frame.empty:
@@ -172,16 +176,8 @@ _TIMEFRAME_LABELS = {
     "monthly": "月线",
 }
 
-# Only the timeframes that carry structural levels are compared. Intraday is
-# excluded because its basis is *unobservable*, not merely different: the 1h window
-# is ~5 days, and Tencent's minute endpoint caps at 120 bars (~30 sessions), so
-# neither source can reach back past an ex-date. Over that window qfq and
-# un-adjusted daily closes measured identical to 0.0000%, which is why the minute
-# fetcher labels itself `unknown` rather than guessing. Since `unknown` never
-# compares equal, including intraday would fire the warning on every A-share on
-# every run and train the reader to ignore it. The structural timeframes below do
-# span years — a daily-vs-monthly mismatch reached 8.9% on 600519 — so they are
-# checked against each other.
+# Keep this legacy structural warning stable. The verification layer separately
+# checks hourly bases and suppresses comparisons when they are unknown.
 _ADJUSTMENT_CHECKED_TIMEFRAMES = ("daily", "weekly", "monthly")
 
 
@@ -310,12 +306,21 @@ def _news_appendix(report: InstrumentReport) -> list[str]:
 def format_report(run_date: str, reports: list[InstrumentReport], journal_path: Path,
                   config: naked_k_config.TradingConfig | None = None,
                   adjustment_conflicts: dict | None = None) -> str:
-    lines = ['# 日线技术信号观察报告', f'生成日期：{run_date}', f'日志：{journal_path}',
-             f'周期：数周至数月；规则版本 {naked_k_trend.RULE_VERSION}；经济有效性 UNVALIDATED。', '']
+    lines = ['# 币哥双均线系统 · 股票日线报告', f'生成日期：{run_date}', f'日志：{journal_path}',
+             f'周期：数周至数月；规则版本 {naked_k_trend.RULE_VERSION}；经济有效性 UNVALIDATED。',
+             f'主线：[币哥原视频]({naked_k_trend.SOURCE_URL})中的 MA/EMA 20、60、120 六均线。',
+             '密集、确认和止损缓冲采用已披露的程序化定义；原视频为目测教学，本报告不声称逐笔复刻。', '']
     directions = {'up': '上涨', 'down': '下跌', 'transition': '过渡', 'unknown': '数据不足'}
-    strengths = {'strong': '强', 'developing': '发展中', 'weak': '弱', 'unknown': '不可计算'}
-    modes = {'short': '短历史模式：EMA20/50；长期趋势未确认',
-             'full': '完整历史模式：EMA50/200', 'insufficient': '样本不足，暂停趋势定向和新仓计划'}
+    modes = {'full': '六均线完整模式：MA/EMA 20、60、120', 'insufficient': '样本不足120根，暂停趋势定向和新仓计划'}
+    states = {'compression': '六线密集', 'expanding_up': '多头发散', 'expanding_down': '空头发散',
+              'mixed': '排列交错', 'insufficient': '样本不足'}
+    setups = {'cluster_breakout': '均线密集突破确认', 'first_pullback_20': '突破后首次回踩20均线不破'}
+    stages = {'waiting_cluster': '等待合格密集区', 'cluster_ready': '密集区已识别，等待方向确认',
+              'breakout_pending': '突破待收盘确认', 'breakout_confirmed': '密集区突破已确认',
+              'waiting_first_pullback': '等待首次回踩20均线', 'pullback_confirmed': '首次回踩已确认',
+              'pullback_consumed': '首次触碰机会已用完，不追认后续回踩', 'invalidated': '原密集区方向失效',
+              'expired': '原形态观察窗口已过'}
+    exits = {'fixed_r': '固定赔率', 'previous_cluster': '历史密集区', 'fibonacci': '显式锚点斐波那契'}
     for report in reports:
         trend, ind = report.trend, report.trend['indicators']
         warning = format_adjustment_warning((adjustment_conflicts or {}).get(report.ticker))
@@ -324,26 +329,37 @@ def format_report(run_date: str, reports: list[InstrumentReport], journal_path: 
                   *([warning] if warning else []),
                   f"- 最新K线：日线 {report.latest_k_dates['daily']} 收 {_display(trend['close'])}",
                   f"- 评估依据：{modes[trend['history_mode']]}；完整日K {trend['daily_rows']} 根",
-                  *naked_k_observations.format_observations(report.observations),
-                  f"- 趋势：{directions[trend['direction']]}；ADX强度：{strengths[trend['strength']]}",
+                  '', '### 双均线主线与交易计划',
+                  f"- 价格方向：{directions[trend['direction']]}；六线形态：{states[trend['ma_state']]}",
                   f'- 当前计划：{report.action}；状态：{report.signal_state}',
-                  f"- EMA20 / EMA50 / EMA200：{_display(ind.get('ema20'))} / {_display(ind.get('ema50'))} / {_display(ind.get('ema200'))}",
-                  f"- EMA50近5日变化：{_display(ind.get('ema50_slope'))}；ADX14：{_display(ind.get('adx'))}（强度不代表方向）",
-                  f"- ATR14：{_display(ind.get('atr'))}；ATR%：{_display(ind.get('atr_pct'))}%",
-                  f"- 前20日高 / 低：{_display(ind.get('channel_high'))} / {_display(ind.get('channel_low'))}；首次收盘突破：{'是' if trend['breakout'] else '否'}",
-                  f"- 相对成交量：{_display(ind.get('relative_volume'))}倍（相对之前20日；只作辅助）"]
-        for key, label in [('nearest_support', '支撑'), ('nearest_resistance', '压力')]:
-            zone = trend['zones'].get(key)
-            bounds = f"{_display(zone['lower'])}–{_display(zone['upper'])}" if zone else '未识别'
-            lines.append(f'- 结构{label}区间：{bounds}')
-        vwap = trend['zones'].get('anchored_vwap')
-        if vwap:
-            lines.append(f"- 锚定VWAP：{_display(vwap['value'])}；锚点 {vwap['anchor_date']}，确认于 {vwap['confirmed_at']}（HLC3成交量近似）")
+                  f"- MA20 / EMA20：{_display(ind.get('ma20'))} / {_display(ind.get('ema20'))}",
+                  f"- MA60 / EMA60：{_display(ind.get('ma60'))} / {_display(ind.get('ema60'))}",
+                  f"- MA120 / EMA120：{_display(ind.get('ma120'))} / {_display(ind.get('ema120'))}",
+                  f"- 六线带宽：{_display(trend['ma_width_pct'])}%；形态进度：{stages[trend['setup_state']]}"]
+        parameters = trend['strategy']['parameters']
+        lines.append(f"- 程序口径：六线带宽≤{parameters['cluster_width_pct']:g}%且连续{parameters['cluster_min_bars']}根；"
+                     f"突破连续{parameters['confirmation_bars']}根收盘确认；止损缓冲{parameters['stop_buffer_pct']:g}%。")
+        cluster = trend['cluster']
+        if cluster:
+            lines.append(f"- 当前密集区：{_display(cluster['lower'])}–{_display(cluster['upper'])}；"
+                         f"识别范围 {cluster['start'][:10]} 至 {cluster['end'][:10]}，突破开始后冻结边界。")
+        if trend['setup']:
+            setup = trend['setup']
+            lines.append(f"- 本次形态：{setups[setup['kind']]}；{'多头' if setup['side'] == 'long' else '空头观察（仅防守，不开空仓）'}；确认于 {setup['confirmed_at'][:10]}。")
+        lines.append(f"- 平仓方式：{exits[trend['exit_plan']['method']]}；计划止盈价 {_display(report.target_price)}；"
+                     f"参考盈亏比 {_display(report.reward_to_risk)}R，最低要求{parameters['min_reward_risk']:g}R。")
+        if parameters['exit_method'] == 'fibonacci':
+            fib = trend['fibonacci']
+            fib_states = {'missing_explicit_anchors': '未指定锚点', 'anchors_outside_available_history': '锚点尚未出现或不在输入历史中',
+                          'invalid_anchor_prices': '锚点价格关系无效', 'awaiting_anchor_high_break': '等待突破指定高点', 'ready': '锚点可用'}
+            lines.append(f"- 斐波那契锚点状态：{fib_states[fib['status']]}；只使用显式指定且已出现的高低点，不自动认定历史新高。")
+            if 'high' in fib:
+                lines.append(f"- 指定高点：{fib['high_date']} {_display(fib['high'])}；后续低点：{fib['low_date']} {_display(fib['low'])}；本次目标系数 {parameters['fibonacci_ratio']}。")
         if report.signal_state == 'planned_long':
             lines += [f"- 候选入场：仅信号日后的下一交易日开盘有效，盘中不追补；参考收盘 {_display(report.entry_trigger)}，最高开盘价 {_display(trend['max_entry'])}",
-                      f'- 初始止损：{_display(report.stop_loss)}；按实际开盘重算风险与首个压力位空间，不追跳空。',
+                      f"- 初始止损：{_display(report.stop_loss)}；开盘须仍高于形态边界 {_display(trend['entry_floor'])}；按实际开盘重算风险与盈亏比。",
                       f'- 仓位预算：{report.position_size}',
-                      '- 退出：收盘跌破EMA50后下一交易日开盘退出；结构移动止损只能上移。']
+                      '- 退出：密集区开仓使用原密集区止损；首次回踩开仓使用20均线带保护位，只收紧。触及计划止盈位退出。']
         else:
             lines.append('- 新仓：0%；当前没有可执行的新仓计划。')
         if report.risk_plan.get('guardrails'):
@@ -353,20 +369,36 @@ def format_report(run_date: str, reports: list[InstrumentReport], journal_path: 
         else:
             lines.append(f"- 账户状态：{report.account['status']}；真实持仓未知；{report.account['note']}")
         if report.management['holding_status'] == 'held':
-            lines.append(f"- 已有多头：{'下一交易日开盘退出' if report.management['exit_next_open'] else '继续按趋势管理'}；建议保护位 {_display(report.management['suggested_stop'])}（账户原止损 {_display(report.management['previous_stop'])}）")
+            lines.append(f"- 已有多头：{'核实订单并安排下一交易日开盘退出' if report.management['exit_next_open'] else '按原开仓依据管理'}；建议保护位 {_display(report.management['suggested_stop'])}（账户原止损 {_display(report.management['previous_stop'])}）")
         else:
             lines.append('- 持仓处理：' + report.management['note'])
         if report.management.get('stop_breached'):
             lines.append('- 止损异常：收盘已触及或跌破账户原保护价，但快照仍有持仓；核实订单并安排退出，不能假设已成交。')
+        if report.management.get('target_reached'):
+            lines.append('- 止盈核实：收盘已达到账户原目标，但快照仍有持仓；核实订单，不能假设已成交。')
         reason_labels = {'trend_up': '价格与均线支持上涨趋势', 'trend_down': '价格与均线支持下跌趋势',
                          'trend_transition': '趋势处于过渡状态', 'trend_unknown': '样本不足，趋势不可评估',
-                         'fresh_breakout': '首次收盘突破前20日高点', 'no_fresh_breakout': '没有新的首次突破',
-                         'resistance_within_1r': '首个压力区距离不足1R'}
+                         **setups, 'no_new_setup': '没有新的双均线开仓形态',
+                         'target_unavailable': '所选平仓方式缺少可用目标，暂停新仓',
+                         'insufficient_reward_risk': '预定目标的盈亏比不足，暂停新仓',
+                         'price_not_above_six_lines': '收盘未站上当前全部六线，暂停多头候选',
+                         'long_only_defensive': '股票多头/现金模式只作防守提示'}
         lines += ['- 依据：' + '；'.join(reason_labels.get(x, str(x)) for x in trend['reasons']),
-                  '- 目标：不预测固定目标价；R倍数只是风险尺度。',
+                  '- 止盈价是预先制定的退出条件，R是风险尺度，不是目标预测或盈利概率。',
                   '- 复盘：' + report.review['note']]
         if report.data_quality.get('warnings'):
             lines.append('- 数据限制：' + '；'.join(report.data_quality['warnings']))
+        lines.extend(naked_k_verification.format_verification(report.verification))
+        lines += ['', '### 辅助结构（不参与交易决策）']
+        for key, label in [('nearest_support', '支撑'), ('nearest_resistance', '压力')]:
+            zone = trend['zones'].get(key)
+            bounds = f"{_display(zone['lower'])}–{_display(zone['upper'])}" if zone else '未识别'
+            lines.append(f'- 结构{label}区间：{bounds}')
+        lines.append(f"- ADX14：{_display(ind.get('adx'))}（只描述强度，不参与方向或开平仓）；ATR14：{_display(ind.get('atr'))}。")
+        vwap = trend['zones'].get('anchored_vwap')
+        if vwap:
+            lines.append(f"- 锚定VWAP：{_display(vwap['value'])}；锚点 {vwap['anchor_date']}，确认于 {vwap['confirmed_at']}（HLC3成交量近似）")
+        lines.extend(naked_k_observations.format_observations(report.observations))
         lines.extend(_news_appendix(report))
         lines.append('')
     proposal = naked_k_portfolio.evaluate_portfolio_exposure(reports, (config or naked_k_config.TradingConfig()).portfolio)
@@ -413,13 +445,31 @@ def run_analysis(tickers: list[tuple[str, str]], journal_path: Path,
             audit.info('data_loaded', **build_data_audit_payload(ticker, '1d', '3y', daily))
             try:
                 weekly = load_ohlcv(ticker, '1wk', '5y')
+                weekly = naked_k_verification.prepare_weekly(weekly, ticker, clock)
                 audit.info('data_loaded', **build_data_audit_payload(ticker, '1wk', '5y', weekly))
             except Exception as exc:
                 weekly = None
                 audit.warning('data_unavailable', ticker=ticker, interval='1wk', error_type=type(exc).__name__)
+            try:
+                hourly = load_ohlcv(ticker, '1h', '1y')
+                audit.info('data_loaded', **build_data_audit_payload(ticker, '1h', '1y', hourly))
+            except Exception as exc:
+                hourly = None
+                audit.warning('data_unavailable', ticker=ticker, interval='1h', error_type=type(exc).__name__)
             conflicts[ticker] = detect_adjustment_conflict({'daily': daily, 'weekly': weekly})
             previous = latest_journal_entry(rows, ticker, daily.index[-1].strftime('%Y-%m-%d'))
             report = build_trade_plan(name, ticker, daily, weekly, previous, config=config, account_state=account_state)
+            try:
+                report.verification = naked_k_verification.build_verification(ticker, daily, weekly, hourly, report.trend, clock)
+                for key, item in report.verification['timeframes'].items():
+                    if 'as_of' in item:
+                        report.data_sources[key] = item['source']
+                        report.latest_k_dates[key] = item['as_of'] if key != 'daily' else report.latest_k_dates['daily']
+                        report.latest_closes[key] = item['close']
+            except Exception as exc:
+                report.verification = {'version': naked_k_verification.VERSION, 'status': 'unavailable',
+                                       'limitations': ['交叉验证数据不足，主线技术报告保留']}
+                audit.warning('verification_unavailable', ticker=ticker, error_type=type(exc).__name__)
             warnings = []
             if conflicts[ticker]:
                 warnings.append('周线与日线复权口径不同；交易价位只使用日线，周线不参与信号')
@@ -428,8 +478,6 @@ def run_analysis(tickers: list[tuple[str, str]], journal_path: Path,
                 warnings.append('行情复权口径未知，实盘价格需核对')
             if report.trend['status'] != 'ready':
                 warnings.append(f'不足{naked_k_trend.MIN_HISTORY}根完整日K，暂停趋势定向和新仓计划')
-            elif report.trend['history_mode'] == 'short':
-                warnings.append('短历史规则未经经济验证；长期趋势未确认')
             deadline = _next_possible_open(report.latest_k_dates['daily'], classify_market(ticker))
             if report.signal_state == 'planned_long' and clock >= deadline:
                 warnings.append('候选开盘窗口已过或交易日历未核实，暂停沿用旧信号；需核对节假日和下一有效交易时点')
@@ -466,6 +514,9 @@ def run_analysis(tickers: list[tuple[str, str]], journal_path: Path,
         audit.info('plan_generated', ticker=report.ticker, action=report.action,
                    signal_state=report.signal_state, account_status=report.account['status'],
                    observation_version=report.observations.get('version'),
+                   verification_version=report.verification.get('version'), verification_status=report.verification.get('status'),
+                   entry_setup=(report.trend.get('setup') or {}).get('kind'),
+                   setup_state=report.trend['setup_state'], exit_method=config.strategy.exit_method,
                    rule_version=naked_k_trend.RULE_VERSION, history_mode=report.trend['history_mode'],
                    daily_rows=report.trend['daily_rows'], direction_basis=report.trend['direction_basis'])
     text = format_report(run_date, reports, journal_path, config, conflicts)
@@ -474,7 +525,7 @@ def run_analysis(tickers: list[tuple[str, str]], journal_path: Path,
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='生成日线波段技术趋势报告（数周至数月）')
+    parser = argparse.ArgumentParser(description='生成币哥双均线股票日线报告（MA/EMA 20、60、120）')
     parser.add_argument('tickers', nargs='+', metavar='TICKER')
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--journal-path', default=str(DEFAULT_JOURNAL_PATH))

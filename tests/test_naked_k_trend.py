@@ -64,111 +64,31 @@ class IndicatorTests(unittest.TestCase):
 
 
 class TrendTests(unittest.TestCase):
-    def test_insufficient_history_displays_available_math_but_is_not_ready(self):
-        signal = analyze_trend(prices(range(10, 64)))
-        self.assertEqual(signal["status"], "insufficient_history")
-        self.assertEqual(signal["direction"], "unknown")
-        self.assertIsNotNone(signal["indicators"]["ema50"])
-        self.assertFalse(signal["entry_candidate"])
+    def test_available_math_does_not_replace_missing_120_bar_history(self):
+        signal = analyze_trend(prices(range(10, 79)))
+        self.assertEqual(signal['status'], 'insufficient_history')
+        self.assertEqual(signal['direction'], 'unknown')
+        self.assertIsNotNone(signal['indicators']['ema60'])
+        self.assertIsNone(signal['indicators']['ema120'])
+        self.assertFalse(signal['entry_candidate'])
 
-    def test_history_mode_boundaries_and_available_ema200(self):
-        for size, mode, basis in [(54, 'insufficient', 'unavailable'), (55, 'short', 'ema20_50'),
-                                  (199, 'short', 'ema20_50'), (200, 'short', 'ema20_50'),
-                                  (204, 'short', 'ema20_50'), (205, 'full', 'ema50_200')]:
-            with self.subTest(size=size):
-                signal = analyze_trend(prices(np.linspace(100, 110, size)))
-                self.assertEqual(signal['history_mode'], mode)
-                self.assertEqual(signal['direction_basis'], basis)
-                self.assertEqual(signal['daily_rows'], size)
-                self.assertEqual(signal['rule_version'], 'technical-trend-v2')
-                self.assertEqual(signal['direction'], 'unknown' if size < 55 else 'up')
-                self.assertEqual(signal['status'], 'insufficient_history' if size < 55 else 'ready')
-                self.assertEqual(signal['indicators']['ema200'] is None, size < 200)
-
-    def test_short_history_direction_and_existing_position_exit(self):
-        for close, direction, exit_signal in [(np.linspace(100, 110, 69), 'up', False),
-                                              (np.linspace(110, 100, 69), 'down', True),
-                                              (np.full(69, 100.), 'transition', False)]:
+    def test_six_line_direction_never_implies_entry_or_universal_exit(self):
+        for close, direction in [(np.linspace(100, 200, 240), 'up'),
+                                 (np.linspace(200, 100, 240), 'down'),
+                                 (np.full(240, 100.), 'transition')]:
             with self.subTest(direction=direction):
                 signal = analyze_trend(prices(close))
                 self.assertEqual(signal['direction'], direction)
-                self.assertEqual(signal['exit_signal'], exit_signal)
-
-    def test_short_history_breakout_and_risk_filters(self):
-        base = np.r_[np.linspace(100, 110, 34), np.full(20, 110.)]
-        first = analyze_trend(prices(np.r_[base, 111.2]))
-        repeated = analyze_trend(prices(np.r_[base, 111.2, 112.3]))
-        self.assertTrue(first['entry_candidate'])
-        self.assertTrue(evaluate_entry(first, 111.2)['eligible'])
-        self.assertFalse(evaluate_entry(first, first['max_entry'] + 1)['eligible'])
-        self.assertFalse(repeated['breakout'])
-        self.assertFalse(repeated['entry_candidate'])
-        overextended = analyze_trend(prices(np.r_[base, 150.]))
-        self.assertTrue(overextended['breakout'])
-        self.assertFalse(overextended['entry_candidate'])
-        zones = {'nearest_support': None, 'nearest_resistance': {'lower': 111., 'upper': 113.},
-                 'zones': [], 'anchored_vwap': None}
-        with patch('naked_k_trend.detect_price_zones', return_value=zones):
-            blocked = analyze_trend(prices(np.r_[base, 111.2]))
-        self.assertFalse(blocked['entry_candidate'])
-        self.assertIn('resistance_within_1r', blocked['reasons'])
-
-    def test_full_mode_keeps_original_rule_even_when_ema20_disagrees(self):
-        frame = prices(np.r_[np.linspace(100, 160, 200), [158., 157., 156., 155., 154.]])
-        signal = analyze_trend(frame)
-        ind = signal['indicators']
-        self.assertLess(signal['close'], ind['ema20'])
-        self.assertGreater(signal['close'], ind['ema50'])
-        self.assertGreater(ind['ema50'], ind['ema200'])
-        self.assertGreater(ind['ema50_slope'], 0)
-        self.assertEqual(signal['direction'], 'up')
-
-    def test_uptrend_fresh_breakout_does_not_repeat(self):
-        base = np.r_[np.linspace(50, 200, 184), np.full(20, 200.0)]
-        first = prices(np.r_[base, 202])
-        second = prices(np.r_[base, 202, 203])
-        first_signal, second_signal = analyze_trend(first), analyze_trend(second)
-        self.assertEqual(first_signal["direction"], "up")
-        self.assertTrue(first_signal["breakout"])
-        self.assertTrue(first_signal["entry_candidate"])
-        self.assertFalse(second_signal["breakout"])
-        self.assertFalse(second_signal["entry_candidate"])
-
-    def test_fresh_breakout_payload_uses_json_native_booleans(self):
-        close = np.r_[np.linspace(50, 200, 184), np.full(20, 200.0), 202]
-        payload = analyze_trend(prices(close))
-
-        self.assertTrue(payload["breakout"])
-        self.assertTrue(payload["entry_candidate"])
-        self.assertIs(type(payload["breakout"]), bool)
-        self.assertIs(type(payload["entry_candidate"]), bool)
-        self.assertIs(type(payload["exit_signal"]), bool)
-        json.dumps(payload, allow_nan=False)
+                self.assertFalse(signal['entry_candidate'])
+                self.assertFalse(signal['exit_signal'])
 
     def test_full_payload_has_no_nonfinite_json_numbers(self):
         payload = analyze_trend(prices([10] * 205, volume=0))
         json.dumps(payload, allow_nan=False)
-        self.assertEqual(payload["direction"], "transition")
-        self.assertEqual(payload["strength"], "weak")
-
-    def test_overextended_breakout_is_not_an_entry_candidate(self):
-        close = np.linspace(100, 200, 205)
-        close[-21:-1] = 190
-        data = prices(np.r_[close[:-1], 250])
-        signal = analyze_trend(data)
-        self.assertTrue(signal["breakout"])
-        self.assertLess(signal["max_entry"], signal["close"])
-        self.assertFalse(signal["entry_candidate"])
-
-    def test_signal_uses_resistance_lower_edge_and_rejects_inside_zone(self):
-        close = np.r_[np.linspace(50, 200, 184), np.full(20, 200.0), 202]
-        zones = {"zones": [], "nearest_support": None,
-                 "nearest_resistance": {"lower": 201.0, "upper": 205.0, "midpoint": 203.0},
-                 "anchored_vwap": None}
-        with patch("naked_k_trend.detect_price_zones", return_value=zones):
-            signal = analyze_trend(prices(close))
-        self.assertEqual(signal["resistance"], 201.0)
-        self.assertFalse(signal["entry_candidate"])
+        self.assertEqual(payload['direction'], 'transition')
+        self.assertEqual(payload['strength'], 'weak')
+        self.assertIs(type(payload['breakout']), bool)
+        self.assertIs(type(payload['entry_candidate']), bool)
 
 
 class EntryTests(unittest.TestCase):

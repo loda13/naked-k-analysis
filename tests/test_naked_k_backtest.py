@@ -36,24 +36,24 @@ def candidate(stop=90.0, maximum=101.5, action="小仓试错"):
 
 
 class BacktestTests(unittest.TestCase):
-    def test_default_warmup_uses_55_signals_and_executes_on_bar_56(self):
-        builder = scripted({55: candidate(stop=45, maximum=60)})
-        result = bt.run_event_backtest("x", "X", bars(range(1, 57)), commission_bps=0,
+    def test_default_warmup_uses_120_signals_and_executes_on_bar_121(self):
+        builder = scripted({120: candidate(stop=100, maximum=130)})
+        result = bt.run_event_backtest("x", "X", bars(range(1, 122)), commission_bps=0,
             slippage_bps=0, signal_builder=builder)
-        self.assertEqual(builder.calls[0][0], 55)
-        self.assertEqual(result["open_position"]["entry_date"], "2025-02-25")
-        self.assertEqual(result["audit"]["evaluated_from"], "2025-02-24")
+        self.assertEqual(builder.calls[0][0], 120)
+        self.assertEqual(result["open_position"]["entry_date"], "2025-05-01")
+        self.assertEqual(result["audit"]["evaluated_from"], "2025-04-30")
 
-    def test_production_history_boundary_rejects_54_and_allows_55(self):
-        short = bt.run_event_backtest("x", "X", bars(range(1, 55)), commission_bps=0, slippage_bps=0)
+    def test_production_history_boundary_rejects_119_and_allows_120(self):
+        short = bt.run_event_backtest("x", "X", bars(range(1, 120)), commission_bps=0, slippage_bps=0)
         with self.assertRaises(ValueError):
-            bt.run_event_backtest("x", "X", bars(range(1, 57)), commission_bps=0,
-                slippage_bps=0, min_history=54)
-        ready = bt.run_event_backtest("x", "X", bars(range(1, 57)), commission_bps=0,
-            slippage_bps=0, min_history=55)
+            bt.run_event_backtest("x", "X", bars(range(1, 122)), commission_bps=0,
+                slippage_bps=0, min_history=119)
+        ready = bt.run_event_backtest("x", "X", bars(range(1, 122)), commission_bps=0,
+            slippage_bps=0, min_history=120)
         self.assertEqual(short["status"], "insufficient_history")
         self.assertEqual(ready["status"], "completed")
-        self.assertEqual(ready["metadata"]["minimum_history"], 55)
+        self.assertEqual(ready["metadata"]["minimum_history"], 120)
 
     def test_gap_entry_is_rejected_at_actual_slipped_open(self):
         result = bt.run_event_backtest("x", "X", bars([100, 100, 120]), commission_bps=0,
@@ -187,30 +187,30 @@ class BacktestTests(unittest.TestCase):
         self.assertEqual(result["comparisons"]["buy_hold"]["period_start"], windows[0]["test_start"].strftime("%Y-%m-%d"))
         self.assertEqual(result["audit"]["mode"], "stitched_independent_windows")
 
-    def test_walk_forward_accepts_55_bar_training_and_propagates_unavailable_comparison(self):
-        frame = bars(range(1, 66))
+    def test_walk_forward_accepts_120_bar_training_and_propagates_unavailable_comparison(self):
+        frame = bars(range(1, 131))
         with self.assertRaises(ValueError):
-            bt.build_walk_forward_windows(frame, 54, 5)
-        windows = bt.build_walk_forward_windows(frame, 55, 5)
+            bt.build_walk_forward_windows(frame, 119, 5)
+        windows = bt.build_walk_forward_windows(frame, 120, 5)
         self.assertEqual(len(windows), 2)
-        result = bt.run_walk_forward_event_backtest("x", "X", frame, 55, 5,
+        result = bt.run_walk_forward_event_backtest("x", "X", frame, 120, 5,
             commission_bps=0, slippage_bps=0, signal_builder=scripted({}))
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["comparisons"]["ema50_200"]["status"], "not_computable")
         self.assertIsNone(result["comparisons"]["ema50_200"]["metrics"])
         self.assertEqual(result["comparisons"]["ema50_200"]["equity"], [])
 
-    def test_real_signal_entry_and_mode_switch_are_causal(self):
-        closes = [40] * 49 + [40, 40.5, 41, 41.5, 42, 46.1, 46.1] + list(range(47, 201))
-        frame = bars(closes, lows=[value - 2 for value in closes], closes=closes)
-        first_signal = bt.analyze_trend(frame.iloc[:55])
+    def test_real_dual_ma_signal_and_history_mode_are_causal(self):
+        from tests.test_dual_ma_system import candles
+        frame = candles([100.] * 125 + [102., 102., 102.])
+        first_signal = bt.analyze_trend(frame.iloc[:127])
         self.assertTrue(first_signal["entry_candidate"])
         result = bt.run_event_backtest("x", "X", frame, commission_bps=0, slippage_bps=0)
-        self.assertEqual(result["open_position"]["entry_date"], "2025-02-25")
+        self.assertEqual(result["open_position"]["entry_date"], frame.index[127].strftime('%Y-%m-%d'))
         transitions = result["audit"]["signal_mode_transitions"]
         self.assertEqual([(item["daily_rows"], item["history_mode"], item["direction_basis"])
-                          for item in transitions], [(55, "short", "ema20_50"), (205, "full", "ema50_200")])
-        self.assertEqual({item["rule_version"] for item in transitions}, {"technical-trend-v2"})
+                          for item in transitions], [(120, "full", "ma_ema_20_60_120")])
+        self.assertEqual({item["rule_version"] for item in transitions}, {"bige-dual-ma-v1"})
 
     def test_walk_forward_preserves_open_window_positions_and_explains_marked_synthesis(self):
         frame = bars([100] * 205 + list(range(100, 110)), lows=[99] * 215)

@@ -23,7 +23,7 @@ class PlannerTests(unittest.TestCase):
     def test_unknown_account_is_explicit_and_signal_is_only_a_plan(self):
         with patch.object(p.naked_k_trend, 'analyze_trend', return_value=signal()):
             report = p.build_trade_plan('TEST', 'TEST', frame())
-        self.assertEqual(report.schema_version, 'technical-trend-v2')
+        self.assertEqual(report.schema_version, 'bige-dual-ma-v1')
         self.assertEqual(report.signal_state, 'planned_long')
         self.assertEqual(report.account['status'], 'unknown')
         self.assertEqual(report.management['holding_status'], 'unknown')
@@ -40,13 +40,13 @@ class PlannerTests(unittest.TestCase):
             self.assertNotEqual(report.signal_state, 'planned_long')
 
     def test_existing_long_exits_without_opening_a_short_or_loosening_stop(self):
-        s = signal(); s.update(direction='down', entry_candidate=False, exit_signal=True, stop_loss=90)
+        s = signal(); s.update(direction='down', entry_candidate=False, close=98, stop_loss=90)
         with patch.object(p.naked_k_trend, 'analyze_trend', return_value=s):
             state = account(); state['positions'][0]['stop_loss'] = 99
             report = p.build_trade_plan('腾讯', '0700.HK', frame(), account_state=state)
         self.assertEqual(report.management['holding_status'], 'held')
         self.assertTrue(report.management['exit_next_open'])
-        self.assertEqual(report.management['suggested_stop'], 99)
+        self.assertIsNone(report.management['suggested_stop'])
         self.assertEqual(report.risk_plan['suggested_gross_pct'], 0)
         self.assertNotIn('short', report.signal_state)
 

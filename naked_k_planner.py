@@ -40,6 +40,7 @@ class InstrumentReport:
     news: dict[str, Any] = field(default_factory=dict)
     data_quality: dict[str, Any] = field(default_factory=dict)
     observations: dict[str, Any] = field(default_factory=dict)
+    verification: dict[str, Any] = field(default_factory=dict)
 
 
 def _flat_risk(reason: str) -> dict[str, Any]:
@@ -55,29 +56,37 @@ def build_trade_plan(name: str, ticker: str, daily: pd.DataFrame,
                      account_state: dict | None = None) -> InstrumentReport:
     config = config or settings.TradingConfig()
     ticker = ticker.strip().upper()
-    trend = naked_k_trend.analyze_trend(daily)
+    trend = naked_k_trend.analyze_trend(daily, config.strategy, ticker=ticker)
     as_of = str(trend['as_of'])[:10]
     account = portfolio.assess_account(account_state, as_of, config)
     known = account['status'] == 'known'
     holding = next((x for x in account['positions'] if x['ticker'] == ticker.upper() and x['gross_pct'] > 0), None) if known else None
     stop = trend['stop_loss']
     prior_stop = holding.get('stop_loss') if holding else None
-    suggested_stop = max(x for x in (stop, prior_stop) if x is not None) if any(x is not None for x in (stop, prior_stop)) else None
+    entry_setup = holding.get('entry_setup') if holding else None
+    suggested_stop = naked_k_trend.protective_stop(trend, entry_setup, prior_stop)
     stop_breached = bool(holding and prior_stop is not None and trend['close'] <= prior_stop)
-    needs_exit = bool(holding and (trend['exit_signal'] or stop_breached))
+    target = holding.get('target_price') if holding else trend.get('target_price')
+    target_reached = bool(holding and target is not None and trend['close'] >= target)
+    needs_exit = bool(holding and (stop_breached or target_reached or
+                     (suggested_stop is not None and trend['close'] <= suggested_stop)))
     management = {
         'holding_status': ('held' if holding else 'flat') if known else 'unknown',
         'exit_next_open': needs_exit,
         'stop_breached': stop_breached,
-        'conditional_exit': bool(trend['exit_signal']),
+        'conditional_exit': needs_exit,
+        'target_reached': target_reached,
+        'target_price': target,
+        'entry_setup': entry_setup,
         'previous_stop': prior_stop,
         'suggested_stop': suggested_stop if holding and not stop_breached else None,
-        'note': '若已有多头：收盘跌破EMA50则下个交易日开盘退出；止损只能收紧，不放宽',
+        'note': '已有多头按原开仓依据管理：密集区止损固定，首次回踩20均线的保护位只收紧；缺少原开仓依据/止损/目标时不推断成交或补造计划',
     }
     action, state = '观望', 'watching'
     risk = _flat_risk('')
     if holding:
-        action = '核实止损并退出已有多头' if stop_breached else '退出已有多头' if needs_exit else '管理已有多头'
+        action = ('核实止损并退出已有多头' if stop_breached else '核实止盈并退出已有多头' if target_reached
+                  else '退出已有多头' if needs_exit else '管理已有多头')
         state = 'exit_pending' if needs_exit else 'holding_long'
     elif trend['direction'] == 'down':
         action = '防守/回避'
@@ -88,7 +97,7 @@ def build_trade_plan(name: str, ticker: str, daily: pd.DataFrame,
             risk = _flat_risk('、'.join(account['guardrails']))
         else:
             risk = naked_k_risk.build_risk_plan(
-                '小仓试错', trend['entry_reference'], stop, None,
+                '小仓试错', trend['entry_reference'], stop, target,
                 current_drawdown_pct=account['current_drawdown_pct'] if known else 0,
                 consecutive_losses=account['consecutive_losses'] if known else 0,
                 config=config.risk)
@@ -115,10 +124,10 @@ def build_trade_plan(name: str, ticker: str, daily: pd.DataFrame,
     return InstrumentReport(
         name=name, ticker=ticker.upper(), action=action, signal_state=state, trend=trend,
         risk_plan=risk, account=account, management=management,
-        entry_trigger=trend['entry_reference'] if trend['entry_candidate'] else None,
-        stop_loss=stop, target_price=None,
-        risk_per_share=(trend['entry_reference'] - stop) if stop is not None else None,
-        reward_to_risk=None, support=support['midpoint'] if support else None,
+        entry_trigger=trend['entry_reference'] if trend['entry_candidate'] and not holding else None,
+        stop_loss=suggested_stop if holding else stop, target_price=target,
+        risk_per_share=(trend['entry_reference'] - stop) if stop is not None and not holding else None,
+        reward_to_risk=trend.get('reward_to_risk') if not holding else None, support=support['midpoint'] if support else None,
         resistance=trend['resistance'], position_size=risk['position_size'],
         data_sources=sources, latest_k_dates=dates, latest_closes=closes, review=review,
         observations=naked_k_observations.analyze_observations(daily, trend))

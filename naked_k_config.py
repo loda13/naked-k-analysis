@@ -1,9 +1,10 @@
-"""Validated risk limits; indicator rules are frozen in naked_k_trend."""
+"""Validated strategy assumptions and independent account risk limits."""
 from __future__ import annotations
 
 import json
 import math
 from dataclasses import dataclass, field, fields
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -53,9 +54,55 @@ class PortfolioConfig:
 
 
 @dataclass(frozen=True)
+class DualMAConfig:
+    # These numerical definitions are engineering choices, not video quotations.
+    cluster_width_pct: float = 1.0
+    cluster_min_bars: int = 3
+    confirmation_bars: int = 2
+    setup_max_bars: int = 20
+    stop_buffer_pct: float = 0.1
+    max_entry_gap_r: float = 0.5
+    exit_method: str = 'fixed_r'
+    take_profit_r: float = 3.0
+    min_reward_risk: float = 3.0
+    fibonacci_ratio: float = 1.618
+    fibonacci_anchors: dict[str, dict[str, str]] = field(default_factory=dict)
+
+    def __post_init__(self):
+        number(self.cluster_width_pct, 'cluster_width_pct', .001, 20)
+        number(self.stop_buffer_pct, 'stop_buffer_pct', 0, 10)
+        number(self.max_entry_gap_r, 'max_entry_gap_r', 0, 10)
+        number(self.take_profit_r, 'take_profit_r', 1, 100)
+        number(self.min_reward_risk, 'min_reward_risk', 1, 100)
+        for key in ('cluster_min_bars', 'confirmation_bars', 'setup_max_bars'):
+            if type(getattr(self, key)) is not int or not 1 <= getattr(self, key) <= 250:
+                raise ValueError(f'{key} must be an integer in [1, 250]')
+        if not isinstance(self.exit_method, str) or self.exit_method not in {'fixed_r', 'previous_cluster', 'fibonacci'}:
+            raise ValueError('exit_method must be fixed_r, previous_cluster or fibonacci')
+        if self.take_profit_r < self.min_reward_risk:
+            raise ValueError('take_profit_r must be at least min_reward_risk')
+        if self.fibonacci_ratio not in (1.618, 2.618, 3.618, 4.236):
+            raise ValueError('unsupported fibonacci_ratio')
+        if not isinstance(self.fibonacci_anchors, dict):
+            raise ValueError('fibonacci_anchors must be a ticker-keyed object')
+        for ticker, anchor in self.fibonacci_anchors.items():
+            if not isinstance(ticker, str) or not ticker or ticker != ticker.strip().upper():
+                raise ValueError('fibonacci anchor tickers must be normalized uppercase symbols')
+            if not isinstance(anchor, dict) or set(anchor) != {'high_date', 'low_date'}:
+                raise ValueError('fibonacci anchors require high_date and low_date')
+            try:
+                high, low = date.fromisoformat(anchor['high_date']), date.fromisoformat(anchor['low_date'])
+            except (ValueError, TypeError):
+                raise ValueError('fibonacci anchor dates must be YYYY-MM-DD') from None
+            if high >= low:
+                raise ValueError('fibonacci high_date must precede low_date')
+
+
+@dataclass(frozen=True)
 class TradingConfig:
     risk: RiskConfig = field(default_factory=RiskConfig)
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
+    strategy: DualMAConfig = field(default_factory=DualMAConfig)
 
 
 def build_trading_config(payload: dict[str, Any] | None = None) -> TradingConfig:
@@ -64,10 +111,10 @@ def build_trading_config(payload: dict[str, Any] | None = None) -> TradingConfig
         raise ValueError('config must be a JSON object')
     if 'smart_money' in data:
         raise ValueError('smart_money 已移除；请按 config.example.json 迁移配置')
-    if set(data) - {'risk', 'portfolio'}:
+    if set(data) - {'risk', 'portfolio', 'strategy'}:
         raise ValueError('unknown config fields')
     sections = []
-    for key, cls in [('risk', RiskConfig), ('portfolio', PortfolioConfig)]:
+    for key, cls in [('risk', RiskConfig), ('portfolio', PortfolioConfig), ('strategy', DualMAConfig)]:
         values = data.get(key, {})
         if not isinstance(values, dict) or set(values) - {f.name for f in fields(cls)}:
             raise ValueError(f'invalid {key} configuration fields')

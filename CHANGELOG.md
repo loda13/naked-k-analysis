@@ -1,5 +1,18 @@
 # Changelog
 
+## v5.0.0 — 2026-10-18
+
+- Breaking release: replace `technical-trend-v2` with `bige-dual-ma-v1`; retain the CLI name and historical artifacts. Credit 以太坊教授幣哥's public YouTube teaching and distinguish this independent implementation from the source concepts.
+- Add `dual-ma-verification-v1` after the main trading plan: weekly/daily/4h/1h evidence, conflicts, candidate retracement anchors and nearby MA/structural levels. Persist the verification without changing signals or budgets.
+- Validate closed hourly bars and session-bounded 4h aggregates; expose missing Korean tails and unknown price bases, remove duplicate weekly quote rows, and normalize Yahoo daily UTC timestamps to exchange dates.
+- Make the daily MA/EMA 20/60/120 system the sole trade-decision path, based on the original 以太坊教授幣哥 tutorial and explicitly documented engineering definitions.
+- Introduce `bige-dual-ma-v1`: confirmed compression breakout and first MA20-band pullback; require all six averages (120 closed daily bars), with no EMA50/200 or Donchian entry fallback.
+- Support fixed-R, prior compression-zone and explicitly anchored Fibonacci exits. Preserve the original entry's stop family and use the same strategy configuration in reports and offline replay.
+- Add target fills, conservative same-bar stop/target ordering, actual-open revalidation and entry-specific stop management; preserve costs, long/cash semantics and marked open positions.
+- Put the six-line system and its conditional plan first; move broad observations and structural levels to an advisory appendix. Preserve data checks, account limits and factual news isolation.
+- Preserve historical journals and rule versions. New backtest output schema is `2.0`; software verification does not establish economic effectiveness (`UNVALIDATED`).
+- Verify 309 offline tests, Tencent/Xiaomi native outputs and a ten-symbol cached replay. Update README, source attribution and the migration guide for the new trading/reporting contract.
+
 ## v4.1.0 — 2026-09-29
 
 - Add `technical-observations-v1`: a text-only report with 33 indicator rows, confirmed-pivot patterns, price events and divergence candidates for manual judgment.

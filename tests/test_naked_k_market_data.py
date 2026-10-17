@@ -6,6 +6,18 @@ import pandas as pd
 import naked_k_analysis
 
 class ClosedBarTests(unittest.TestCase):
+    def test_yahoo_daily_utc_stamp_is_converted_to_exchange_date(self):
+        frame = pd.DataFrame({'Open': [100., 102.], 'High': [102., 104.],
+                              'Low': [99., 101.], 'Close': [101., 103.], 'Volume': [100., 100.]},
+                             index=pd.to_datetime(['2026-10-14 15:00', '2026-10-15 15:00']))
+        frame.attrs.update(source='yahoo_chart', adjustment='split_only')
+        with patch.object(naked_k_analysis.yf, 'download', return_value=frame), patch.object(
+                naked_k_analysis, 'trim_to_closed_bars', side_effect=lambda loaded, **kw: loaded):
+            loaded = naked_k_analysis.load_ohlcv('005930.KS', '1d', '3y')
+        self.assertEqual(loaded.index.strftime('%Y-%m-%d').tolist(), ['2026-10-15', '2026-10-16'])
+        self.assertTrue(all(stamp.hour == 0 for stamp in loaded.index))
+        self.assertEqual(loaded.attrs['adjustment'], 'split_only')
+
     def test_korean_market_trims_unclosed_daily_bar_in_seoul_timezone(self):
         frame = pd.DataFrame(
             {

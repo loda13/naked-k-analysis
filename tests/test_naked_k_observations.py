@@ -131,13 +131,28 @@ class ObservationTests(unittest.TestCase):
         failure = next(x for x in after['patterns'] if x['id'] == 'false_breakout_up')
         self.assertEqual(failure['confirmed_at'], prices(flat + [103, 100]).index[-1].date().isoformat())
 
-    def test_text_report_persists_observations_without_changing_v2_plan(self):
+    def test_nonmidnight_daily_timestamps_preserve_structural_patterns(self):
+        values = list(np.linspace(130, 106, 25)) + [104, 102, 100, 103, 107, 112, 109, 105, 102, 100.2, 103, 106, 109, 114]
+        data = prices(values)
+        expected = o.analyze_observations(data)['patterns']
+        self.assertTrue(any(x['id'] == 'double_bottom' and x['status'] == 'confirmed' for x in expected))
+        for timezone in (None, 'UTC', 'America/New_York'):
+            with self.subTest(timezone=timezone):
+                shifted = data.copy()
+                shifted.index = (data.index + pd.Timedelta(hours=13, minutes=30)).tz_localize(timezone)
+                original = shifted.copy(deep=True)
+                self.assertEqual(o.analyze_observations(shifted)['patterns'], expected)
+                pd.testing.assert_frame_equal(shifted, original)
+
+    def test_text_report_persists_observations_without_changing_dual_ma_plan(self):
         data = prices(np.linspace(100, 140, 260))
         expected = analyze_trend(data)
         report = a.build_trade_plan('测试', 'TEST', data)
         self.assertEqual(report.trend, expected)
         self.assertEqual(report.observations['version'], o.OBSERVATION_VERSION)
         text = a.format_report('2026-09-29', [report], Path('unused'))
+        self.assertLess(text.index('### 双均线主线与交易计划'), text.index('### 技术信号观察附录'))
+        self.assertNotIn('v2条件计划参考', text)
         for name in ['MACD', 'RSI', 'KDJ', '布林', 'OBV', 'MFI', 'CMF', '偏多', '偏空', '待确认']:
             self.assertIn(name, text)
         self.assertNotIn('![', text)

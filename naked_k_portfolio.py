@@ -167,7 +167,7 @@ def assess_account(state: dict[str, Any] | None, as_of: str,
         raise ValueError('positions must be an array')
     positions, reports, seen = [], [], set()
     for position in state['positions']:
-        if not isinstance(position, dict) or set(position) - {'ticker', 'gross_pct', 'account_risk_pct', 'stop_loss'}:
+        if not isinstance(position, dict) or set(position) - {'ticker', 'gross_pct', 'account_risk_pct', 'stop_loss', 'entry_setup', 'target_price'}:
             raise ValueError('invalid account position fields')
         ticker = position.get('ticker')
         if not isinstance(ticker, str) or not ticker.strip() or ticker.strip().upper() in seen:
@@ -181,6 +181,10 @@ def assess_account(state: dict[str, Any] | None, as_of: str,
         stop = position.get('stop_loss')
         if stop is not None:
             naked_k_config.number(stop, 'position.stop_loss', 1e-12, float('inf'))
+        if position.get('entry_setup') not in (None, 'cluster_breakout', 'first_pullback_20'):
+            raise ValueError('position.entry_setup must identify the original dual-MA setup')
+        if position.get('target_price') is not None:
+            naked_k_config.number(position['target_price'], 'position.target_price', 1e-12, float('inf'))
         positions.append({**position, 'ticker': ticker, 'gross_pct': gross,
                           'account_risk_pct': risk, 'stop_loss': stop})
         reports.append({'ticker': ticker, 'action': '实际持仓', 'risk_plan': {

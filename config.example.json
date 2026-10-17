@@ -1,4 +1,17 @@
 {
+  "strategy": {
+    "cluster_width_pct": 1.0,
+    "cluster_min_bars": 3,
+    "confirmation_bars": 2,
+    "setup_max_bars": 20,
+    "stop_buffer_pct": 0.1,
+    "max_entry_gap_r": 0.5,
+    "exit_method": "fixed_r",
+    "take_profit_r": 3.0,
+    "min_reward_risk": 3.0,
+    "fibonacci_ratio": 1.618,
+    "fibonacci_anchors": {}
+  },
   "risk": {
     "account_risk_pct": 1.0,
     "max_drawdown_pct": 8.0,
