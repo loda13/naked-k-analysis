@@ -15,6 +15,10 @@ VERSION = 'dual-ma-verification-v1'
 RATIOS = (0., .236, .382, .5, .618, .786, 1.)
 LABELS = {'weekly': '周线', 'daily': '日线', 'four_hour': '4小时', 'hourly': '1小时'}
 DIRECTIONS = {'up': '六线上方', 'down': '六线下方', 'transition': '六线之间', 'unknown': '数据不足'}
+GOLDEN_POLICIES = {
+    'daily': {'lookback': 252, 'swing_window': 5, 'min_span_bars': 20, 'min_move_pct': 10.},
+    'weekly': {'lookback': 156, 'swing_window': 2, 'min_span_bars': 8, 'min_move_pct': 10.},
+}
 
 
 def _clock(ticker, now):
@@ -147,6 +151,76 @@ def major_retracement(frame, reference_price):
             'checks': {'low_precedes_high': True, 'leg_extremes_checked': True, 'available_history_only': True}}
 
 
+def recent_golden_section(frame, timeframe, reference_price=None):
+    """Latest qualifying directional legs, using only the supplied closed-bar prefix."""
+    policy = GOLDEN_POLICIES[timeframe].copy()
+    missing = {'status': 'unavailable', 'reason': '未找到满足时长、幅度及段内极值的阶段'}
+    result = {'status': 'unavailable', 'policy': policy, 'rising': missing.copy(), 'falling': missing.copy()}
+    if frame is None or frame.empty:
+        result['reason'] = '缺少已收盘K线'
+        return result
+    data = validate_ohlcv(frame).tail(policy['lookback'])
+    reference = float(data.Close.iloc[-1] if reference_price is None else reference_price)
+    if not math.isfinite(reference) or reference <= 0:
+        raise ValueError('黄金分割参考价必须是有限正数')
+    result.update(sample_start=data.index[0].isoformat(), sample_end=data.index[-1].isoformat(),
+                  rows=len(data), reference_price=reference, reference_as_of=data.index[-1].isoformat(),
+                  reference_basis=f'{timeframe}_close_only', source=str(data.attrs.get('source', 'unknown')),
+                  adjustment=str(data.attrs.get('adjustment', 'unknown')))
+    window = policy['swing_window']
+    positions = {stamp: i for i, stamp in enumerate(data.index.strftime('%Y-%m-%d'))}
+    points = [{'position': positions[z['swing_date'][:10]], 'kind': z['kind'],
+               'confirmed_at': data.index[positions[z['swing_date'][:10]] + window].isoformat()}
+              for z in detect_price_zones(data, swing_window=window)['zones']]
+    # Boundary extrema remain candidates; missing neighbors cannot confirm them.
+    for i in sorted(set(range(min(window, len(data)))) | set(range(max(0, len(data) - window), len(data)))):
+        neighbors = data.iloc[max(0, i - window):i + window + 1].drop(data.index[i])
+        if neighbors.empty:
+            continue
+        for kind, column in (('support', 'Low'), ('resistance', 'High')):
+            extreme = neighbors[column].min() if kind == 'support' else neighbors[column].max()
+            if (data[column].iloc[i] < extreme if kind == 'support' else data[column].iloc[i] > extreme):
+                points.append({'position': i, 'kind': kind, 'confirmed_at': None})
+    points.sort(key=lambda p: p['position'], reverse=True)
+    for direction, start_kind, end_kind in (('rising', 'support', 'resistance'), ('falling', 'resistance', 'support')):
+        for end in (p for p in points if p['kind'] == end_kind):
+            for start in (p for p in points if p['kind'] == start_kind):
+                a, b = start['position'], end['position']
+                if b - a < policy['min_span_bars']:
+                    continue
+                low = float(data.Low.iloc[a if direction == 'rising' else b])
+                high = float(data.High.iloc[b if direction == 'rising' else a])
+                move = (high - low) / low * 100 if direction == 'rising' else -(high - low) / high * 100
+                segment = data.iloc[a:b + 1]
+                enough_move = abs(move) >= policy['min_move_pct'] or math.isclose(abs(move), policy['min_move_pct'], rel_tol=1e-12)
+                if not enough_move or high <= low or segment.Low.min() < low or segment.High.max() > high:
+                    continue
+                level = high - .618 * (high - low) if direction == 'rising' else low + .618 * (high - low)
+                after = data.iloc[b + 1:]
+                confirmed = start['confirmed_at'] is not None and end['confirmed_at'] is not None
+                result[direction] = {
+                    'status': 'ready', 'selection': 'latest_end_then_latest_start_meeting_policy',
+                    'start_at': data.index[a].isoformat(), 'end_at': data.index[b].isoformat(),
+                    'start_price': low if direction == 'rising' else high,
+                    'end_price': high if direction == 'rising' else low,
+                    'low': low, 'high': high, 'span_bars': b - a, 'move_pct': move,
+                    'anchor_status': 'confirmed_candidate' if confirmed else 'provisional_candidate',
+                    'confirmed_at': end['confirmed_at'] if confirmed else None,
+                    'level_618': level, 'formula': 'H - 0.618 * (H - L)' if direction == 'rising' else 'L + 0.618 * (H - L)',
+                    'counter_move_pct': ((high - reference) if direction == 'rising' else (reference - low)) / (high - low) * 100,
+                    'position': 'at' if math.isclose(reference, level, rel_tol=1e-9) else 'above' if reference > level else 'below',
+                    'distance_pct': (reference / level - 1) * 100,
+                    'start_breached_since_end': bool((after.Low < low).any() or reference < low) if direction == 'rising' else bool((after.High > high).any() or reference > high),
+                    'end_extended_since_end': bool((after.High > high).any() or reference > high) if direction == 'rising' else bool((after.Low < low).any() or reference < low),
+                }
+                break
+            if result[direction]['status'] == 'ready':
+                break
+    ready = sum(result[key]['status'] == 'ready' for key in ('rising', 'falling'))
+    result['status'] = 'ready' if ready == 2 else 'partial' if ready else 'unavailable'
+    return result
+
+
 def _snapshot(frame):
     if frame is None or frame.empty:
         return {'status': 'unavailable', 'reason': (frame.attrs.get('verification_reason') if frame is not None else None) or '未取得该周期数据'}
@@ -247,10 +321,66 @@ def build_verification(ticker, daily, weekly, hourly, trend, now):
                     point['nearby_references'].append(f"历史水平区 {zone['lower']:.2f}–{zone['upper']:.2f}（{zone['swing_date']}）")
     else:
         limits.append('大波段回撤无法验证：' + fib['reason'])
+    golden = {'version': 'golden-section-v1', 'scope': 'observation_only_no_signal_or_budget_effect',
+              'timeframes': {'daily': recent_golden_section(daily, 'daily'),
+                             'weekly': recent_golden_section(w, 'weekly', reference if comparable else None)}}
+    if comparable and w is not None and not w.empty:
+        golden['timeframes']['weekly'].update(reference_basis='daily_close', reference_as_of=baseline['as_of'])
     status = 'mixed' if conflicting else 'consistent' if len(supporting) == 3 and not limits else 'partial'
     return {'version': VERSION, 'status': status, 'supporting': supporting, 'conflicting': conflicting,
-            'limitations': limits, 'timeframes': snapshots, 'major_retracement': fib,
+            'limitations': limits, 'timeframes': snapshots, 'major_retracement': fib, 'golden_section': golden,
             'scope': 'observation_only_no_signal_or_budget_effect', 'external_quote_check': 'not_performed_by_cli'}
+
+
+def format_golden_section(section):
+    if not section:
+        return []
+    lines = ['', '### 黄金分割点判断（日线 / 周线）', '',
+             '- 上涨回撤0.618＝H−0.618×(H−L)；下跌反弹0.618＝L＋0.618×(H−L)。两者方向不同。',
+             '- 各自选最近符合条件的上涨和下跌阶段；是独立位置验证，不改变双均线计划，不是投资建议。']
+    for key, item in section['timeframes'].items():
+        label, policy = LABELS[key], item['policy']
+        lines.append(f"- {label}选段：最近{policy['lookback']}根内，端点相隔至少{policy['min_span_bars']}根、涨跌幅至少{policy['min_move_pct']:g}%；"
+                     f"端点前后各{policy['swing_window']}根确认。优先最新终点，再选符合条件的最近起点。")
+        if 'reference_price' in item:
+            basis = '日线收盘（已核验复权可比）' if item['reference_basis'] == 'daily_close' else f'仅{label}自身收盘'
+            lines.append(f"- {label}样本 {item['sample_start'][:10]} 至 {item['sample_end'][:10]}，{item['rows']}根；"
+                         f"参考价 {item['reference_price']:.2f}（{item['reference_as_of']}，{basis}）；复权 {item['adjustment']}。")
+        else:
+            lines.append(f"- {label}：{item['reason']}。")
+    lines += ['', '| 周期 | 阶段 | 起点 → 终点 | 阶段涨跌幅 | 0.618价位 | 参考价位置 | 端点状态 |',
+              '|---|---|---|---:|---:|---|---|']
+    for key, item in section['timeframes'].items():
+        for direction, label in (('rising', '上涨回撤'), ('falling', '下跌反弹')):
+            leg = item[direction]
+            if leg['status'] != 'ready':
+                lines.append(f"| {LABELS[key]} | {label} | {leg['reason']} | — | — | — | 无合格阶段 |")
+                continue
+            position = {'above': '高于', 'below': '低于', 'at': '位于'}[leg['position']]
+            anchor = '候选已确认' if leg['anchor_status'] == 'confirmed_candidate' else '候选待确认'
+            lines.append(f"| {LABELS[key]} | {label} | {leg['start_at'][:10]} {leg['start_price']:.2f} → "
+                         f"{leg['end_at'][:10]} {leg['end_price']:.2f} | {leg['move_pct']:+.2f}% | {leg['level_618']:.2f} | "
+                         f"{position}0.618（距离{leg['distance_pct']:+.2f}%） | {anchor} |")
+    lines.append('')
+    for key, item in section['timeframes'].items():
+        for direction, label in (('rising', '上涨'), ('falling', '下跌')):
+            leg = item[direction]
+            if leg['status'] != 'ready':
+                continue
+            counter = '回吐涨幅' if direction == 'rising' else '收复跌幅'
+            detail = f"{counter}{leg['counter_move_pct']:.2f}%，{'超过' if leg['counter_move_pct'] > 61.8 else '未超过'}61.8%"
+            if leg['start_breached_since_end']:
+                detail += '；结束后曾突破原起点，不能称原阶段始终有效'
+            if leg['end_extended_since_end']:
+                detail += '；结束后极值继续延伸，旧端点仅作历史参照'
+            if leg['confirmed_at']:
+                detail += f"；端点在{leg['confirmed_at'][:10]}后才可确认"
+            else:
+                detail += '；缺少完整前后K线观察，价位暂定'
+            lines.append(f'- {LABELS[key]}{label}阶段：{detail}。')
+    lines += ['- 0.618是位置参照，不自动确认支撑、压力或反转；阶段阈值属于项目工程定义，不是原作者公布的精确参数。',
+              '- 周线日期为周结束标签；复权不同或未知时只比较各自收盘，不把日线价格混入周线。']
+    return lines
 
 
 def format_verification(result: dict[str, Any]) -> list[str]:
@@ -302,4 +432,5 @@ def format_verification(result: dict[str, Any]) -> list[str]:
     lines += ['- 股票4小时按交易所当地开盘起每4小时聚合，尾盘可较短，不跨夜；未接入完整半日市日历。',
               '- 程序复核价格结构、锚点先后、计算及时间口径；不等于独立行情源复核或策略收益验证。',
               '- 来源：[起涨点与回撤](https://www.youtube.com/watch?v=kH7GOeas17A&t=41s)；[多周期观察](https://www.youtube.com/watch?v=h1wIpEPXx-A&t=534s)。']
+    lines.extend(format_golden_section(result.get('golden_section')))
     return lines

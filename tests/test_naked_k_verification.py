@@ -149,9 +149,12 @@ class VerificationTests(unittest.TestCase):
             text, reports = analysis.run_analysis([('测试', 'TEST')], Path(directory) / 'j.jsonl', now=pd.Timestamp('2026-09-06', tz='UTC'))
             self.assertLess(text.index('双均线主线与交易计划'), text.index('交叉验证'))
             self.assertLess(text.index('交叉验证'), text.index('辅助结构'))
+            self.assertLess(text.index('交叉验证'), text.index('黄金分割点判断'))
+            self.assertLess(text.index('黄金分割点判断'), text.index('辅助结构'))
             self.assertEqual(reports[0].trend, analysis.build_trade_plan('测试', 'TEST', daily).trend)
             saved = json.loads((Path(directory) / 'j.jsonl').read_text())
             self.assertEqual(saved['verification'], reports[0].verification)
+            self.assertEqual(saved['verification']['golden_section']['version'], 'golden-section-v1')
             self.assertIn('数据不足', text)
 
 

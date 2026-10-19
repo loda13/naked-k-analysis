@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — 2026-10-19
+
+- Add independent `golden-section-v1` observations for the latest qualifying rise and decline on daily and weekly bars. Show both directional 0.618 formulas, anchors, confirmation state, reference-price position and broken-origin warnings in the text report and JSON/journal.
+- Disclose fixed window, duration and amplitude definitions; keep missing or provisional phases explicit and preserve adjustment/closed-bar checks. The existing dual-MA signals, exits and risk budgets remain unchanged.
+
 ## v5.0.0 — 2026-10-18
 
 - Breaking release: replace `technical-trend-v2` with `bige-dual-ma-v1`; retain the CLI name and historical artifacts. Credit 以太坊教授幣哥's public YouTube teaching and distinguish this independent implementation from the source concepts.
