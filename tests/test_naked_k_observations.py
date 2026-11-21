@@ -158,7 +158,7 @@ class ObservationTests(unittest.TestCase):
         self.assertNotIn('![', text)
         self.assertNotIn('<svg', text)
         self.assertEqual(a.serialize_report(report)['observations'], report.observations)
-        with patch('naked_k_planner.naked_k_observations.analyze_observations', return_value={}):
+        with patch('naked_k_planner.naked_k_observations.describe_observations', return_value={}):
             plain = a.build_trade_plan('测试', 'TEST', data)
         for key in ['action', 'signal_state', 'risk_plan', 'management']:
             self.assertEqual(getattr(report, key), getattr(plain, key))

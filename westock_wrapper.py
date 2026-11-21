@@ -6,6 +6,7 @@ Market data wrapper for naked K analysis.
 
 import subprocess
 import json
+import math
 import os
 from datetime import datetime
 import sys
@@ -281,6 +282,40 @@ def fetch_yahoo_chart(ticker, period='1y', start=None, end=None, interval='1d'):
         print(f"Error fetching Yahoo chart {ticker}: {str(e)}", file=sys.stderr)
         return pd.DataFrame()
 
+def _tencent_closing_quote(stock_data, symbol, ticker, day):
+    quotes = stock_data.get('qt')
+    quote = quotes.get(symbol) if isinstance(quotes, dict) else None
+    if not isinstance(quote, list) or len(quote) <= 38 or quote[2] != symbol[2:]:
+        return None
+    try:
+        stamp = datetime.strptime(quote[30], '%Y%m%d%H%M%S')
+    except (TypeError, ValueError):
+        return None
+    if stamp.date() != day or stamp.hour < 15:
+        return None
+
+    def value(i):
+        try:
+            n = float(quote[i])
+        except (IndexError, TypeError, ValueError):
+            return None
+        return n if math.isfinite(n) and n >= 0 else None
+
+    facts = {}
+    turnover = value(38)
+    if turnover is not None:
+        facts['turnover_pct'] = turnover
+    # Compare raw fields from one quote. Touching a limit cannot establish an actual broken seal.
+    last, high, limit = value(3), value(33), value(47)
+    if last and high and limit and last <= high <= limit:
+        facts.update(raw_close=last, raw_high=high, limit_up_price=limit,
+                     limit_state='closed' if last == limit else 'touched_unsealed' if high == limit else 'untouched')
+    if facts:
+        return {**facts, 'ticker': ticker.strip().upper(), 'as_of': day.isoformat(), 'source': 'tencent_qt',
+                'observed_at': stamp.isoformat() + '+08:00'}
+    return None
+
+
 def fetch_tencent_kline(ticker, period='day', limit=500):
     """Fetch OHLCV data from Tencent's appstock kline endpoint."""
     import pandas as pd
@@ -335,7 +370,12 @@ def fetch_tencent_kline(ticker, period='day', limit=500):
             df['Volume'] = pd.to_numeric(df['volume'], errors='coerce')
             df.set_index('date', inplace=True)
             df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
-            return _tag_adjustment(df.dropna().sort_index(), adjustment)
+            df = df.dropna().sort_index()
+            if period == 'day' and ws_ticker.startswith(TENCENT_MINUTE_MARKETS) and not df.empty and df.Volume.iloc[-1] > 0:
+                quote = _tencent_closing_quote(stock_data, ws_ticker, ticker, df.index[-1].date())
+                if quote:
+                    df.attrs['closing_quote'] = quote
+            return _tag_adjustment(df, adjustment)
         except Exception as e:
             last_error = e
 

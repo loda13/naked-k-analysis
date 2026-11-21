@@ -1,0 +1,12 @@
+{
+  "600000.SS": {
+    "as_of": "2025-01-02",
+    "source": "虚构示例，用实际同日资料和来源替换",
+    "turnover_pct": 8.2,
+    "limit_state": "opened",
+    "prior_limit_up_days": 2,
+    "session": {"opening_low_pct": -4.2, "close_from_open_pct": 1.2, "last_bar_pct": 0.8},
+    "stress": {"time": "10:30", "advancers": 200, "decliners": 1800, "ticker_change_pct": -1.0, "index_change_pct": -2.5},
+    "sector": {"name": "示例板块", "rank": 2, "count": 20, "change_pct": 1.4, "previous_change_pct": 0.5, "flow_direction": "in"}
+  }
+}

@@ -343,11 +343,13 @@ def _price_patterns(data: pd.DataFrame) -> list[dict[str, Any]]:
 
 
 def analyze_observations(frame: pd.DataFrame, trend: dict | None = None) -> dict[str, Any]:
-    data = observation_frame(frame)
+    return describe_observations(observation_frame(frame), trend['zones'] if trend is not None else detect_price_zones(frame))
+
+
+def describe_observations(data: pd.DataFrame, zones: dict) -> dict[str, Any]:
     if data.empty:
         raise ValueError('OHLCV must contain at least one row')
     row, indicators = data.iloc[-1], []
-    zones = trend['zones'] if trend is not None else detect_price_zones(frame)
 
     def add(key, name, group, keys, text, side='neutral'):
         values = {k: _number(row[k]) for k in keys}

@@ -118,6 +118,39 @@ def prepare_intraday(frame, ticker, now):
     return data, four
 
 
+def closed_session_moves(ticker, day, hourly, now):
+    """Read the first and final regular-session bars on the evaluated exchange date."""
+    market = classify_market(ticker)
+    if hourly is None or hourly.empty or market == 'crypto':
+        return None
+    clock = _clock(ticker, now)
+    opening, closing = _session(pd.Timestamp(day).tz_localize(clock.tz), market)
+    if clock < closing:
+        return None
+    stamps = _local_index(hourly, ticker, hourly=True)
+    source = hourly.attrs.get('source')
+    if market == 'cn' and source == 'tencent':
+        # Tencent labels the four A-share hours by their ends, across the lunch break.
+        expected = opening + pd.to_timedelta([60, 120, 270, 330], unit='min')
+        mask = (stamps >= opening) & (stamps <= closing)
+    elif market != 'cn' and source in {'yahoo_chart', 'yfinance'}:
+        expected = pd.date_range(opening, closing, freq='h', inclusive='left')
+        mask = (stamps >= opening) & (stamps < closing)
+    else:
+        return None
+    if not stamps[mask].equals(expected):
+        return None
+    bars = hourly.loc[mask]
+    flat_quotes = (bars.Volume == 0) & (bars.High == bars.Low)
+    if flat_quotes.any():
+        return None
+    first, last = bars.iloc[0], bars.iloc[-1]
+    return {'opening_low_pct': float((first.Low - first.Open) / first.Open * 100),
+            'close_from_open_pct': float((last.Close - first.Open) / first.Open * 100),
+            'last_bar_pct': float((last.Close - last.Open) / last.Open * 100),
+            'source': source}
+
+
 def major_retracement(frame, reference_price):
     data = validate_ohlcv(frame)
     if not math.isfinite(reference_price) or reference_price <= 0:

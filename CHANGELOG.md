@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased — 2026-10-19
+## v5.1.0 — 2026-11-21
+
+- Add ten dated, per-instrument checks under `principles` (`market-principles-v1`) covering price, volume, moving averages, position discipline, market breadth, sector participation and limit events. Include evidence and missing inputs in Markdown, JSON and the append-only journal.
+- Read optional current and peak position returns from the account snapshot. Accept dated market evidence through `--context-path`. Use matching Tencent A-share closing quotes for turnover and price-limit facts, and complete intraday sessions for opening and closing price moves.
+- Present the project as a stock and ETF research tool. Keep the original dual-MA source attribution, trade and replay rules, risk limits, output keys and technical appendix.
 
 - Add independent `golden-section-v1` observations for the latest qualifying rise and decline on daily and weekly bars. Show both directional 0.618 formulas, anchors, confirmation state, reference-price position and broken-origin warnings in the text report and JSON/journal.
 - Disclose fixed window, duration and amplitude definitions; keep missing or provisional phases explicit and preserve adjustment/closed-bar checks. The existing dual-MA signals, exits and risk budgets remain unchanged.

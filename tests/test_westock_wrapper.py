@@ -11,6 +11,29 @@ import westock_wrapper
 
 
 class WestockWrapperTests(unittest.TestCase):
+    def test_a_share_quote_uses_dated_raw_fields_and_never_backfills_or_assumes_a_broken_seal(self):
+        row = ['2026-11-20', '10', '10', '11', '9', '500']
+        qt = [''] * 49
+        qt[2], qt[3], qt[30], qt[33], qt[38], qt[47] = '600000', '10.70', '20261120154000', '11', '6.2', '11'
+        def load():
+            stock = {'qfqday': [row], 'qt': {'sh600000': qt}}
+            reply = SimpleNamespace(text=json.dumps({'code': 0, 'data': {'sh600000': stock}}), raise_for_status=lambda: None)
+            with patch('requests.get', return_value=reply):
+                return westock_wrapper.fetch_tencent_kline('600000.SS')
+        fact = load().attrs['closing_quote']
+        self.assertEqual(fact['turnover_pct'], 6.2)
+        self.assertEqual(fact['limit_state'], 'touched_unsealed')
+        qt[3] = '11'
+        self.assertEqual(load().attrs['closing_quote']['limit_state'], 'closed')
+        qt[38], qt[47] = 'nan', '0'
+        self.assertNotIn('closing_quote', load().attrs)
+        qt[38] = '6.2'
+        for stamp in ['20261120143823', '20261121160000', 'not a timestamp']:
+            qt[30] = stamp
+            frame = load()
+            self.assertEqual(len(frame), 1)
+            self.assertNotIn('closing_quote', frame.attrs)
+
     def test_wrapper_no_longer_imports_legacy_stock_analysis_package(self):
         source = inspect.getsource(westock_wrapper)
 

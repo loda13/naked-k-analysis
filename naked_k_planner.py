@@ -12,6 +12,7 @@ import naked_k_portfolio as portfolio
 import naked_k_risk
 import naked_k_trend
 import naked_k_observations
+import naked_k_principles
 
 
 @dataclass
@@ -41,6 +42,7 @@ class InstrumentReport:
     data_quality: dict[str, Any] = field(default_factory=dict)
     observations: dict[str, Any] = field(default_factory=dict)
     verification: dict[str, Any] = field(default_factory=dict)
+    principles: dict[str, Any] = field(default_factory=dict)
 
 
 def _flat_risk(reason: str) -> dict[str, Any]:
@@ -53,7 +55,8 @@ def _flat_risk(reason: str) -> dict[str, Any]:
 def build_trade_plan(name: str, ticker: str, daily: pd.DataFrame,
                      weekly: pd.DataFrame | None = None, previous: dict | None = None, *,
                      config: settings.TradingConfig | None = None,
-                     account_state: dict | None = None) -> InstrumentReport:
+                     account_state: dict | None = None, context: dict | None = None,
+                     session: dict | None = None) -> InstrumentReport:
     config = config or settings.TradingConfig()
     ticker = ticker.strip().upper()
     trend = naked_k_trend.analyze_trend(daily, config.strategy, ticker=ticker)
@@ -121,6 +124,7 @@ def build_trade_plan(name: str, ticker: str, daily: pd.DataFrame,
               'previous_signal_date': (previous or {}).get('latest_k_dates', {}).get('daily'),
               'previous_action': (previous or {}).get('action'),
               'note': '历史计划不等于成交记录；收益只从真实成交或明确回测计算'}
+    indicators = naked_k_observations.observation_frame(daily)
     return InstrumentReport(
         name=name, ticker=ticker.upper(), action=action, signal_state=state, trend=trend,
         risk_plan=risk, account=account, management=management,
@@ -130,7 +134,8 @@ def build_trade_plan(name: str, ticker: str, daily: pd.DataFrame,
         reward_to_risk=trend.get('reward_to_risk') if not holding else None, support=support['midpoint'] if support else None,
         resistance=trend['resistance'], position_size=risk['position_size'],
         data_sources=sources, latest_k_dates=dates, latest_closes=closes, review=review,
-        observations=naked_k_observations.analyze_observations(daily, trend))
+        observations=naked_k_observations.describe_observations(indicators, zones),
+        principles=naked_k_principles.assess(indicators, ticker, account, context, session))
 
 
 def apply_portfolio_limits(reports: list[InstrumentReport], config: settings.TradingConfig | None = None) -> None:

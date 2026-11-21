@@ -167,7 +167,9 @@ def assess_account(state: dict[str, Any] | None, as_of: str,
         raise ValueError('positions must be an array')
     positions, reports, seen = [], [], set()
     for position in state['positions']:
-        if not isinstance(position, dict) or set(position) - {'ticker', 'gross_pct', 'account_risk_pct', 'stop_loss', 'entry_setup', 'target_price'}:
+        if not isinstance(position, dict) or set(position) - {
+            'ticker', 'gross_pct', 'account_risk_pct', 'stop_loss', 'entry_setup', 'target_price', 'pnl_pct', 'peak_pnl_pct'
+        }:
             raise ValueError('invalid account position fields')
         ticker = position.get('ticker')
         if not isinstance(ticker, str) or not ticker.strip() or ticker.strip().upper() in seen:
@@ -185,6 +187,13 @@ def assess_account(state: dict[str, Any] | None, as_of: str,
             raise ValueError('position.entry_setup must identify the original dual-MA setup')
         if position.get('target_price') is not None:
             naked_k_config.number(position['target_price'], 'position.target_price', 1e-12, float('inf'))
+        pnl, peak = position.get('pnl_pct'), position.get('peak_pnl_pct')
+        if pnl is not None:
+            naked_k_config.number(pnl, 'position.pnl_pct', -100, math.inf)
+        if peak is not None:
+            naked_k_config.number(peak, 'position.peak_pnl_pct', 0, math.inf)
+            if pnl is not None and peak < pnl:
+                raise ValueError('position.peak_pnl_pct must include the current pnl_pct')
         positions.append({**position, 'ticker': ticker, 'gross_pct': gross,
                           'account_risk_pct': risk, 'stop_loss': stop})
         reports.append({'ticker': ticker, 'action': '实际持仓', 'risk_plan': {

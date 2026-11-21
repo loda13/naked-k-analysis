@@ -22,6 +22,7 @@ import naked_k_planner
 import naked_k_portfolio
 import naked_k_trend
 import naked_k_observations
+import naked_k_principles
 import naked_k_verification
 import westock_wrapper as yf
 
@@ -306,10 +307,9 @@ def _news_appendix(report: InstrumentReport) -> list[str]:
 def format_report(run_date: str, reports: list[InstrumentReport], journal_path: Path,
                   config: naked_k_config.TradingConfig | None = None,
                   adjustment_conflicts: dict | None = None) -> str:
-    lines = ['# 币哥双均线系统 · 股票日线报告', f'生成日期：{run_date}', f'日志：{journal_path}',
+    lines = ['# 股票日线研究 · 趋势、量价与持仓纪律', f'生成日期：{run_date}', f'日志：{journal_path}',
              f'周期：数周至数月；规则版本 {naked_k_trend.RULE_VERSION}；经济有效性 UNVALIDATED。',
-             f'主线：[币哥原视频]({naked_k_trend.SOURCE_URL})中的 MA/EMA 20、60、120 六均线。',
-             '密集、确认和止损缓冲采用已披露的程序化定义；原视频为目测教学，本报告不声称逐笔复刻。', '']
+             '交易计划采用 MA/EMA 20、60、120 六均线。量价、持仓纪律与多周期证据供独立复核。', '']
     directions = {'up': '上涨', 'down': '下跌', 'transition': '过渡', 'unknown': '数据不足'}
     modes = {'full': '六均线完整模式：MA/EMA 20、60、120', 'insufficient': '样本不足120根，暂停趋势定向和新仓计划'}
     states = {'compression': '六线密集', 'expanding_up': '多头发散', 'expanding_down': '空头发散',
@@ -388,6 +388,7 @@ def format_report(run_date: str, reports: list[InstrumentReport], journal_path: 
                   '- 复盘：' + report.review['note']]
         if report.data_quality.get('warnings'):
             lines.append('- 数据限制：' + '；'.join(report.data_quality['warnings']))
+        lines.extend(naked_k_principles.format_principles(report.principles, _markdown_label))
         lines.extend(naked_k_verification.format_verification(report.verification))
         lines += ['', '### 辅助结构（不参与交易决策）']
         for key, label in [('nearest_support', '支撑'), ('nearest_resistance', '压力')]:
@@ -423,7 +424,7 @@ def _next_possible_open(signal_date: str, market: str) -> pd.Timestamp:
 
 def run_analysis(tickers: list[tuple[str, str]], journal_path: Path,
                  config: naked_k_config.TradingConfig | None = None,
-                 audit_path: Path | None = None, *, account_state: dict | None = None,
+                 audit_path: Path | None = None, *, account_state: dict | None = None, contexts: dict | None = None,
                  news: bool = False, news_lookback_days: int = 7, news_max_items: int = 12,
                  news_get=None, news_search_factory=None, now: pd.Timestamp | None = None) -> tuple[str, list[InstrumentReport]]:
     if not tickers or news_lookback_days <= 0 or news_max_items <= 0:
@@ -431,6 +432,11 @@ def run_analysis(tickers: list[tuple[str, str]], journal_path: Path,
     symbols = [symbol.strip().upper() for _, symbol in tickers]
     if any(not s for s in symbols) or len(set(symbols)) != len(symbols):
         raise ValueError('tickers must be nonempty and unique')
+    if contexts is None:
+        contexts = {}
+    if not isinstance(contexts, dict) or any(not isinstance(k, str) or not k or k != k.strip().upper()
+                                             or not isinstance(v, dict) for k, v in contexts.items()):
+        raise ValueError('context requires a JSON object keyed by uppercase ticker, with one snapshot per ticker')
     config = config or naked_k_config.TradingConfig()
     audit = naked_k_audit.AuditLogger(audit_path)
     rows, reports, conflicts = load_journal(journal_path), [], {}
@@ -442,6 +448,10 @@ def run_analysis(tickers: list[tuple[str, str]], journal_path: Path,
     for (name, _), ticker in zip(tickers, symbols):
         try:
             daily = trim_to_closed_bars(load_ohlcv(ticker, '1d', '3y'), classify_market(ticker), '1d', now=clock)
+            quote = daily.attrs.get('closing_quote')
+            if quote and pd.Timestamp(quote['observed_at']) > clock:
+                daily = daily.copy(deep=False)
+                daily.attrs.pop('closing_quote')
             audit.info('data_loaded', **build_data_audit_payload(ticker, '1d', '3y', daily))
             try:
                 weekly = load_ohlcv(ticker, '1wk', '5y')
@@ -458,7 +468,9 @@ def run_analysis(tickers: list[tuple[str, str]], journal_path: Path,
                 audit.warning('data_unavailable', ticker=ticker, interval='1h', error_type=type(exc).__name__)
             conflicts[ticker] = detect_adjustment_conflict({'daily': daily, 'weekly': weekly})
             previous = latest_journal_entry(rows, ticker, daily.index[-1].strftime('%Y-%m-%d'))
-            report = build_trade_plan(name, ticker, daily, weekly, previous, config=config, account_state=account_state)
+            session = naked_k_verification.closed_session_moves(ticker, daily.index[-1].date(), hourly, clock)
+            report = build_trade_plan(name, ticker, daily, weekly, previous, config=config, account_state=account_state,
+                                      context=contexts.get(ticker), session=session)
             try:
                 report.verification = naked_k_verification.build_verification(ticker, daily, weekly, hourly, report.trend, clock)
                 for key, item in report.verification['timeframes'].items():
@@ -514,6 +526,7 @@ def run_analysis(tickers: list[tuple[str, str]], journal_path: Path,
         audit.info('plan_generated', ticker=report.ticker, action=report.action,
                    signal_state=report.signal_state, account_status=report.account['status'],
                    observation_version=report.observations.get('version'),
+                   principles_version=report.principles.get('version'),
                    verification_version=report.verification.get('version'), verification_status=report.verification.get('status'),
                    entry_setup=(report.trend.get('setup') or {}).get('kind'),
                    setup_state=report.trend['setup_state'], exit_method=config.strategy.exit_method,
@@ -525,7 +538,7 @@ def run_analysis(tickers: list[tuple[str, str]], journal_path: Path,
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='生成币哥双均线股票日线报告（MA/EMA 20、60、120）')
+    parser = argparse.ArgumentParser(description='生成股票日线趋势、量价与持仓纪律报告')
     parser.add_argument('tickers', nargs='+', metavar='TICKER')
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--journal-path', default=str(DEFAULT_JOURNAL_PATH))
@@ -533,6 +546,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--audit-path', default=str(DEFAULT_AUDIT_PATH))
     parser.add_argument('--config-path')
     parser.add_argument('--account-path', help='只读账户JSON快照；缺失时真实持仓未知')
+    parser.add_argument('--context-path', help='按标的提供有日期和来源的换手率、板态、板块或盘中数据（JSON）')
     parser.add_argument('--news', action='store_true', help='仅附新闻日期、来源和标题，不调用模型')
     parser.add_argument('--news-lookback-days', type=int, default=7)
     parser.add_argument('--news-max-items', type=int, default=12)
@@ -547,9 +561,10 @@ def main() -> int:
     try:
         config = naked_k_config.load_trading_config(args.config_path)
         state = json.loads(Path(args.account_path).read_text(encoding='utf-8')) if args.account_path else None
+        contexts = json.loads(Path(args.context_path).read_text(encoding='utf-8')) if args.context_path else None
         text, reports = run_analysis([(t, t) for t in args.tickers], Path(args.journal_path),
                                      config=config, audit_path=Path(args.audit_path) if args.audit_path else None,
-                                     account_state=state, news=args.news,
+                                     account_state=state, contexts=contexts, news=args.news,
                                      news_lookback_days=args.news_lookback_days, news_max_items=args.news_max_items)
         path = Path(args.report_path)
         path.parent.mkdir(parents=True, exist_ok=True)
